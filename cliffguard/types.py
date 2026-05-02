@@ -1,6 +1,8 @@
-"""Foundational typed enums for CLIFFGUARD. See blueprint §2.2 (adversaries), §10 (tiers), §8 (quantization schemes)."""
+"""Foundational typed enums for CLIFFGUARD. See blueprint §2.2 (adversaries), §10 (tiers), §8 (quantization schemes). Margin, CalibrationTable, and GateVerdict are the runtime data types flowing between primitives and CONDUCTOR — see blueprint §6."""
 
 from enum import Enum
+
+from pydantic import BaseModel, field_validator
 
 _THREAT_DESCRIPTIONS: dict[str, str] = {
     "A1": "Direct injector — DAN, persuasive jailbreaks, role-play",
@@ -80,3 +82,57 @@ class QuantScheme(Enum):
             return cls[s.upper()]
         except KeyError:
             raise ValueError(f"Unknown QuantScheme: {s!r}") from None
+
+
+class Margin(BaseModel):
+    """A single refusal-margin observation from any PROBE variant — blueprint §5.1–5.3, §5.10."""
+
+    value: float
+    scheme: QuantScheme
+    primitive: str
+    layer: int | None = None
+
+    @field_validator("primitive")
+    @classmethod
+    def _primitive_nonempty(cls, v: str) -> str:
+        if not v:
+            raise ValueError("primitive must not be empty")
+        return v
+
+    @property
+    def is_cliff_regime(self) -> bool:
+        return self.scheme.is_cliff_candidate()
+
+
+class CalibrationTable(BaseModel):
+    """Per-quantization thresholds (tau_q) for one primitive — blueprint §5.1, §14."""
+
+    primitive: str
+    thresholds: dict[QuantScheme, float]
+    fpr_target: float = 0.05
+
+    def tau(self, scheme: QuantScheme) -> float:
+        if scheme not in self.thresholds:
+            raise KeyError(
+                f"No threshold calibrated for scheme {scheme.value!r}"
+                f" in primitive {self.primitive!r}"
+            )
+        return self.thresholds[scheme]
+
+    def schemes_covered(self) -> list[QuantScheme]:
+        return sorted(self.thresholds.keys(), key=lambda s: s.name)
+
+
+class GateVerdict(BaseModel):
+    """Output of one gate evaluation, forwarded to CONDUCTOR — blueprint §6, §9."""
+
+    gate: str
+    fired: bool
+    score: float
+    threshold: float
+    tier: Tier
+    threat_model: ThreatModel | None = None
+
+    @property
+    def margin_to_threshold(self) -> float:
+        return self.threshold - self.score
