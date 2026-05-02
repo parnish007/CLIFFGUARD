@@ -12,7 +12,9 @@
       "Bash(wmic logicaldisk *)",
       "PowerShell($env:Path = \"C:\\\\Users\\\\AB\\\\.local\\\\bin;$env:Path\"; uv cache clean 2>&1)",
       "PowerShell($env:Path = \"C:\\\\Users\\\\AB\\\\.local\\\\bin;$env:Path\"; $env:UV_CACHE_DIR = \"D:\\\\uv-cache\"; $env:UV_PROJECT_ENVIRONMENT = \"D:\\\\cliffguard-venv\"; cd \"C:\\\\Users\\\\AB\\\\Desktop\\\\Projects\\\\CLIFFGUARD\"; uv sync 2>&1)",
-      "PowerShell($env:Path = \"C:\\\\Users\\\\AB\\\\.local\\\\bin;$env:Path\"; $env:UV_CACHE_DIR = \"D:\\\\uv-cache\"; $env:UV_PROJECT_ENVIRONMENT = \"D:\\\\cliffguard-venv\"; cd \"C:\\\\Users\\\\AB\\\\Desktop\\\\Projects\\\\CLIFFGUARD\"; uv run pytest -q 2>&1)"
+      "PowerShell($env:Path = \"C:\\\\Users\\\\AB\\\\.local\\\\bin;$env:Path\"; $env:UV_CACHE_DIR = \"D:\\\\uv-cache\"; $env:UV_PROJECT_ENVIRONMENT = \"D:\\\\cliffguard-venv\"; cd \"C:\\\\Users\\\\AB\\\\Desktop\\\\Projects\\\\CLIFFGUARD\"; uv run pytest -q 2>&1)",
+      "PowerShell($env:Path = \"C:\\\\Users\\\\AB\\\\.local\\\\bin;$env:Path\"; $env:UV_CACHE_DIR = \"D:\\\\uv-cache\"; $env:UV_PROJECT_ENVIRONMENT = \"D:\\\\cliffguard-venv\"; cd \"C:\\\\Users\\\\AB\\\\Desktop\\\\Projects\\\\CLIFFGUARD\"; uv run python -c \"import cliffguard; print\\('import OK'\\)\" 2>&1)",
+      "PowerShell($env:Path = \"C:\\\\Users\\\\AB\\\\.local\\\\bin;$env:Path\"; $env:UV_CACHE_DIR = \"D:\\\\uv-cache\"; $env:UV_PROJECT_ENVIRONMENT = \"D:\\\\cliffguard-venv\"; cd \"C:\\\\Users\\\\AB\\\\Desktop\\\\Projects\\\\CLIFFGUARD\"; uv run mypy cliffguard 2>&1)"
     ]
   }
 }
