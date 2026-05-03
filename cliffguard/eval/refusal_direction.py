@@ -19,10 +19,16 @@ Per blueprint §12.3 (Fold A): the refusal direction is extracted on
 the calibration corpus before any evaluation fold is unblinded.
 """
 
+from __future__ import annotations
+
 from pathlib import Path
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 import numpy.typing as npt
+
+if TYPE_CHECKING:
+    from cliffguard.engines.transformers_bnb import HiddenStateAdapter
 
 
 def difference_in_means(
@@ -75,21 +81,94 @@ def save_direction(
     direction: npt.NDArray[np.float64],
     path: Path,
 ) -> None:
-    """Save the refusal direction to a .npy file at path.
-    Creates parent directories if needed."""
+    """Save the refusal direction to a .npy or .npz file at path.
+    Creates parent directories if needed.
+    Raises ValueError if path suffix is not .npy or .npz."""
+    suffix = path.suffix.lower()
+    if suffix not in (".npy", ".npz"):
+        raise ValueError(
+            f"path must end with .npy or .npz, got {path.suffix!r}"
+        )
     path.parent.mkdir(parents=True, exist_ok=True)
-    np.save(path, direction)
+    if suffix == ".npy":
+        np.save(path, direction)
+    else:
+        np.savez(path, direction=direction)
 
 
 def load_direction(path: Path) -> npt.NDArray[np.float64]:
-    """Load a refusal direction from a .npy file.
+    """Load a refusal direction from a .npy or .npz file.
+    Raises ValueError if path suffix is not .npy or .npz.
     Raises FileNotFoundError if path does not exist.
     Raises ValueError if the loaded array is not 1-D."""
+    suffix = path.suffix.lower()
+    if suffix not in (".npy", ".npz"):
+        raise ValueError(
+            f"path must end with .npy or .npz, got {path.suffix!r}"
+        )
     if not path.exists():
         raise FileNotFoundError(f"Refusal direction file not found: {path}")
-    arr: npt.NDArray[np.float64] = np.load(path).astype(np.float64)
+    if suffix == ".npy":
+        arr: npt.NDArray[np.float64] = np.load(path).astype(np.float64)
+    else:
+        arr = np.load(path)["direction"].astype(np.float64)
     if arr.ndim != 1:
         raise ValueError(
             f"Expected a 1-D refusal direction array, got shape {arr.shape}"
         )
     return arr
+
+
+def collect_hidden_states(
+    adapter: HiddenStateAdapter,
+    prompts: list[str],
+    layer: int,
+    position: Literal["t_inst", "t_post_inst"] = "t_post_inst",
+) -> npt.NDArray[np.float64]:
+    """Collect residual-stream hidden states from adapter for each
+    prompt in prompts at the specified layer.
+
+    position="t_post_inst" → use the second element of
+      adapter.get_hidden_states(prompt, layer) (z_t_post_inst)
+    position="t_inst" → use the first element (z_t_inst)
+
+    Returns array of shape (len(prompts), hidden_dim).
+
+    In Phase A, adapter.get_hidden_states raises NotImplementedError.
+    This function propagates that error — it is intended to be called
+    only on a GPU host with real adapters.
+
+    Per blueprint §12.3: collect states for harmful prompts (those
+    the FP16 model refuses with low confidence, margin in [0.05, 0.25])
+    and harmless prompts (those the model complies with freely)."""
+    states: list[npt.NDArray[np.float64]] = []
+    idx = 0 if position == "t_inst" else 1
+    for prompt in prompts:
+        pair = adapter.get_hidden_states(prompt, layer)
+        states.append(pair[idx])
+    result: npt.NDArray[np.float64] = np.stack(states, axis=0)
+    return result
+
+
+def calibrate_refusal_direction(
+    adapter: HiddenStateAdapter,
+    harmful_prompts: list[str],
+    harmless_prompts: list[str],
+    layer: int,
+    save_path: Path | None = None,
+) -> npt.NDArray[np.float64]:
+    """Full calibration pipeline per blueprint §12.3:
+      1. collect_hidden_states for harmful_prompts at t_post_inst
+      2. collect_hidden_states for harmless_prompts at t_post_inst
+      3. extract_refusal_direction(harmful_states, harmless_states)
+      4. If save_path is not None, save_direction(r_hat, save_path)
+      5. Return r_hat
+
+    This is the function a GPU-side runner calls to produce r̂ for
+    a given (model, layer, scheme) triple."""
+    harmful_states = collect_hidden_states(adapter, harmful_prompts, layer, "t_post_inst")
+    harmless_states = collect_hidden_states(adapter, harmless_prompts, layer, "t_post_inst")
+    r_hat = extract_refusal_direction(harmful_states, harmless_states)
+    if save_path is not None:
+        save_direction(r_hat, save_path)
+    return r_hat
