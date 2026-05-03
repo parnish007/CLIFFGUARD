@@ -3,8 +3,7 @@
 Injects per-session canary tokens into the system prompt and monitors the
 model's output for their reappearance. A model that leaks a canary token in
 its output has been coerced into echoing injected content — the signature of
-a successful prompt-injection attack (A1: direct override, A3: indirect
-retrieval-augmented injection).
+a successful prompt-injection attack (A2: indirect injection, A4: iterator / multi-turn escalation).
 
 BloomFilter is used as a fast pre-filter before the exact substring match
 to avoid O(n*m) scanning on every token.
