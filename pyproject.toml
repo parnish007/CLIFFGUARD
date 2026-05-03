@@ -22,6 +22,7 @@ gpu = [
     "sentencepiece",
     "autoawq ; sys_platform == 'linux'",
     "vllm ; sys_platform == 'linux'",
+    "llama-cpp-python",
 ]
 
 [build-system]
@@ -42,7 +43,7 @@ line-length = 100
 strict = true
 
 [[tool.mypy.overrides]]
-module = ["cliffguard.engines.*", "torch", "transformers", "bitsandbytes", "accelerate", "awq", "vllm"]
+module = ["cliffguard.engines.*", "torch", "transformers", "bitsandbytes", "accelerate", "awq", "vllm", "llama_cpp"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
