@@ -1,4 +1,4 @@
-"""Harmfulness-direction extractor — see blueprint §5.2, §12.3.
+"""Harmfulness-direction extractor — see blueprint §5.3, §12.3.
 
 Implements the Zhao et al. recipe for extracting the harmfulness direction ĥ
 from a model's residual stream at token position t_inst:
