@@ -45,7 +45,7 @@ line-length = 100
 strict = true
 
 [[tool.mypy.overrides]]
-module = ["cliffguard.engines.*", "torch", "transformers", "bitsandbytes", "accelerate", "awq", "vllm", "llama_cpp"]
+module = ["cliffguard.engines.*", "torch", "transformers", "bitsandbytes", "accelerate", "awq", "vllm", "llama_cpp", "scipy", "scipy.stats"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
