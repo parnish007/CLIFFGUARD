@@ -14,6 +14,13 @@ dev = [
     "ruff",
     "mypy",
 ]
+gpu = [
+    "torch",
+    "transformers",
+    "bitsandbytes",
+    "accelerate",
+    "sentencepiece",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -31,6 +38,10 @@ line-length = 100
 
 [tool.mypy]
 strict = true
+
+[[tool.mypy.overrides]]
+module = ["cliffguard.engines.*", "torch", "transformers", "bitsandbytes", "accelerate"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
