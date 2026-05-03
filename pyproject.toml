@@ -5,7 +5,7 @@ requires-python = ">=3.11,<3.13"
 dependencies = [
     "numpy",
     "scipy",
-    "pydantic",
+    "pydantic>=2.0",
 ]
 
 [project.optional-dependencies]
@@ -20,6 +20,8 @@ gpu = [
     "bitsandbytes",
     "accelerate",
     "sentencepiece",
+    "autoawq ; sys_platform == 'linux'",
+    "vllm ; sys_platform == 'linux'",
 ]
 
 [build-system]
@@ -40,7 +42,7 @@ line-length = 100
 strict = true
 
 [[tool.mypy.overrides]]
-module = ["cliffguard.engines.*", "torch", "transformers", "bitsandbytes", "accelerate"]
+module = ["cliffguard.engines.*", "torch", "transformers", "bitsandbytes", "accelerate", "awq", "vllm"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
