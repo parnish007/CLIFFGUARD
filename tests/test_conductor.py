@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from cliffguard.types import GateVerdict, QuantScheme, Tier
+from cliffguard.types import GateVerdict, Tier
 from cliffguard.conductor.bandit import (
     ARMS,
     MIN_WEIGHT,

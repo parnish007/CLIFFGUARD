@@ -22,7 +22,7 @@ Per blueprint §6.4: ADWIN drift detection triggers weight reset.
 import numpy as np
 import numpy.typing as npt
 
-from cliffguard.types import GateVerdict, Tier
+from cliffguard.types import GateVerdict
 
 ARMS: list[str] = [
     "VESTIBULE-LZ", "VESTIBULE-PS",
