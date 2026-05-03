@@ -6,6 +6,8 @@ dependencies = [
     "numpy",
     "scipy",
     "pydantic>=2.0",
+    "datasets",
+    "jsonlines",
 ]
 
 [project.optional-dependencies]
