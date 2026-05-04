@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from cliffguard.eval import results_writer
 from cliffguard.types import CalibrationTable, QuantScheme, Tier
 
 
@@ -157,3 +158,11 @@ class FiveFoldOrchestrator:
         raise NotImplementedError(
             "Fold E requires Phase B wiring: real paraphraser inference for BCN-2."
         )
+
+    def make_run_dir(self) -> Path:
+        """Create the unique run directory for this evaluation run.
+        Calls results_writer.make_run_dir(self.config.artifacts_dir,
+        self.config.tiers[0]).
+        Returns the Path.
+        Call this once at the start of a run, before execute_fold_a."""
+        return results_writer.make_run_dir(self.config.artifacts_dir, self.config.tiers[0])
