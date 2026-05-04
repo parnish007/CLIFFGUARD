@@ -1,21 +1,20 @@
-"""Full evaluation entry-point — see blueprint §12.8.
+"""Full evaluation entry-point — see blueprint §12.
 
-Parses command-line arguments and invokes the EvaluationRunner for
-the requested folds. This script is intended to be run on a GPU host
-(Tier A or Tier B hardware) with the gpu extra installed. It does not
-perform any inference on the development machine.
+Parses command-line arguments and invokes FiveFoldOrchestrator for
+the requested folds. Intended for a GPU host (Tier A or Tier B) with
+the gpu extra installed.
 
 Usage:
   uv run python scripts/run_full_evaluation.py \\
     --tier A \\
     --schemes FP16 NF4 GGUF_Q4_K_M GGUF_Q3_K_M \\
-    --folds A B C \\
+    --folds A B C D E \\
     --data-dir data/ \\
-    --output-dir artifacts/results/ \\
+    --artifacts-dir artifacts/results/ \\
     --fpr-target 0.05
 
 All folds raise NotImplementedError in Phase A (scaffolding mode).
-The script exits with code 0 after printing the plan summary.
+The script exits with code 0 after printing the config summary.
 """
 
 from __future__ import annotations
@@ -24,28 +23,36 @@ import argparse
 import sys
 from pathlib import Path
 
-from cliffguard.types import QuantScheme, Tier, ThreatModel
-from cliffguard.eval.runner import EvaluationPlan, EvaluationRunner
+from cliffguard.eval.five_fold_orchestrator import FiveFoldOrchestrator, OrchestratorConfig
+from cliffguard.types import QuantScheme, Tier
 
 _VALID_TIERS: dict[str, Tier] = {t.value: t for t in Tier}
-_VALID_FOLDS: frozenset[str] = frozenset({"A", "B", "C"})
+_VALID_FOLDS: list[str] = ["A", "B", "C", "D", "E"]
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Build and parse the argument parser.
+
     Arguments:
-      --tier: one of A, B, C, C_PLUS (required)
-      --schemes: one or more QuantScheme names (required)
-      --folds: one or more of A, B, C (default: A B C)
-      --data-dir: Path (default: data/)
-      --output-dir: Path (default: artifacts/results/)
-      --fpr-target: float in (0, 1) (default: 0.05)
-      --n-calibration: int (default: 2000)
-      --n-attack: int (default: 500)
-      --dry-run: flag, if set print plan and exit without running"""
+      --config:        Optional JSON config file (pre-populates OrchestratorConfig).
+      --tier:          One of A, B, C, C_PLUS (required).
+      --schemes:       One or more QuantScheme names (required).
+      --folds:         One or more of A, B, C, D, E (default: all five).
+      --data-dir:      Path (default: data/).
+      --artifacts-dir: Path (default: artifacts/results/).
+      --fpr-target:    Float in (0, 1) (default: 0.05).
+      --dry-run:       Print config and exit without running folds.
+    """
     parser = argparse.ArgumentParser(
         prog="run_full_evaluation",
-        description="CLIFFGUARD five-fold evaluation runner (blueprint §12.8).",
+        description="CLIFFGUARD five-fold evaluation runner (blueprint §12).",
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help="Optional JSON config file to pre-populate OrchestratorConfig.",
     )
     parser.add_argument(
         "--tier",
@@ -63,10 +70,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--folds",
         nargs="+",
-        choices=sorted(_VALID_FOLDS),
-        default=["A", "B", "C"],
+        choices=_VALID_FOLDS,
+        default=list(_VALID_FOLDS),
         metavar="FOLD",
-        help="Folds to run: A, B, C (default: A B C).",
+        help="Folds to run: A B C D E (default: all five).",
     )
     parser.add_argument(
         "--data-dir",
@@ -76,7 +83,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Root directory for corpus data (default: data/).",
     )
     parser.add_argument(
-        "--output-dir",
+        "--artifacts-dir",
         type=Path,
         default=Path("artifacts/results/"),
         metavar="PATH",
@@ -90,93 +97,71 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Target false-positive rate (default: 0.05).",
     )
     parser.add_argument(
-        "--n-calibration",
-        type=int,
-        default=2000,
-        metavar="INT",
-        help="Calibration corpus size (default: 2000, blueprint §12.2 minimum).",
-    )
-    parser.add_argument(
-        "--n-attack",
-        type=int,
-        default=500,
-        metavar="INT",
-        help="Attack prompts per adversary per scheme (default: 500).",
-    )
-    parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Print the evaluation plan and exit without running folds.",
+        help="Print the evaluation config and exit without running folds.",
     )
     return parser.parse_args(argv)
 
 
-def build_plan(args: argparse.Namespace) -> EvaluationPlan:
-    """Convert parsed args to an EvaluationPlan.
-    Converts tier string to Tier enum.
-    Converts scheme strings to QuantScheme enum via from_string().
-    Uses all nine ThreatModel adversaries (A1–A9) by default."""
+def build_config(args: argparse.Namespace) -> OrchestratorConfig:
+    """Convert parsed args to an OrchestratorConfig."""
     tier = _VALID_TIERS[args.tier]
     schemes = [QuantScheme.from_string(s) for s in args.schemes]
-    adversaries = list(ThreatModel)
-    return EvaluationPlan(
+    return OrchestratorConfig(
+        data_dir=args.data_dir,
+        artifacts_dir=args.artifacts_dir,
         schemes=schemes,
         tiers=[tier],
-        adversaries=adversaries,
         fpr_target=args.fpr_target,
-        n_calibration=args.n_calibration,
-        n_attack=args.n_attack,
     )
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Entry point. Returns exit code (0 = success).
-    If --dry-run: print the plan summary and return 0.
-    Otherwise: attempt each requested fold via runner.execute_fold_*,
-    catch NotImplementedError (Phase A), print a clear message that
-    Phase B wiring is required, and return 0 (not an error in Phase A).
-    Print runner.summary() at the end."""
-    args = parse_args(argv)
-    plan = build_plan(args)
+    """Entry point. Returns exit code (always 0 in Phase A).
 
-    print("[CLIFFGUARD] Evaluation plan:")
+    If --dry-run: print config summary and return 0.
+    Otherwise: attempt each requested fold, catch NotImplementedError
+    (Phase A stub) or RuntimeError (prerequisite not met), print a
+    clear message, and continue to the next fold. Always returns 0.
+    """
+    args = parse_args(argv)
+    config = build_config(args)
+
+    print("[CLIFFGUARD] Evaluation config:")
     print(f"  tier:          {args.tier}")
-    print(f"  schemes:       {[s.name for s in plan.schemes]}")
+    print(f"  schemes:       {[s.name for s in config.schemes]}")
     print(f"  folds:         {args.folds}")
-    print(f"  fpr_target:    {plan.fpr_target}")
-    print(f"  n_calibration: {plan.n_calibration}")
-    print(f"  n_attack:      {plan.n_attack}")
-    print(f"  data_dir:      {args.data_dir}")
-    print(f"  output_dir:    {args.output_dir}")
+    print(f"  fpr_target:    {config.fpr_target}")
+    print(f"  data_dir:      {config.data_dir}")
+    print(f"  artifacts_dir: {config.artifacts_dir}")
 
     if args.dry_run:
         print("[CLIFFGUARD] --dry-run: exiting without running folds.")
         return 0
 
-    runner = EvaluationRunner(plan)
+    orchestrator = FiveFoldOrchestrator(config)
 
     _fold_methods = {
-        "A": runner.execute_fold_a,
-        "B": runner.execute_fold_b,
-        "C": runner.execute_fold_c,
+        "A": orchestrator.execute_fold_a,
+        "B": orchestrator.execute_fold_b,
+        "C": orchestrator.execute_fold_c,
+        "D": orchestrator.execute_fold_d,
+        "E": orchestrator.execute_fold_e,
     }
 
     for fold in args.folds:
         print(f"[CLIFFGUARD] Running Fold {fold}...")
         try:
-            results = _fold_methods[fold]()
-            runner.results.extend(results)
-            print(f"[CLIFFGUARD] Fold {fold}: {len(results)} results.")
+            _fold_methods[fold]()
+            print(f"[CLIFFGUARD] Fold {fold}: complete.")
         except NotImplementedError as exc:
             print(
                 f"[CLIFFGUARD] Fold {fold} skipped (Phase A): {exc}\n"
-                f"             Phase B wiring required for real evaluation."
+                "             Phase B wiring required for real evaluation."
             )
-
-    summary = runner.summary()
-    print("[CLIFFGUARD] Summary:")
-    for key, val in summary.items():
-        print(f"  {key}: {val:.4f}")
+        except RuntimeError as exc:
+            print(f"[CLIFFGUARD] Fold {fold} skipped (prerequisite): {exc}")
 
     return 0
 

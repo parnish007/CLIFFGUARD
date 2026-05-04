@@ -1,7 +1,7 @@
 import pytest
 
 from cliffguard.types import QuantScheme, Tier
-from scripts.run_full_evaluation import build_plan, main, parse_args
+from scripts.run_full_evaluation import build_config, main, parse_args
 
 
 # ---------------------------------------------------------------------------
@@ -20,9 +20,9 @@ def test_parse_args_multiple_schemes() -> None:
     assert args.schemes == ["FP16", "GGUF_Q3_K_M"]
 
 
-def test_parse_args_default_folds() -> None:
+def test_parse_args_default_folds_all_five() -> None:
     args = parse_args(["--tier", "A", "--schemes", "FP16"])
-    assert set(args.folds) == {"A", "B", "C"}
+    assert set(args.folds) == {"A", "B", "C", "D", "E"}
 
 
 def test_parse_args_custom_folds() -> None:
@@ -33,16 +33,6 @@ def test_parse_args_custom_folds() -> None:
 def test_parse_args_default_fpr_target() -> None:
     args = parse_args(["--tier", "A", "--schemes", "FP16"])
     assert args.fpr_target == pytest.approx(0.05)
-
-
-def test_parse_args_default_n_calibration() -> None:
-    args = parse_args(["--tier", "A", "--schemes", "FP16"])
-    assert args.n_calibration == 2000
-
-
-def test_parse_args_default_n_attack() -> None:
-    args = parse_args(["--tier", "A", "--schemes", "FP16"])
-    assert args.n_attack == 500
 
 
 def test_parse_args_dry_run_flag() -> None:
@@ -65,42 +55,54 @@ def test_parse_args_c_plus_tier() -> None:
     assert args.tier == "C_PLUS"
 
 
-# ---------------------------------------------------------------------------
-# build_plan
-# ---------------------------------------------------------------------------
-
-
-def test_build_plan_tier_is_enum() -> None:
+def test_parse_args_artifacts_dir_default() -> None:
+    from pathlib import Path
     args = parse_args(["--tier", "A", "--schemes", "FP16"])
-    plan = build_plan(args)
-    assert plan.tiers == [Tier.A]
+    assert args.artifacts_dir == Path("artifacts/results/")
 
 
-def test_build_plan_scheme_is_enum() -> None:
+def test_parse_args_data_dir_default() -> None:
+    from pathlib import Path
+    args = parse_args(["--tier", "A", "--schemes", "FP16"])
+    assert args.data_dir == Path("data/")
+
+
+# ---------------------------------------------------------------------------
+# build_config
+# ---------------------------------------------------------------------------
+
+
+def test_build_config_tier_is_enum() -> None:
+    args = parse_args(["--tier", "A", "--schemes", "FP16"])
+    config = build_config(args)
+    assert config.tiers == [Tier.A]
+
+
+def test_build_config_scheme_is_enum() -> None:
     args = parse_args(["--tier", "A", "--schemes", "FP16", "GGUF_Q3_K_M"])
-    plan = build_plan(args)
-    assert QuantScheme.FP16 in plan.schemes
-    assert QuantScheme.GGUF_Q3_K_M in plan.schemes
+    config = build_config(args)
+    assert QuantScheme.FP16 in config.schemes
+    assert QuantScheme.GGUF_Q3_K_M in config.schemes
 
 
-def test_build_plan_all_adversaries_present() -> None:
-    from cliffguard.types import ThreatModel
-    args = parse_args(["--tier", "A", "--schemes", "FP16"])
-    plan = build_plan(args)
-    assert set(plan.adversaries) == set(ThreatModel)
-
-
-def test_build_plan_fpr_target_propagated() -> None:
+def test_build_config_fpr_target_propagated() -> None:
     args = parse_args(["--tier", "A", "--schemes", "FP16", "--fpr-target", "0.10"])
-    plan = build_plan(args)
-    assert plan.fpr_target == pytest.approx(0.10)
+    config = build_config(args)
+    assert config.fpr_target == pytest.approx(0.10)
 
 
-def test_build_plan_invalid_scheme_raises_value_error() -> None:
+def test_build_config_invalid_scheme_raises_value_error() -> None:
     args = parse_args(["--tier", "A", "--schemes", "FP16"])
     args.schemes = ["NOT_A_SCHEME"]
     with pytest.raises(ValueError, match="Unknown QuantScheme"):
-        build_plan(args)
+        build_config(args)
+
+
+def test_build_config_artifacts_dir_propagated() -> None:
+    from pathlib import Path
+    args = parse_args(["--tier", "A", "--schemes", "FP16", "--artifacts-dir", "out/"])
+    config = build_config(args)
+    assert config.artifacts_dir == Path("out/")
 
 
 # ---------------------------------------------------------------------------
@@ -113,7 +115,7 @@ def test_main_dry_run_returns_0(capsys: pytest.CaptureFixture[str]) -> None:
     assert code == 0
 
 
-def test_main_dry_run_prints_plan(capsys: pytest.CaptureFixture[str]) -> None:
+def test_main_dry_run_prints_config(capsys: pytest.CaptureFixture[str]) -> None:
     main(["--tier", "B", "--schemes", "FP16", "GGUF_Q3_K_M", "--dry-run"])
     out = capsys.readouterr().out
     assert "tier" in out
@@ -135,7 +137,14 @@ def test_main_phase_a_prints_phase_b_message(
     assert "Phase B" in out
 
 
-def test_main_prints_summary(capsys: pytest.CaptureFixture[str]) -> None:
-    main(["--tier", "A", "--schemes", "FP16", "--folds", "A"])
+def test_main_fold_b_skipped_when_fold_a_not_run(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    main(["--tier", "A", "--schemes", "FP16", "--folds", "B"])
     out = capsys.readouterr().out
-    assert "Summary" in out
+    assert "prerequisite" in out or "Fold A" in out
+
+
+def test_main_all_folds_returns_0(capsys: pytest.CaptureFixture[str]) -> None:
+    code = main(["--tier", "A", "--schemes", "FP16"])
+    assert code == 0
