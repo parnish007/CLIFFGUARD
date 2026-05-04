@@ -1,0 +1,26 @@
+# CLIFFGUARD example configuration
+# Copy to configs/my_run.yaml and edit before running.
+
+tier: "A"                    # A | B | C | C_PLUS
+
+schemes:                     # QuantScheme names to evaluate
+  - FP16
+  - NF4
+  - GGUF_Q4_K_M
+  - GGUF_Q3_K_M
+
+folds: [A, B, C, D, E]      # Folds to run (A = calibration first)
+
+data_dir: "data/"
+artifacts_dir: "artifacts/"
+
+fpr_target: 0.05             # Pre-registered FPR target
+n_calibration: 2000          # Fold A benign prompts (blueprint §12.2)
+n_attack: 500                # Attack prompts per adversary per scheme
+
+kenlm:
+  order_tier_ab: 5           # blueprint §5.5 full deployment
+  order_tier_c: 3            # decisions_log C25: Tier C/C+ budget
+
+hardware:
+  description: "unspecified" # e.g. "RTX 5060 8GB, Ubuntu 24.04"
