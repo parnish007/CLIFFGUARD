@@ -1,117 +1,158 @@
-# CLIFFGUARD
+<div align="center">
 
-CLIFFGUARD is an edge-native, quantization-aware, black-box-tolerant, RL-adapted defense system against prompt injection at the safety cliff. The system is built around a **safety-cliff hypothesis**: post-training quantization degrades RLHF-installed safety behavior non-linearly in bit-width, and the marginal degradation between 4-bit and 3-bit dominates the marginal capability loss; therefore defenses must be placed in front of the model and must be quantization-aware in their thresholds, not their weights. CLIFFGUARD comprises eight named components — VESTIBULE, PROBE, B-PROBE, TRIPWIRE, CONDUCTOR, LOOKOUT, LADDER, and ATTEST — orchestrated by a LinUCB contextual bandit that adapts gate weights online from sparse incident feedback. The five pre-registered hypotheses driving the evaluation are: **H1** (cliff existence — a κ ≥ 0.25 refusal-margin jump at the Q4→Q3 boundary in at least two model families), **H2** (FPR decoupling, white-box — PROBE-RM FPR varies < 0.02 across schemes after per-quantization calibration), **H3** (FPR decoupling, black-box — same property for B-PROBE-LOGIT), **H4** (composition gain — the full gate stack achieves strictly smaller ABR than any single primitive at matched FPR), and **H5** (Tier-C structural weakness — Tier C without a dedicated classifier shows no statistically significant ABR reduction against the cliff exploiter; Tier C+ with PromptGuard-2-22M-INT4 does).
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:0D1117,100:1a1a2e&text=CLIFFGUARD&desc=Edge-Native%20Prompt%20Injection%20Defense%20at%20the%20Safety%20Cliff&fontSize=45&descSize=17&height=210&fontColor=fff" width="100%" />
 
-## Repository layout
+[![Typing SVG](https://readme-typing-svg.demolab.com?font=Fira+Code&size=15&pause=1000&color=58a6ff&width=700&lines=Quantization-aware+prompt+injection+defense;Safety+cliff%3A+where+RLHF+alignment+collapses;Eleven+primitives.+Four+tiers.+Five+hypotheses.)](https://git.io/typing-svg)
 
-The `cliffguard/` directory is the main Python package, containing sub-packages for every named component (vestibule, probe, bprobe, tripwire, conductor, lookout, ladder, attest) and the eval/ sub-package (stats, figures, drift simulation, five-fold orchestrator, and the reproducibility manifest builder). The `tests/` directory contains the full pytest suite covering all Phase A scaffolding. The `scripts/` directory holds standalone CLI entry points: `dry_run.py` (end-to-end pipeline smoke test), `run_full_evaluation.py` (five-fold orchestrator CLI), `build_preregistration_manifest.py` (reproducibility manifest CLI), `download_fold_a.py` (corpus download helper), and `generate_cliff_corpus.py`. The `docs/` directory holds `preregistration.md`, the pre-registered statistical analysis plan that fixes all hypotheses, thresholds, and acceptance criteria before any data is collected. The `data/` directory (gitignored) is where downloaded corpora land; see **Data acquisition** below. The `artifacts/` directory (gitignored) receives calibration tables, ARPA files, direction vectors, result JSONLs, figures, and reproducibility manifests produced during evaluation runs. The `configs/` directory holds YAML configuration files; `example.yaml` is the canonical starting point.
+[![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue?style=for-the-badge&logo=python)](https://www.python.org/)
+[![mypy strict](https://img.shields.io/badge/mypy-strict-brightgreen?style=for-the-badge)](https://mypy-lang.org/)
+[![ruff](https://img.shields.io/badge/ruff-passing-orange?style=for-the-badge)](https://docs.astral.sh/ruff/)
+[![License MIT](https://img.shields.io/badge/License-MIT-lightgrey?style=for-the-badge)](LICENSE)
+[![arXiv cs.CR](https://img.shields.io/badge/arXiv-cs.CR-red?style=for-the-badge&label=arXiv&message=cs.CR)](https://arxiv.org/)
+[![Phase A complete](https://img.shields.io/badge/Phase%20A-complete-brightgreen?style=for-the-badge)](docs/engineering_reference.md)
 
-## Hardware tiers
+**[What is it](#the-safety-cliff) · [Architecture](#system-overview) · [Setup](#quick-start) · [Math](#five-pre-registered-hypotheses) · [Engineering Ref](docs/engineering_reference.md)**
 
-### Tier A — RTX 5060 8 GB
+</div>
 
-Tier A targets an RTX 5060 8 GB consumer GPU running Qwen-2.5-7B or Llama-3-8B in NF4 (bitsandbytes) or AWQ-INT4. The memory budget fits the model (~5 GB), KV cache (~1 GB at 4 K ctx), an optional judge classifier (DeBERTa-86M FP16 or Llama Guard 3-1B-INT4 at 440 MB), and engine overhead — approximately 7 GB used with 1 GB headroom. All eleven gates are active including LOOKOUT-JG (with N=3 paraphrases); PROBE-RM, PROBE-MT, and PROBE-HD operate over full multi-layer residual streams via `output_hidden_states=True`; CONDUCTOR runs full LinUCB with |A|=16 arms.
+## The Safety Cliff
 
-**Quantization schemes:** FP16, INT8, NF4, AWQ_INT4, GGUF_Q6_K, GGUF_Q5_K_M, GGUF_Q4_K_M.
+Post-training quantization (PTQ) degrades RLHF-installed safety behavior non-linearly in bit-width. A model that reliably refuses harmful requests at FP16 or NF4 may comply at Q3_K_M — not because the model's capabilities degrade proportionally (MMLU drops by ~8 points while toxicity safety drops ~50), but because the refusal direction in the residual stream narrows and the margin between harmful and harmless distributions collapses. This boundary, empirically near Q3_K_M for Llama-3 and Mistral families, is the **safety cliff**. Pre-hypothesis H1 asserts that both the geometric refusal-margin metric Δ_cliff and the behavioral attack-success-rate metric Δ_B-cliff exhibit a jump of κ ≥ 0.25 at the same quantization boundary, in at least two of three model families.
 
-**Active gates:** VESTIBULE-LZ, VESTIBULE-PS, PROBE-RM, PROBE-MT, PROBE-HD, TRIPWIRE-H, TRIPWIRE-R, LOOKOUT-CT, LOOKOUT-JG, B-PROBE-LOGIT, B-PROBE-CONSISTENCY, ATTEST-WH.
+Defenses baked into model weights — RLHF fine-tuning, constitutional training, input-output classifiers that run inside the model — cannot survive quantization if the cliff hypothesis holds, because the quantized residual stream no longer encodes the safety signal the defense was trained on. The correct architectural response is to place defenses **in front of the model**, operating on input strings and summary statistics of model outputs, and to make the thresholds of those defenses **quantization-aware** via a per-scheme calibration map. Per the FPR-decoupling theorem (H2, H3), the false-positive rate of these gates is independent of quantization scheme up to calibration — the same gate system is portable across NF4, AWQ-INT4, Q4_K_M, and Q3_K_M without retraining. This is what CLIFFGUARD implements.
 
-**Install:**
+## System Overview
+
+```mermaid
+flowchart LR
+    Input([User Prompt]) --> V
+
+    subgraph V[VESTIBULE]
+        LZ[LZ — compression ratio]
+        PS[PS — provenance spotlight]
+    end
+
+    V --> ENGINE([Model Inference])
+
+    ENGINE --> PR
+
+    subgraph PR[PROBE]
+        RM[RM — refusal margin]
+        MT[MT — margin trajectory]
+        HD[HD — harmfulness direction]
+    end
+
+    ENGINE --> TW
+
+    subgraph TW[TRIPWIRE]
+        TH[H — entropy CUSUM]
+        TR[R — reference ratio]
+    end
+
+    PR --> CONDUCTOR
+    TW --> CONDUCTOR
+
+    ENGINE --> LO
+
+    subgraph LO[LOOKOUT]
+        CT[CT — canary token]
+        JG[JG — compliance judge]
+    end
+
+    LO --> CONDUCTOR
+
+    ATTEST-WH([ATTEST-WH boot]) -.-> CONDUCTOR
+
+    CONDUCTOR --> ALLOW([ALLOW])
+    CONDUCTOR --> BLOCK([BLOCK])
+```
+
+## Five Pre-Registered Hypotheses
+
+| Hypothesis | Claim | Metric | Acceptance |
+|---|---|---|---|
+| **H1** Cliff existence | Δ_cliff and Δ_B-cliff jump ≥ κ at the same boundary in ≥ 2 of 3 families | detect_cliff_boundary() agrees across families | κ = 0.25 at Q3_K_M or below, ≥ 2/3 families |
+| **H2** FPR decoupling (white-box) | PROBE-RM FPR varies < ε across {FP16, NF4, AWQ-INT4, Q4_K_M, Q3_K_M} after calibration | max(FPR) − min(FPR) across schemes | ε = 0.02 at fpr_target = 0.05 |
+| **H3** FPR decoupling (black-box) | B-PROBE-LOGIT FPR varies < ε with strictly lower TPR than PROBE-RM | Same as H2 for B-PROBE-LOGIT; TPR comparison | ε = 0.02 AND TPR(B-PROBE) < TPR(PROBE-RM) |
+| **H4** Composition gain | Full stack ABR < any single primitive at matched FPR | Wilcoxon signed-rank (full stack vs best single) | p < 0.01 (Bonferroni-corrected α) |
+| **H5** Tier-C weakness | Tier C: no significant ABR reduction vs baseline; Tier C+: significant | Wilcoxon p for each vs no-defense baseline | p(Tier C) ≥ 0.05 AND p(Tier C+) < 0.05 |
+
+## Four Hardware Tiers
+
+| Tier | Hardware | Schemes | Active Gates | Scope |
+|---|---|---|---|---|
+| **A** | RTX 5060 8 GB | FP16, NF4, AWQ-INT4, GGUF Q4–Q6 | All 12 (including LOOKOUT-JG) | Full stack, LinUCB \|A\|=16 |
+| **B** | Raspberry Pi 5 8 GB CPU | GGUF Q4_K_M, Q3_K_M | All except LOOKOUT-JG (11 gates) | LinUCB \|A\|=8; B-PROBE-CONSISTENCY substitutes for JG |
+| **C** | 2 GB embedded (RK3588 / Jetson / Pi 4) | GGUF Q3_K_M, IQ3_XXS, Q2_K, RKNN W8A8 | VESTIBULE-LZ, VESTIBULE-PS, ATTEST-WH | Narrow scope; no bandit; **not defended against A7** |
+| **C+** | 2 GB embedded + PromptGuard-2-22M-INT4 | GGUF Q3_K_M, IQ3_XXS, RKNN W8A8 | VESTIBULE-LZ, VESTIBULE-PS, B-PROBE-LOGIT, ATTEST-WH | Modest scope; static weights; H5 tests this tier |
+
+## Quick Start
+
+<details>
+<summary><b>Tier A — GPU (RTX 5060)</b></summary>
+
 ```bash
-git clone https://github.com/parnish007/CLIFFGUARD && cd CLIFFGUARD
+git clone https://github.com/parnish007/CLIFFGUARD.git && cd CLIFFGUARD
 uv sync --extra gpu
-# Note: autoawq and vllm require Linux.
-```
-
-### Tier B — Raspberry Pi 5 8 GB
-
-Tier B targets a Raspberry Pi 5 8 GB CPU running Qwen-2.5-1.5B or 3B at Q4_K_M via llama.cpp (~0.9 GB / 1.8 GB), achieving approximately 5–7 tok/s and 3–5 tok/s respectively. LOOKOUT-JG is omitted because N extra prefills would more than double per-request latency; B-PROBE-CONSISTENCY substitutes. PROBE runs with residual-stream access via llama.cpp's eval-callback or a small patch exposing intermediate residuals. CONDUCTOR is reduced to |A|=8 arms.
-
-**Quantization schemes:** GGUF_Q4_K_M, GGUF_Q3_K_M.
-
-**Active gates:** VESTIBULE-LZ, VESTIBULE-PS, PROBE-RM, PROBE-MT, PROBE-HD, TRIPWIRE-H, TRIPWIRE-R, LOOKOUT-CT, B-PROBE-LOGIT, B-PROBE-CONSISTENCY, ATTEST-WH.
-
-**Install:**
-```bash
-uv sync --extra gpu
-# Note: llama-cpp-python builds on all platforms including ARM64.
-```
-
-### Tier C — 2 GB embedded (HONEST SCOPE)
-
-Tier C targets 2 GB-class embedded boards (RK3588 NPU W8A8, Pi 4 8 GB, Jetson Orin Nano 4 GB) running TinyLlama-1.1B or Qwen-2.5-0.5B/1.5B at Q3_K_M or Q4_K_M. Only VESTIBULE-LZ, VESTIBULE-PS, and ATTEST-WH are active; there is no bandit — gate weights are fixed at deployment because incident reward signal is too sparse to learn online. **Plain-language statement: Tier C is not meaningfully defended against A7 (the quantization-cliff exploiter)**; it is suitable only for single-task fixed-grammar assistants, narrow-domain controlled-input deployments, and read-only assistants where tool side-effects are mediated off-device.
-
-**Quantization schemes:** GGUF_Q3_K_M, GGUF_IQ3_XXS, GGUF_Q2_K, RKNN_W8A8.
-
-**Active gates:** VESTIBULE-LZ, VESTIBULE-PS, ATTEST-WH.
-
-**Install:**
-```bash
-uv sync
-# No --extra gpu needed for scaffolding or Tier C deployment.
-```
-
-### Tier C+ — 2 GB embedded with PromptGuard-2-22M
-
-Tier C+ uses the same hardware budget as Tier C but adds Meta's PromptGuard-2-22M classifier (DeBERTa-xsmall, ~86 MB FP16 / ~25–30 MB INT4 estimated, MIT-licensed) which classifies inputs as benign or malicious via an energy-based loss for OOD robustness. The memory budget fits the Q3_K_M base model (~1.4 GB), KV cache (~150 MB), PromptGuard-2-22M-INT4 (~30 MB), and PROBE-RM final-layer projector (~50 MB) — approximately 1.65 GB total. Tier C+ reduces but does not eliminate Tier C's structural weakness; H5 is pre-registered to test this claim.
-
-**Quantization schemes:** GGUF_Q3_K_M, GGUF_IQ3_XXS, RKNN_W8A8.
-
-**Active gates:** VESTIBULE-LZ, VESTIBULE-PS, B-PROBE-LOGIT, ATTEST-WH.
-
-**Install:**
-```bash
-uv sync
-# No --extra gpu needed for scaffolding or Tier C+ deployment.
-```
-
-## Installation
-
-**Tier A (GPU — RTX 5060 or equivalent):**
-```bash
-git clone https://github.com/parnish007/CLIFFGUARD && cd CLIFFGUARD
-uv sync --extra gpu
-```
-Note: `autoawq` and `vllm` are Linux-only and are skipped automatically on other platforms. `llama-cpp-python` builds on all platforms.
-
-**Tier B (Raspberry Pi 5 / ARM64 CPU):**
-```bash
-uv sync --extra gpu
-```
-Note: `llama-cpp-python` builds on ARM64; `torch` and `transformers` are also available for Pi 5. The `autoawq` and `vllm` extras are silently skipped on non-Linux.
-
-**Tier C / C+ (2 GB embedded — scaffolding only):**
-```bash
-uv sync
-```
-No GPU extra is required for Phase A scaffolding or for the narrow Tier C gate set. Phase B engine integration for embedded targets (RKNN, llama.cpp ARM) requires platform-specific build steps described in blueprint §18.
-
-## Data acquisition
-
-The `data/` directory is gitignored and must be populated before any Phase B inference run. `scripts/download_fold_a.py` automates the download of the Anthropic-HH-RLHF dataset and OpenAssistant-OASST1, which together form the Fold A calibration corpus. Run it with `uv run python scripts/download_fold_a.py` and follow the printed instructions for any datasets that require manual acceptance of terms. The fold structure, corpus sizes, and required SHA-256 hashes are documented in blueprint §12.2. Real data is required for calibration (Fold A), cliff measurement (Fold B), defense composition (Fold C), bandit drift simulation (Fold D), and BCN-2 construction (Fold E); the Phase A dry run does not require any data files.
-
-## Running the evaluation
-
-**1. Dry run — no data, no GPU required:**
-```bash
+# Note: autoawq and vllm require Linux; both are skipped automatically on Windows/macOS.
 uv run python scripts/dry_run.py --tier A --scheme FP16
 ```
 
-**2. Full evaluation — requires data and GPU:**
+Expected output: pipeline completes, all 12 gates produce verdicts, block decision printed.
+
+</details>
+
+<details>
+<summary><b>Tier B — Raspberry Pi 5</b></summary>
+
 ```bash
-uv run python scripts/run_full_evaluation.py \
-  --config configs/example.yaml
+git clone https://github.com/parnish007/CLIFFGUARD.git && cd CLIFFGUARD
+uv sync --extra gpu
+# llama-cpp-python builds on all platforms including ARM64.
+uv run python scripts/dry_run.py --tier B --scheme GGUF_Q4_K_M
 ```
 
-**3. Build reproducibility manifest:**
+</details>
+
+<details>
+<summary><b>Tier C / C+ — Embedded</b></summary>
+
 ```bash
-uv run python scripts/build_preregistration_manifest.py \
-  --tier A --schemes FP16 NF4 GGUF_Q4_K_M GGUF_Q3_K_M
+git clone https://github.com/parnish007/CLIFFGUARD.git && cd CLIFFGUARD
+uv sync
+# No --extra gpu needed for scaffolding or Tier C deployment.
+uv run python scripts/dry_run.py --tier C --scheme GGUF_Q3_K_M
 ```
 
-## Pre-registration and reproducibility
+For Tier C+: `--tier C_PLUS`.
 
-All five hypotheses (H1–H5), primitive thresholds, acceptance criteria (κ = 0.25 for H1, ε = 0.02 for H2/H3, α = 0.01 Bonferroni-corrected for H4/H5), and the statistical analysis plan are fixed in `docs/preregistration.md` before any data is collected or any model inference is run. The pre-registration document is SHA-256 hashed and recorded in every reproducibility manifest produced by `scripts/build_preregistration_manifest.py`. A manifest is considered valid if the git hash is present and not UNKNOWN, the preregistration hash matches the current `docs/preregistration.md`, and all listed data files exist on disk at verification time.
+</details>
+
+## Repository Layout
+
+| Path | Purpose |
+|---|---|
+| `cliffguard/` | Main Python package — eight component sub-packages plus `eval/` |
+| `tests/` | Full pytest suite (939 tests, Phase A scaffolding) |
+| `scripts/` | CLI entry points: dry_run, run_full_evaluation, build_manifest, download_fold_a |
+| `docs/` | Documentation: preregistration, architecture, math, setup, engineering reference |
+| `data/` | Gitignored — populated by `scripts/download_fold_a.py` before Phase B |
+| `artifacts/` | Gitignored — calibration tables, ARPA files, result JSONLs, figures, manifests |
+| `configs/` | YAML configuration files for evaluation runs |
+| `pyproject.toml` | Build, dependency, and tool configuration |
+| `configs/example.yaml` | Canonical starting-point configuration (copy and edit) |
+
+## Documentation
+
+- [docs/what_is_it.md](docs/what_is_it.md) — Plain-language introduction and FAQ
+- [docs/architecture.md](docs/architecture.md) — System architecture and component diagrams
+- [docs/math.md](docs/math.md) — Mathematical foundations and formal definitions
+- [docs/setup.md](docs/setup.md) — Device-by-device setup guide
+- [docs/engineering_reference.md](docs/engineering_reference.md) — Module API reference for Phase B
+
+## Evaluation
+
+The test suite currently passes 939 tests with mypy strict on 53 source files and ruff clean on all Python. Phase A is scaffolding: all components are implemented as Phase A stubs that accept synthetic data, exercise the full pipeline shape, and verify API contracts without running any real model inference. Phase B wires real inference-engine adapters (transformers + bitsandbytes NF4, autoawq, vLLM, llama.cpp eval-callback) on the appropriate hardware tier and replaces synthetic arrays with real residual streams and logprobs. Full evaluation follows the pre-registered five-fold protocol documented in `docs/preregistration.md`: Fold A calibrates thresholds, Folds B/C measure cliff and defense composition, Fold D tests bandit drift recovery, and Fold E constructs the BCN-2 cross-family cliff dataset.
 
 ## Citation
 
@@ -125,3 +166,9 @@ All five hypotheses (H1–H5), primitive thresholds, acceptance criteria (κ = 0
   note    = {Preprint}
 }
 ```
+
+<div align="center">
+
+<img src="https://capsule-render.vercel.app/api?section=footer&type=waving&color=0:0D1117,100:1a1a2e&height=80" width="100%" />
+
+</div>
