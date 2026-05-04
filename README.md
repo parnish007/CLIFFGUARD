@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:0D1117,100:1a1a2e&text=CLIFFGUARD&desc=Edge-Native%20Prompt%20Injection%20Defense%20at%20the%20Safety%20Cliff&fontSize=45&descSize=17&height=210&fontColor=fff" width="100%" />
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:0D1117,100:1a1a2e&height=210&section=header&text=CLIFFGUARD&fontSize=50&fontColor=fff&animation=twinkling&fontAlignY=36&desc=Edge-Native+Prompt+Injection+Defense+at+the+Safety+Cliff&descAlignY=58&descSize=17" width="100%"/>
 
-[![Typing SVG](https://readme-typing-svg.demolab.com?font=Fira+Code&size=15&pause=1000&color=58a6ff&width=700&lines=Quantization-aware+prompt+injection+defense;Safety+cliff%3A+where+RLHF+alignment+collapses;Eleven+primitives.+Four+tiers.+Five+hypotheses.)](https://git.io/typing-svg)
+[![Typing SVG](https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=18&pause=1000&color=58A6FF&center=true&vCenter=true&width=700&lines=Quantization-aware+prompt+injection+defense;Safety+cliff%3A+where+RLHF+alignment+collapses;Eleven+primitives.+Four+tiers.+Five+hypotheses.;Phase+A+complete+%E2%80%94+939+tests+passing)](https://git.io/typing-svg)
 
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue?style=for-the-badge&logo=python)](https://www.python.org/)
 [![mypy strict](https://img.shields.io/badge/mypy-strict-brightgreen?style=for-the-badge)](https://mypy-lang.org/)
@@ -15,11 +15,35 @@
 
 </div>
 
+> **The one-line version:** A quantized edge LLM that refuses harmful
+> requests at FP16 may silently comply at Q3_K_M. CLIFFGUARD sits
+> in front of the model, detects this regime shift, and blocks the
+> attack — without retraining the model or requiring GPU inference
+> for the defense layer.
+
 ## The Safety Cliff
 
-Post-training quantization (PTQ) degrades RLHF-installed safety behavior non-linearly in bit-width. A model that reliably refuses harmful requests at FP16 or NF4 may comply at Q3_K_M — not because the model's capabilities degrade proportionally (MMLU drops by ~8 points while toxicity safety drops ~50), but because the refusal direction in the residual stream narrows and the margin between harmful and harmless distributions collapses. This boundary, empirically near Q3_K_M for Llama-3 and Mistral families, is the **safety cliff**. Pre-hypothesis H1 asserts that both the geometric refusal-margin metric Δ_cliff and the behavioral attack-success-rate metric Δ_B-cliff exhibit a jump of κ ≥ 0.25 at the same quantization boundary, in at least two of three model families.
+Post-training quantization degrades RLHF safety alignment
+non-linearly. A model that reliably refuses harmful requests at FP16
+may comply at Q3_K_M — not because capability degrades proportionally
+(MMLU drops ~8 points) but because the refusal direction in the
+residual stream narrows and the margin between harmful and harmless
+distributions collapses. This boundary, empirically near Q3_K_M for
+Llama-3 and Mistral, is the **safety cliff**. Hypothesis H1
+pre-registers a κ ≥ 0.25 jump in both the geometric refusal-direction
+metric Δ_cliff and the behavioral attack-success-rate metric
+Δ_B-cliff at the same quantization boundary, in at least two of
+three model families.
 
-Defenses baked into model weights — RLHF fine-tuning, constitutional training, input-output classifiers that run inside the model — cannot survive quantization if the cliff hypothesis holds, because the quantized residual stream no longer encodes the safety signal the defense was trained on. The correct architectural response is to place defenses **in front of the model**, operating on input strings and summary statistics of model outputs, and to make the thresholds of those defenses **quantization-aware** via a per-scheme calibration map. Per the FPR-decoupling theorem (H2, H3), the false-positive rate of these gates is independent of quantization scheme up to calibration — the same gate system is portable across NF4, AWQ-INT4, Q4_K_M, and Q3_K_M without retraining. This is what CLIFFGUARD implements.
+Defenses baked into model weights cannot survive quantization if the
+cliff hypothesis holds — the quantized residual stream no longer
+encodes the safety signal the defense was trained on. The correct
+response is to place defenses **in front of the model** and make
+their thresholds **quantization-aware** via per-scheme calibration.
+Per the FPR-decoupling theorem (H2, H3): the false-positive rate of
+these gates is independent of quantization scheme up to calibration —
+the same gate system is portable across NF4, AWQ-INT4, Q4_K_M, and
+Q3_K_M without retraining. This is what CLIFFGUARD implements.
 
 ## System Overview
 
@@ -69,15 +93,20 @@ flowchart LR
 
 ## Five Pre-Registered Hypotheses
 
-| Hypothesis | Claim | Metric | Acceptance |
-|---|---|---|---|
-| **H1** Cliff existence | Δ_cliff and Δ_B-cliff jump ≥ κ at the same boundary in ≥ 2 of 3 families | detect_cliff_boundary() agrees across families | κ = 0.25 at Q3_K_M or below, ≥ 2/3 families |
-| **H2** FPR decoupling (white-box) | PROBE-RM FPR varies < ε across {FP16, NF4, AWQ-INT4, Q4_K_M, Q3_K_M} after calibration | max(FPR) − min(FPR) across schemes | ε = 0.02 at fpr_target = 0.05 |
-| **H3** FPR decoupling (black-box) | B-PROBE-LOGIT FPR varies < ε with strictly lower TPR than PROBE-RM | Same as H2 for B-PROBE-LOGIT; TPR comparison | ε = 0.02 AND TPR(B-PROBE) < TPR(PROBE-RM) |
-| **H4** Composition gain | Full stack ABR < any single primitive at matched FPR | Wilcoxon signed-rank (full stack vs best single) | p < 0.01 (Bonferroni-corrected α) |
-| **H5** Tier-C weakness | Tier C: no significant ABR reduction vs baseline; Tier C+: significant | Wilcoxon p for each vs no-defense baseline | p(Tier C) ≥ 0.05 AND p(Tier C+) < 0.05 |
+| | Hypothesis | Claim | Metric | Acceptance |
+|---|---|---|---|---|
+| 🏔️ | **H1** Cliff existence | Δ_cliff and Δ_B-cliff jump ≥ κ at same boundary, ≥ 2/3 families | `detect_cliff_boundary()` agrees across families | κ = 0.25 at Q3_K_M or below |
+| 📊 | **H2** FPR decoupling (white-box) | PROBE-RM FPR varies < ε across 5 schemes after calibration | max(FPR) − min(FPR) | ε = 0.02 at fpr_target = 0.05 |
+| 🔲 | **H3** FPR decoupling (black-box) | B-PROBE-LOGIT FPR varies < ε, TPR < PROBE-RM | Same as H2 + TPR comparison | ε = 0.02 AND TPR(B-PROBE) < TPR(PROBE) |
+| 🔀 | **H4** Composition gain | Full stack ABR < any single primitive at matched FPR | Wilcoxon signed-rank | p < 0.01 (Bonferroni α) |
+| ⚠️ | **H5** Tier C weakness | Tier C: no significant ABR gain; Tier C+: significant | Wilcoxon p vs baseline | p(C) ≥ 0.05 AND p(C+) < 0.05 |
 
 ## Four Hardware Tiers
+
+![Tier A](https://img.shields.io/badge/Tier_A-RTX_5060_8GB-dc2626?style=flat-square)
+![Tier B](https://img.shields.io/badge/Tier_B-Pi_5_8GB-d97706?style=flat-square)
+![Tier C](https://img.shields.io/badge/Tier_C-2GB_embedded-16a34a?style=flat-square)
+![Tier C+](https://img.shields.io/badge/Tier_C%2B-2GB_%2B_PG2-2563eb?style=flat-square)
 
 | Tier | Hardware | Schemes | Active Gates | Scope |
 |---|---|---|---|---|
@@ -151,6 +180,10 @@ For Tier C+: `--tier C_PLUS`.
 - [docs/engineering_reference.md](docs/engineering_reference.md) — Module API reference for Phase B
 
 ## Evaluation
+
+![Tests](https://img.shields.io/badge/tests-939_passing-brightgreen?style=flat-square)
+![mypy](https://img.shields.io/badge/mypy-strict_53_files-brightgreen?style=flat-square)
+![ruff](https://img.shields.io/badge/ruff-clean-orange?style=flat-square)
 
 The test suite currently passes 939 tests with mypy strict on 53 source files and ruff clean on all Python. Phase A is scaffolding: all components are implemented as Phase A stubs that accept synthetic data, exercise the full pipeline shape, and verify API contracts without running any real model inference. Phase B wires real inference-engine adapters (transformers + bitsandbytes NF4, autoawq, vLLM, llama.cpp eval-callback) on the appropriate hardware tier and replaces synthetic arrays with real residual streams and logprobs. Full evaluation follows the pre-registered five-fold protocol documented in `docs/preregistration.md`: Fold A calibrates thresholds, Folds B/C measure cliff and defense composition, Fold D tests bandit drift recovery, and Fold E constructs the BCN-2 cross-family cliff dataset.
 

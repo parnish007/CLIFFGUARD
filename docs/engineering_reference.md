@@ -1,6 +1,22 @@
+<div align="center">
+
+[← README](../README.md) &nbsp;|&nbsp;
+[What is it](what_is_it.md) &nbsp;|&nbsp;
+[Architecture](architecture.md) &nbsp;|&nbsp;
+[Math](math.md) &nbsp;|&nbsp;
+[Setup](setup.md) &nbsp;|&nbsp;
+[Engineering Ref](engineering_reference.md)
+
+</div>
+
 # Engineering Reference
 
 Reference for Phase B implementers wiring real inference engines to the CLIFFGUARD scaffolding. All modules listed below are fully implemented in Phase A with synthetic stubs; Phase B replaces the stubs with real engine adapters and real calibration data.
+
+> **Who this document is for:** Phase B implementers wiring real
+> inference engines to the scaffolding. If you are running the dry
+> run or trying the evaluation for the first time, start with
+> [docs/setup.md](setup.md) instead.
 
 ## Module Map
 
@@ -39,29 +55,23 @@ Phase B inference hooks live in `cliffguard/engines/`. Each adapter exposes two 
 
 Follow these steps in order. Each step depends on the previous.
 
-1. **Implement `get_hidden_states`** in the engine adapter matching your target hardware (see table above). Verify by running `scripts/dry_run.py` in Phase B mode — it should produce real margin values, not synthetic floats.
-
-2. **Calibrate the refusal direction:** run `eval/refusal_direction.py` on the Fold A corpus. This produces `r_hat_{model}_{scheme}.npy` in `artifacts/directions/`. One direction vector per (model family, quantization scheme) pair.
-
-3. **Calibrate the harmfulness direction:** run `eval/harmfulness_direction.py` on Fold A. Produces `h_hat_{model}_{scheme}.npy`. Uses Zhao et al.'s difference-in-means recipe on the user-instruction token position.
-
-4. **Train KenLM reference model:** run `eval/kenlm_trainer.train_and_save` on the Fold A benign corpus. Order 5 for Tier A/B (`kenlm.order_tier_ab`), order 3 for Tier C/C+ (`kenlm.order_tier_c`). Produces `artifacts/kenlm/benign_{scheme}.arpa`.
-
-5. **Build calibration tables:** run `eval/threshold_calibrator.build_calibration_table` for each primitive on the Fold A benign corpus. This sets per-scheme thresholds τ_q targeting `fpr_target = 0.05`. Produces `artifacts/calibration/{primitive}_{scheme}.json`.
-
-6. **Wire FiveFoldOrchestrator:** implement `execute_fold_b` and `execute_fold_c` in `eval/five_fold_orchestrator.py` (currently raise `NotImplementedError`). These methods require the calibration tables and direction vectors produced in steps 2–5.
-
-7. **Run full evaluation:**
-   ```bash
-   uv run python scripts/run_full_evaluation.py --config configs/my_run.yaml
-   ```
-
-8. **Capture reproducibility manifest:**
-   ```bash
-   uv run python scripts/build_preregistration_manifest.py \
-     --tier A --schemes FP16 NF4 GGUF_Q4_K_M GGUF_Q3_K_M
-   ```
-   The manifest SHA-256-hashes all data files, artifact files, and `docs/preregistration.md`. A manifest is valid if the git hash is present, the preregistration hash matches, and all data files exist on disk.
+- [ ] **Step 1** — Implement `get_hidden_states` in the engine
+  adapter matching your hardware tier.
+- [ ] **Step 2** — Calibrate refusal direction:
+  `eval/refusal_direction.calibrate_refusal_direction()`
+- [ ] **Step 3** — Calibrate harmfulness direction:
+  `eval/harmfulness_direction.calibrate_harmfulness_direction()`
+- [ ] **Step 4** — Train KenLM reference model:
+  `eval/kenlm_trainer.train_and_save()` (order=5 Tier A/B,
+  order=3 Tier C/C+)
+- [ ] **Step 5** — Build calibration tables:
+  `eval/threshold_calibrator.build_calibration_table()` per primitive
+- [ ] **Step 6** — Implement `execute_fold_b` and `execute_fold_c`
+  in `eval/five_fold_orchestrator.py`
+- [ ] **Step 7** — Run full evaluation:
+  `scripts/run_full_evaluation.py --config configs/my_run.yaml`
+- [ ] **Step 8** — Build reproducibility manifest:
+  `scripts/build_preregistration_manifest.py`
 
 ## Key Constants
 
@@ -88,4 +98,17 @@ Gate firing direction matters for the CONDUCTOR feature vector and for threshold
 | LOOKOUT-JG | |
 | B-PROBE-LOGIT | |
 
-**Calibration implication:** for Fires-HIGH gates, τ_q is the empirical (1 − α) quantile of the benign score distribution. For Fires-LOW gates, τ_q is the empirical α quantile. Both targeting the same FPR = α = 0.05. The `threshold_calibrator` in `eval/threshold_calibrator.py` handles this automatically via the `fires_high` parameter.
+> **Calibration implication:** for Fires-HIGH gates, τ_q is the
+> empirical (1 − α) quantile of the benign score distribution.
+> For Fires-LOW gates, τ_q is the empirical α quantile.
+> Both target FPR = α = 0.05. See `eval/threshold_calibrator.py`.
+
+---
+
+<div align="center">
+
+[← Back to README](../README.md) &nbsp;·&nbsp;
+[Open an issue](https://github.com/YOUR_USERNAME/CLIFFGUARD/issues) &nbsp;·&nbsp;
+[preregistration.md](preregistration.md)
+
+</div>

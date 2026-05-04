@@ -1,6 +1,22 @@
+<div align="center">
+
+[← README](../README.md) &nbsp;|&nbsp;
+[What is it](what_is_it.md) &nbsp;|&nbsp;
+[Architecture](architecture.md) &nbsp;|&nbsp;
+[Math](math.md) &nbsp;|&nbsp;
+[Setup](setup.md) &nbsp;|&nbsp;
+[Engineering Ref](engineering_reference.md)
+
+</div>
+
 # System Architecture
 
 ## 1. Request Cycle
+
+> The request cycle is stateless per-request. ATTEST-WH runs once
+> at boot and its result is cached. All other gates run on every
+> request in the order shown. The CONDUCTOR aggregates all verdicts
+> into a single block/allow decision.
 
 ```mermaid
 flowchart TD
@@ -32,6 +48,11 @@ flowchart TD
 ```
 
 ## 2. Eight Components
+
+> Firing directions are shown inline (fires HIGH or fires LOW).
+> Gates in the left column (VESTIBULE, PROBE, LOOKOUT) run before
+> and after generation. Gates in the right column (TRIPWIRE) run
+> during generation.
 
 ```mermaid
 flowchart LR
@@ -131,6 +152,11 @@ stateDiagram-v2
 
 ## 4. CONDUCTOR Feature Vector
 
+> The 14-dimensional context vector is assembled by
+> `conductor/context.py`. Missing gates (not active for the tier)
+> are filled with 0.0. The tier indicator at index 13 is always
+> present regardless of tier.
+
 The CONDUCTOR context vector has 14 dimensions. All values are floats in [0, 1] or [-1, 1]. Missing gates (not active for the tier) are filled with 0.0.
 
 | Index | Feature | Source Gate | Notes |
@@ -147,10 +173,16 @@ The CONDUCTOR context vector has 14 dimensions. All values are floats in [0, 1] 
 | 9 | LOOKOUT-JG rate | LOOKOUT-JG | Compliance rate across N paraphrases (higher = suspicious) |
 | 10 | B-PROBE-LOGIT score | B-PROBE-LOGIT | Logistic head output on top-k logprobs |
 | 11 | B-PROBE-CONSISTENCY JSD | B-PROBE-CONSISTENCY | Jensen-Shannon divergence across N paraphrases |
+| — | *Metadata dimensions* | — | — |
 | 12 | ATTEST-WH result | ATTEST-WH | 1.0=ALLOW, 0.5=DEGRADED, 0.0=BLOCK |
 | 13 | Tier indicator | LADDER | 0.0=A, 0.33=B, 0.67=C, 1.0=C_PLUS |
 
 ## 5. Component Interaction (Sequence)
+
+> The sequence shows the white-box path (PROBE gets hidden states).
+> On the black-box path, PROBE is skipped and B-PROBE receives
+> top-k logprobs instead. TRIPWIRE runs concurrently with generation
+> via a streaming callback.
 
 ```mermaid
 sequenceDiagram
@@ -180,3 +212,13 @@ sequenceDiagram
     Decision-->>User: ALLOW (serve output) or BLOCK (refuse)
     Decision-->>CONDUCTOR: reward signal for bandit update
 ```
+
+---
+
+<div align="center">
+
+[← Back to README](../README.md) &nbsp;·&nbsp;
+[Open an issue](https://github.com/YOUR_USERNAME/CLIFFGUARD/issues) &nbsp;·&nbsp;
+[preregistration.md](preregistration.md)
+
+</div>

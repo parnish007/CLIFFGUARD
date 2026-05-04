@@ -1,6 +1,26 @@
+<div align="center">
+
+[← README](../README.md) &nbsp;|&nbsp;
+[What is it](what_is_it.md) &nbsp;|&nbsp;
+[Architecture](architecture.md) &nbsp;|&nbsp;
+[Math](math.md) &nbsp;|&nbsp;
+[Setup](setup.md) &nbsp;|&nbsp;
+[Engineering Ref](engineering_reference.md)
+
+</div>
+
 # Device Setup Guide
 
 This guide covers cloning and running CLIFFGUARD on each hardware tier. Phase A dry run requires no GPU and no data — it exercises the full pipeline shape using synthetic arrays and completes in under a second on any machine. Phase B requires the appropriate hardware and the real corpus.
+
+## Quick Reference
+
+| Tier | Hardware | Install command | Verify command | Time to set up |
+|---|---|---|---|---|
+| **A** | RTX 5060 8GB | `uv sync --extra gpu` | `scripts/dry_run.py --tier A` | ~5 min |
+| **B** | Pi 5 8GB | `uv sync --extra gpu` | `scripts/dry_run.py --tier B` | ~15 min (builds llama.cpp) |
+| **C** | 2GB embedded | `uv sync` | `scripts/dry_run.py --tier C` | ~3 min |
+| **C+** | 2GB + PromptGuard | `uv sync` | `scripts/dry_run.py --tier C_PLUS` | ~3 min |
 
 ## Prerequisites (All Tiers)
 
@@ -18,6 +38,10 @@ $env:UV_PROJECT_ENVIRONMENT = "D:\cliffguard-venv"
 This redirects the package cache and the virtual environment to a drive with more space. The `UV_CACHE_DIR` variable must be set before any `uv` command.
 
 ## Tier A — RTX 5060 8 GB (Linux recommended)
+
+![Platform](https://img.shields.io/badge/Platform-Linux_recommended-dc2626?style=flat-square)
+![GPU](https://img.shields.io/badge/GPU-CUDA_8GB%2B-dc2626?style=flat-square)
+![Python](https://img.shields.io/badge/Python-3.11%2B-blue?style=flat-square)
 
 **Hardware:** RTX 5060 8 GB or equivalent (any CUDA-capable GPU with ≥ 8 GB VRAM). Linux recommended — `autoawq` and `vllm` are Linux-only. Windows works for `torch` + `bitsandbytes` NF4.
 
@@ -55,6 +79,10 @@ This redirects the package cache and the virtual environment to a drive with mor
 
 ## Tier B — Raspberry Pi 5 8 GB
 
+![Platform](https://img.shields.io/badge/Platform-ARM64_Linux-d97706?style=flat-square)
+![RAM](https://img.shields.io/badge/RAM-8GB-d97706?style=flat-square)
+![Inference](https://img.shields.io/badge/Inference-llama.cpp-d97706?style=flat-square)
+
 **Hardware:** Raspberry Pi 5 8 GB. Models run via `llama-cpp-python` on ARM64 CPU. Approximate throughput: Qwen-2.5-1.5B Q4_K_M at ~5–7 tok/s, 3B at ~3–5 tok/s (per Stratosphere Lab 2025 benchmarks).
 
 **Step-by-step:**
@@ -89,6 +117,9 @@ This redirects the package cache and the virtual environment to a drive with mor
 
 ## Tier C — 2 GB Embedded (RK3588 / Jetson Orin Nano / Pi 4)
 
+![Platform](https://img.shields.io/badge/Platform-ARM_2GB-16a34a?style=flat-square)
+![Scope](https://img.shields.io/badge/Scope-NARROW_ONLY-16a34a?style=flat-square)
+
 **Hardware:** RK3588 NPU W8A8 (10–15 tok/s on 1.1B per tinycomputers.io), Jetson Orin Nano 4 GB, or Pi 4 8 GB. Models: TinyLlama-1.1B or Qwen-2.5-0.5B/1.5B in Q3_K_M or Q4_K_M.
 
 **HONEST SCOPE:** Tier C is not meaningfully defended against A7 (quantization-cliff exploiter). It runs precisely the models where the cliff is most likely. The minimal gate set (VESTIBULE-LZ, VESTIBULE-PS, ATTEST-WH) raises attacker cost only marginally. Suitable **only** for fixed-grammar single-task assistants with no open-domain adversarial exposure. Deployments must ship with a label: "NOT FOR OPEN-DOMAIN ADVERSARIAL USE."
@@ -115,6 +146,9 @@ This redirects the package cache and the virtual environment to a drive with mor
 4. Note: No bandit is used at Tier C. Gate weights are fixed at deployment. CONDUCTOR falls back to a static expert-tuned policy with EWMA-based drift alarms only.
 
 ## Tier C+ — 2 GB Embedded with PromptGuard-2-22M-INT4
+
+![Platform](https://img.shields.io/badge/Platform-ARM_2GB-2563eb?style=flat-square)
+![Extra](https://img.shields.io/badge/Extra-PromptGuard--2--22M-2563eb?style=flat-square)
 
 Same hardware as Tier C. Adds Meta's PromptGuard-2-22M (DeBERTa-xsmall, 22 M parameters, MIT-licensed) as the B-PROBE-LOGIT gate.
 
@@ -181,3 +215,40 @@ The adversarial corpus requires assembly from multiple sources (blueprint §12.6
 **Folds D/E — held out:**
 
 Fold D (bandit drift) and Fold E (BCN-2 construction) are unblinded only after Folds A/B/C complete. The scripts are scaffolded in Phase A and will be activated in Phase B.
+
+## Troubleshooting
+
+**`uv sync` hangs or fails on Windows**
+C: drive is likely full. Set these before running uv:
+```powershell
+$env:UV_CACHE_DIR = "D:\uv-cache"
+$env:UV_PROJECT_ENVIRONMENT = "D:\cliffguard-venv"
+```
+Then retry `uv sync`. Add to `$PROFILE` to make permanent.
+
+**`llama-cpp-python` build fails on Pi 5**
+Ensure cmake is installed: `sudo apt install cmake`. The build
+takes 5–10 minutes on ARM64 — this is normal.
+
+**`autoawq` or `vllm` not found on Windows/macOS**
+These packages are Linux-only (CUDA required). They are silently
+skipped by the `sys_platform == 'linux'` marker in `pyproject.toml`.
+This is expected — use `TransformersBnbAdapter` on Windows.
+
+**`uv run python scripts/dry_run.py` exits with code 1**
+Paste the full traceback into a GitHub issue. The dry run should
+complete in under 1 second on any machine without GPU or data.
+
+**mypy or ruff errors after pulling changes**
+Run `uv sync` first — a dependency may have been added. Then
+`uv run mypy cliffguard` and `uv run ruff check .`.
+
+---
+
+<div align="center">
+
+[← Back to README](../README.md) &nbsp;·&nbsp;
+[Open an issue](https://github.com/YOUR_USERNAME/CLIFFGUARD/issues) &nbsp;·&nbsp;
+[preregistration.md](preregistration.md)
+
+</div>
