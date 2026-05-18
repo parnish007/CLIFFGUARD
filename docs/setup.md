@@ -1,254 +1,348 @@
-<div align="center">
-
-[← README](../README.md) &nbsp;|&nbsp;
-[What is it](what_is_it.md) &nbsp;|&nbsp;
-[Architecture](architecture.md) &nbsp;|&nbsp;
-[Math](math.md) &nbsp;|&nbsp;
-[Setup](setup.md) &nbsp;|&nbsp;
-[Engineering Ref](engineering_reference.md)
-
-</div>
-
-# Device Setup Guide
-
-This guide covers cloning and running CLIFFGUARD on each hardware tier. Phase A dry run requires no GPU and no data — it exercises the full pipeline shape using synthetic arrays and completes in under a second on any machine. Phase B requires the appropriate hardware and the real corpus.
-
-## Quick Reference
-
-| Tier | Hardware | Install command | Verify command | Time to set up |
-|---|---|---|---|---|
-| **A** | RTX 5060 8GB | `uv sync --extra gpu` | `scripts/dry_run.py --tier A` | ~5 min |
-| **B** | Pi 5 8GB | `uv sync --extra gpu` | `scripts/dry_run.py --tier B` | ~15 min (builds llama.cpp) |
-| **C** | 2GB embedded | `uv sync` | `scripts/dry_run.py --tier C` | ~3 min |
-| **C+** | 2GB + PromptGuard | `uv sync` | `scripts/dry_run.py --tier C_PLUS` | ~3 min |
-
-## Prerequisites (All Tiers)
-
-- Git ≥ 2.40
-- Python 3.11 or 3.12
-- [uv](https://docs.astral.sh/uv/) — install with: `curl -LsSf https://astral.sh/uv/install.sh | sh` (Linux/macOS) or `powershell -c "irm https://astral.sh/uv/install.ps1 | iex"` (Windows)
-
-**Windows — disk space:** uv caches packages on the system drive by default. If C: has limited free space, add these to your PowerShell profile (`$PROFILE`):
-
-```powershell
-$env:UV_CACHE_DIR = "D:\uv-cache"
-$env:UV_PROJECT_ENVIRONMENT = "D:\cliffguard-venv"
-```
-
-This redirects the package cache and the virtual environment to a drive with more space. The `UV_CACHE_DIR` variable must be set before any `uv` command.
-
-## Tier A — RTX 5060 8 GB (Linux recommended)
-
-![Platform](https://img.shields.io/badge/Platform-Linux_recommended-dc2626?style=flat-square)
-![GPU](https://img.shields.io/badge/GPU-CUDA_8GB%2B-dc2626?style=flat-square)
-![Python](https://img.shields.io/badge/Python-3.11%2B-blue?style=flat-square)
-
-**Hardware:** RTX 5060 8 GB or equivalent (any CUDA-capable GPU with ≥ 8 GB VRAM). Linux recommended — `autoawq` and `vllm` are Linux-only. Windows works for `torch` + `bitsandbytes` NF4.
-
-**Step-by-step:**
-
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/parnish007/CLIFFGUARD.git
-   cd CLIFFGUARD
-   ```
-
-2. Install with GPU extras:
-   ```bash
-   uv sync --extra gpu
-   ```
-   Note: `autoawq` and `vllm` are gated by `sys_platform == 'linux'` in `pyproject.toml` and are silently skipped on Windows and macOS. `torch`, `transformers`, `bitsandbytes`, and `llama-cpp-python` install on all platforms.
-
-3. Verify Phase A (no GPU needed):
-   ```bash
-   uv run python scripts/dry_run.py --tier A --scheme FP16
-   ```
-   Expected: all 12 gates produce verdicts, block decision printed, exit code 0.
-
-4. Download Fold A corpus (Phase B only):
-   ```bash
-   uv run python scripts/download_fold_a.py
-   ```
-   Follow the printed instructions for any datasets requiring manual terms acceptance.
-
-5. Full evaluation (Phase B, requires Fold A corpus and GPU):
-   ```bash
-   uv run python scripts/run_full_evaluation.py \
-     --config configs/example.yaml --tier A
-   ```
-
-## Tier B — Raspberry Pi 5 8 GB
-
-![Platform](https://img.shields.io/badge/Platform-ARM64_Linux-d97706?style=flat-square)
-![RAM](https://img.shields.io/badge/RAM-8GB-d97706?style=flat-square)
-![Inference](https://img.shields.io/badge/Inference-llama.cpp-d97706?style=flat-square)
-
-**Hardware:** Raspberry Pi 5 8 GB. Models run via `llama-cpp-python` on ARM64 CPU. Approximate throughput: Qwen-2.5-1.5B Q4_K_M at ~5–7 tok/s, 3B at ~3–5 tok/s (per Stratosphere Lab 2025 benchmarks).
-
-**Step-by-step:**
-
-1. Clone and enter the repository:
-   ```bash
-   git clone https://github.com/parnish007/CLIFFGUARD.git && cd CLIFFGUARD
-   ```
-
-2. Install with GPU extras (`llama-cpp-python` is the key dependency here):
-   ```bash
-   uv sync --extra gpu
-   ```
-   `llama-cpp-python` builds from source on ARM64. On Pi 5 this typically takes 5–10 minutes. The `autoawq` and `vllm` extras are silently skipped (Linux-only gate + no CUDA).
-
-3. Verify Phase A:
-   ```bash
-   uv run python scripts/dry_run.py --tier B --scheme GGUF_Q4_K_M
-   ```
-
-4. Download corpus:
-   ```bash
-   uv run python scripts/download_fold_a.py
-   ```
-
-5. Full evaluation:
-   ```bash
-   uv run python scripts/run_full_evaluation.py \
-     --config configs/example.yaml --tier B \
-     --schemes GGUF_Q4_K_M GGUF_Q3_K_M
-   ```
-
-## Tier C — 2 GB Embedded (RK3588 / Jetson Orin Nano / Pi 4)
-
-![Platform](https://img.shields.io/badge/Platform-ARM_2GB-16a34a?style=flat-square)
-![Scope](https://img.shields.io/badge/Scope-NARROW_ONLY-16a34a?style=flat-square)
-
-**Hardware:** RK3588 NPU W8A8 (10–15 tok/s on 1.1B per tinycomputers.io), Jetson Orin Nano 4 GB, or Pi 4 8 GB. Models: TinyLlama-1.1B or Qwen-2.5-0.5B/1.5B in Q3_K_M or Q4_K_M.
-
-**HONEST SCOPE:** Tier C is not meaningfully defended against A7 (quantization-cliff exploiter). It runs precisely the models where the cliff is most likely. The minimal gate set (VESTIBULE-LZ, VESTIBULE-PS, ATTEST-WH) raises attacker cost only marginally. Suitable **only** for fixed-grammar single-task assistants with no open-domain adversarial exposure. Deployments must ship with a label: "NOT FOR OPEN-DOMAIN ADVERSARIAL USE."
-
-**Step-by-step:**
-
-1. Clone:
-   ```bash
-   git clone https://github.com/parnish007/CLIFFGUARD.git && cd CLIFFGUARD
-   ```
-
-2. Install without GPU extras:
-   ```bash
-   uv sync
-   ```
-   The RKNN runtime is board-specific (install from Rockchip's RKNN-Toolkit2 release) and is not managed by this project. For llama.cpp on Pi 4 / Jetson, install `llama-cpp-python` separately or use `uv sync --extra gpu`.
-
-3. Verify Phase A:
-   ```bash
-   uv run python scripts/dry_run.py --tier C --scheme GGUF_Q3_K_M
-   ```
-   Expected: 3 gates run (VESTIBULE-LZ, VESTIBULE-PS, ATTEST-WH).
-
-4. Note: No bandit is used at Tier C. Gate weights are fixed at deployment. CONDUCTOR falls back to a static expert-tuned policy with EWMA-based drift alarms only.
-
-## Tier C+ — 2 GB Embedded with PromptGuard-2-22M-INT4
-
-![Platform](https://img.shields.io/badge/Platform-ARM_2GB-2563eb?style=flat-square)
-![Extra](https://img.shields.io/badge/Extra-PromptGuard--2--22M-2563eb?style=flat-square)
-
-Same hardware as Tier C. Adds Meta's PromptGuard-2-22M (DeBERTa-xsmall, 22 M parameters, MIT-licensed) as the B-PROBE-LOGIT gate.
-
-**Memory budget:** Q3_K_M base model ~1.4 GB + KV cache ~150 MB + PromptGuard-2-22M-INT4 ~30 MB + PROBE-RM final-layer projector ~50 MB ≈ 1.65 GB total. Fits under 1.8 GB.
-
-**Step-by-step:**
-
-1. Same steps as Tier C for clone and `uv sync`.
-
-2. Verify Phase A:
-   ```bash
-   uv run python scripts/dry_run.py --tier C_PLUS --scheme GGUF_Q3_K_M
-   ```
-   Expected: 4 gates run (VESTIBULE-LZ, VESTIBULE-PS, B-PROBE-LOGIT, ATTEST-WH).
-
-3. PromptGuard-2-22M-INT4 weights: download from `meta-llama/Llama-Prompt-Guard-2-22M` on Hugging Face. Phase B wiring is in `cliffguard/engines/` (stub in Phase A).
-
-## Configuration
-
-Copy the example configuration and edit it before running:
-
-```bash
-cp configs/example.yaml configs/my_run.yaml
-```
-
-Key fields to edit:
-
-| Field | Default | Description |
-|---|---|---|
-| `tier` | `"A"` | Hardware tier: A, B, C, or C_PLUS |
-| `schemes` | FP16, NF4, Q4_K_M, Q3_K_M | Quantization schemes to evaluate |
-| `folds` | [A, B, C, D, E] | Evaluation folds to run (A must run first) |
-| `data_dir` | `"data/"` | Path to corpus directory |
-| `artifacts_dir` | `"artifacts/"` | Where results, calibration tables, figures are written |
-| `fpr_target` | `0.05` | Pre-registered FPR target (do not change without amending preregistration) |
-| `n_calibration` | `2000` | Fold A benign prompts (minimum per §12.2) |
-| `n_attack` | `500` | Attack prompts per adversary per scheme |
-| `kenlm.order_tier_ab` | `5` | KenLM n-gram order for Tier A/B (blueprint §5.5) |
-| `kenlm.order_tier_c` | `3` | KenLM n-gram order for Tier C/C+ (decisions_log C25) |
-| `hardware.description` | `"unspecified"` | Written into the reproducibility manifest |
-
-Run with your config:
-
-```bash
-uv run python scripts/run_full_evaluation.py --config configs/my_run.yaml
-```
-
-## Data Acquisition
-
-Real evaluation (Phase B) requires the Fold A calibration corpus and the adversarial evaluation corpus.
-
-**Fold A — automatic download:**
-
-```bash
-uv run python scripts/download_fold_a.py
-```
-
-This downloads Anthropic-HH-RLHF and OpenAssistant-OASST1 (the Fold A benign calibration corpus). Data is written to `data/folds/fold_a/` and is gitignored. Follow the printed instructions for any datasets requiring manual terms acceptance.
-
-**Folds B/C — adversarial corpus:**
-
-The adversarial corpus requires assembly from multiple sources (blueprint §12.6): JailbreakBench, AdvBench-50, ArtPrompt, and synthetic cliff-exploiters (A7 prompts generated per the BCN-2 protocol). Phase B corpus assembly is currently manual — `scripts/download_fold_a.py` handles only Fold A. See `cliffguard/eval/attack_corpus.py` for the corpus schema and `docs/preregistration.md` for required corpus sizes.
-
-**Folds D/E — held out:**
-
-Fold D (bandit drift) and Fold E (BCN-2 construction) are unblinded only after Folds A/B/C complete. The scripts are scaffolded in Phase A and will be activated in Phase B.
-
-## Troubleshooting
-
-**`uv sync` hangs or fails on Windows**
-C: drive is likely full. Set these before running uv:
-```powershell
-$env:UV_CACHE_DIR = "D:\uv-cache"
-$env:UV_PROJECT_ENVIRONMENT = "D:\cliffguard-venv"
-```
-Then retry `uv sync`. Add to `$PROFILE` to make permanent.
-
-**`llama-cpp-python` build fails on Pi 5**
-Ensure cmake is installed: `sudo apt install cmake`. The build
-takes 5–10 minutes on ARM64 — this is normal.
-
-**`autoawq` or `vllm` not found on Windows/macOS**
-These packages are Linux-only (CUDA required). They are silently
-skipped by the `sys_platform == 'linux'` marker in `pyproject.toml`.
-This is expected — use `TransformersBnbAdapter` on Windows.
-
-**`uv run python scripts/dry_run.py` exits with code 1**
-Paste the full traceback into a GitHub issue. The dry run should
-complete in under 1 second on any machine without GPU or data.
-
-**mypy or ruff errors after pulling changes**
-Run `uv sync` first — a dependency may have been added. Then
-`uv run mypy cliffguard` and `uv run ruff check .`.
+# CLIFFGUARD on RTX 3050 — Complete Setup Guide
+
+This guide takes you from a clean Windows / Linux box with an RTX 3050 to
+producing real Fold A calibration and Fold B cliff measurements.
+
+The RTX 3050 has either **4 GB** (mobile / budget laptop) or **8 GB**
+(desktop / high-end laptop). Both can run CLIFFGUARD; the 8 GB card is
+much more comfortable. The instructions below assume 8 GB and call out
+where 4 GB users need to downscale.
 
 ---
 
-<div align="center">
+## 1. Prerequisites
 
-[← Back to README](../README.md) &nbsp;·&nbsp;
-[Open an issue](https://github.com/YOUR_USERNAME/CLIFFGUARD/issues) &nbsp;·&nbsp;
-[preregistration.md](preregistration.md)
+### 1.1 System
 
-</div>
+* Windows 10/11 or Ubuntu 22.04+
+* NVIDIA driver ≥ 525.x (run `nvidia-smi` to verify)
+* CUDA 12.1 toolkit (`nvcc --version`); CUDA 11.8 also works
+* Python 3.11
+* [uv](https://docs.astral.sh/uv/) for package management
+* Git
+* (Linux only, optional) `lmplz` from [KenLM](https://github.com/kpu/kenlm)
+  for TRIPWIRE-R training: `sudo apt install build-essential cmake
+  libboost-system-dev libboost-thread-dev libboost-program-options-dev
+  libboost-test-dev libeigen3-dev zlib1g-dev libbz2-dev liblzma-dev`,
+  then build KenLM per its README.
+
+### 1.2 Disk space
+
+| Item | Approx. size |
+|---|---|
+| CLIFFGUARD repo + venv | ~3 GB |
+| HuggingFace model cache (3B + 7B Q4 + judges) | ~25 GB |
+| Anthropic-HH + OASST1 | ~2 GB |
+| AdvBench + JailbreakBench | ~50 MB |
+| Run artifacts | ~500 MB per run |
+| **Total recommended free** | **~35 GB** |
+
+### 1.3 HuggingFace account
+
+You need a free HF account because most Llama models are gated:
+
+```bash
+pip install --user huggingface-hub
+huggingface-cli login  # paste your access token
+```
+
+Then visit each model page and accept the license:
+
+* `meta-llama/Llama-3.2-1B-Instruct`
+* `meta-llama/Llama-3.2-3B-Instruct`
+* `meta-llama/Llama-Guard-3-8B`
+* `mistralai/Mistral-7B-Instruct-v0.3`
+
+Gemma and Qwen models are open and don't require gating.
+
+---
+
+## 2. Clone and install
+
+```bash
+cd C:\Users\AB\Desktop\Projects\CLIFFGUARD       # Windows
+# or: cd ~/cliffguard                            # Linux
+
+uv sync                       # base install (no GPU)
+uv run pytest -q              # should show 939 passed
+```
+
+Now install the GPU extras:
+
+```bash
+uv sync --extra gpu           # installs torch + transformers + bitsandbytes + llama-cpp-python
+```
+
+**llama-cpp-python with CUDA support** (recommended on the 3050):
+
+```bash
+# Windows (PowerShell)
+$env:CMAKE_ARGS="-DLLAMA_CUDA=on"
+uv pip install --force-reinstall --no-cache-dir llama-cpp-python
+
+# Linux
+CMAKE_ARGS="-DLLAMA_CUDA=on" uv pip install --force-reinstall --no-cache-dir llama-cpp-python
+```
+
+Verify GPU is visible:
+
+```bash
+uv run python -c "import torch; print('CUDA:', torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+```
+
+Expected: `CUDA: True NVIDIA GeForce RTX 3050 ...`
+
+---
+
+## 3. Gather the datasets
+
+### 3.1 Fold A (calibration) — required first
+
+```bash
+uv add datasets                                      # one-time
+uv run python scripts/download_fold_a.py --download
+```
+
+This pulls:
+
+* `Anthropic/hh-rlhf` → `data/folds/fold_a/anthropic_hh_benign.jsonl` (1200 prompts)
+* `Anthropic/hh-rlhf` → `data/folds/fold_a/anthropic_hh_refused.jsonl` (800 prompts)
+* `OpenAssistant/oasst1` → `data/folds/fold_a/oasst_benign.jsonl` (600 prompts)
+
+If you only have 4 GB VRAM and want a faster cycle:
+
+```bash
+uv run python scripts/download_fold_a.py --download --max 300
+```
+
+Verify:
+
+```bash
+uv run python -c "from cliffguard.eval.folds import load_fold_a_calibration; print(len(load_fold_a_calibration()), 'entries')"
+```
+
+### 3.2 Fold B / C / D / E (adversarial)
+
+For the cliff measurement (Fold B) you need an adversarial prompt set.
+Recommended sources, all on HuggingFace:
+
+| Adversary class | Dataset | License |
+|---|---|---|
+| A1, A2 (direct/indirect injection) | `JailbreakBench/JBB-Behaviors` | MIT |
+| A3 (optimizer attacks) | `walledai/AdvBench` (and `walledai/HarmBench`) | MIT |
+| A4 (iterative jailbreaks) | `JailbreakBench/JBB-Behaviors` | MIT |
+| A5 (best-of-N) | derived from AdvBench | MIT |
+| A6 (encoded/low-resource) | `ArtPrompt` (Ying 2024) | research-use |
+| A7 (cliff exploiters) | generated via `scripts/generate_cliff_corpus.py` | n/a |
+| A8 (defender-aware) | constructed adversarially after Fold A | n/a |
+| A9 (closed-weight black-box) | DAN transfers, no scraping | n/a |
+
+Quick assembly for an initial Fold B run:
+
+```python
+# scripts/assemble_fold_b.py (you can write this as needed)
+from datasets import load_dataset
+import json, pathlib
+
+out = pathlib.Path("data/folds/fold_b")
+out.mkdir(parents=True, exist_ok=True)
+
+# AdvBench harmful behaviors
+ad = load_dataset("walledai/AdvBench", split="train")
+with open(out / "advbench.jsonl", "w") as f:
+    for row in ad:
+        f.write(json.dumps({"prompt": row["prompt"], "source": "advbench"}) + "\n")
+
+# JailbreakBench behaviors
+jb = load_dataset("JailbreakBench/JBB-Behaviors", "behaviors", split="harmful")
+with open(out / "jailbreakbench.jsonl", "w") as f:
+    for row in jb:
+        f.write(json.dumps({"prompt": row["Goal"], "source": "jbb"}) + "\n")
+```
+
+Then run it once. After that, `data/folds/fold_b/` has the adversarial corpus.
+
+---
+
+## 4. Run the evaluation
+
+### 4.1 Smoke test (no GPU work, no datasets needed)
+
+This proves the pipeline shape works on your machine:
+
+```bash
+uv run python scripts/dry_run.py --tier A --scheme FP16
+uv run python scripts/dry_run.py --tier C --scheme GGUF_Q3_K_M
+```
+
+Expected: a table of 11 gate verdicts, context dim 14, block decision printed.
+
+### 4.2 Turnkey 3050 run
+
+```bash
+uv run python scripts/run_evaluation_3050.py --model auto
+```
+
+This script:
+
+* Detects your free VRAM
+* Picks Llama-3.2-3B-Instruct (8 GB card) or Llama-3.2-1B-Instruct (4 GB card)
+* Runs Fold A across FP16 and NF4
+* Persists `artifacts/runs/<run_id>/fold_a/` with calibration tables and r̂
+
+Expected wall-clock on an 8 GB 3050:
+
+| Step | Time |
+|---|---|
+| Model download (first run, 3B) | ~5-10 min |
+| Fold A on 200 harmful + 200 harmless prompts, 2 schemes | ~15-25 min |
+| Fold B on 100 adversarial prompts | ~10-15 min |
+
+### 4.3 Including Fold B
+
+Once you've assembled `data/folds/fold_b/*.jsonl`:
+
+```bash
+uv run python scripts/run_evaluation_3050.py --model auto --fold-b-dir data/folds/fold_b
+```
+
+The output JSON includes `cliff_boundary` — the first quantization scheme at
+which all three cliff metrics (geometric, Wasserstein, behavioral) jump above
+κ = 0.25. This is your H1 result for this model family.
+
+### 4.4 Including GGUF Q3_K_M comparison (the actual cliff scheme)
+
+The 3B FP16 vs NF4 comparison is informative but the **safety cliff
+boundary is empirically near Q3_K_M**. To measure the real cliff you
+need GGUF Q3_K_M.
+
+Step 1 — download a GGUF Q3_K_M file:
+
+```bash
+huggingface-cli download bartowski/Llama-3.2-3B-Instruct-GGUF \
+  Llama-3.2-3B-Instruct-Q3_K_M.gguf --local-dir models/
+```
+
+Step 2 — write a tiny driver script (`scripts/run_gguf_cliff.py`):
+
+```python
+from cliffguard.engines.llamacpp import LlamaCppAdapter
+from cliffguard.eval.refusal_direction import calibrate_refusal_direction
+from cliffguard.eval.folds import load_fold_a_calibration
+from cliffguard.types import Tier
+from pathlib import Path
+
+adapter = LlamaCppAdapter(
+    model_path="models/Llama-3.2-3B-Instruct-Q3_K_M.gguf",
+    tier=Tier.B,
+    n_ctx=2048,
+    white_box=True,
+)
+adapter.load_model(n_gpu_layers=-1)  # all layers on GPU
+
+entries = load_fold_a_calibration()
+harmful = [e.prompt for e in entries if e.label == "refused"][:200]
+harmless = [e.prompt for e in entries if e.label == "benign"][:200]
+
+r_hat_q3km = calibrate_refusal_direction(
+    adapter, harmful, harmless,
+    layer=-1,  # llama.cpp Python only exposes final layer
+    save_path=Path("artifacts/r_hat_llama32_3b_Q3_K_M.npz"),
+)
+print("r̂ extracted, shape =", r_hat_q3km.shape, "norm =", float((r_hat_q3km**2).sum()**0.5))
+```
+
+Run it:
+
+```bash
+uv run python scripts/run_gguf_cliff.py
+```
+
+Now compute the geometric cliff metric vs the FP16 r̂ you saved in §4.2:
+
+```python
+import numpy as np
+from cliffguard.eval.cliff_metrics import geometric_cliff
+r_fp16 = np.load("artifacts/runs/<run_id>/fold_a/r_hat_Llama-3.2-3B-Instruct_FP16.npz")["direction"]
+r_q3km = np.load("artifacts/r_hat_llama32_3b_Q3_K_M.npz")["direction"]
+print("Δ_cliff(Q3_K_M) =", geometric_cliff(r_q3km, r_fp16))
+```
+
+A value `> 0.25` is the H1 signal for this model family at Q3_K_M.
+
+---
+
+## 5. What the 3050 *cannot* do well
+
+| Limitation | Workaround |
+|---|---|
+| 7B/8B FP16 (>14 GB) | Use 8B in NF4 (~5 GB), or 1B/3B in FP16 |
+| Llama-Guard-3-8B full precision | Use NF4 quantization (the RealLlamaGuardJudge default) |
+| Real StrongREJECT with Llama-3-70B | Use Mistral-7B-Instruct-v0.3 NF4 as rubric grader |
+| Full 5-scheme Fold B in one run | Run schemes sequentially; reuse cached weights |
+| vLLM, AutoAWQ | Linux-only; the dev box can use transformers+bnb on Windows just fine |
+
+---
+
+## 6. Troubleshooting
+
+**`torch.cuda.is_available() == False`**: NVIDIA driver too old, or CUDA
+toolkit mismatch. Run `nvidia-smi` and check Driver Version ≥ 525.x.
+Reinstall torch matching your CUDA: `uv pip install torch --index-url
+https://download.pytorch.org/whl/cu121`.
+
+**`OutOfMemoryError`**: Reduce the model. Llama-3.2-1B fits anywhere.
+For 8 GB users running a 7B model in NF4, lower `max_length` in the
+adapter, or run schemes sequentially with explicit `torch.cuda.empty_cache()`
+between them. `live_execute_fold_a` already does `del adapter` between
+schemes.
+
+**`Repo gated. Access denied`**: You need to accept the license on each
+gated model's HuggingFace page. Run `huggingface-cli login` and check that
+your token has read access.
+
+**llama.cpp says "no CUDA support"**: You forgot the `CMAKE_ARGS` env var.
+Re-run the install command from §2.
+
+**Fold A download is slow**: Anthropic-HH is large. Use `--max 500` for a
+faster cycle while you're iterating.
+
+---
+
+## 7. Where the results live
+
+```
+artifacts/
+└── runs/
+    └── A_<hostname>_20260518_103014/
+        ├── run_metadata.json
+        ├── fold_a/
+        │   ├── calibration_summary.json
+        │   ├── r_hat_Llama-3.2-3B-Instruct_FP16.npz
+        │   └── r_hat_Llama-3.2-3B-Instruct_NF4.npz
+        ├── fold_b/
+        │   └── (if you ran Fold B)
+        └── summary_3050.md
+```
+
+Every artifact carries its SHA-256 in `manifest.json` (generate with
+`uv run python scripts/build_preregistration_manifest.py --tier A --schemes FP16 NF4`).
+
+---
+
+## 8. Reproducing the paper's H1 / H2 / H3 / H4 / H5 results
+
+This is a multi-day process even on a 3050. The minimum credible path:
+
+1. Pick 2 of 3 model families from {Llama-3, Mistral, Qwen2.5} at 1B-3B scale.
+2. Run Fold A on each family across {FP16, NF4, Q3_K_M} (3 schemes × 2 families = 6 runs).
+3. Run Fold B on the same 6 cells. Compute Δ_cliff, Δ_W-cliff, Δ_B-cliff.
+4. Run Fold C (defense composition) on Tier A for FPR decoupling test (H2/H3).
+5. Run Fold D drift simulator (CPU-only, fast).
+6. Run Fold E BCN-2 construction with a cross-family paraphraser.
+
+Total wall-clock estimate on a single 8 GB 3050: 12-24 hours of compute.
+
+If you have access to a Colab Pro A100 or a cloud H100 instance for the
+heavy lifting (7B/8B models), the 3050 is still useful for the Tier C+
+PromptGuard-2-22M-INT4 measurements (those are tiny).

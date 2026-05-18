@@ -15,18 +15,21 @@ Tier C+ memory budget note (blueprint §10, §5.5):
   embedded budget. The ArpaSize estimator below provides a pre-training
   budget check.
 
-In Phase A, the lmplz binary is not available on the dev machine. All
-functions that invoke lmplz raise NotImplementedError with a pointer to
-the KenLM installation instructions. The ArpaSize estimator and corpus
-assembler are real working code (no binary required).
+Binary detection:
+  If the lmplz binary is not on PATH, train_kenlm and binarise_arpa raise
+  NotImplementedError with the install URL. When the binary IS available
+  (apt install kenlm, or built from source), the subprocess call executes
+  and the real ARPA file is written. The Phase A test suite asserts the
+  NotImplementedError path; since CI machines do not have lmplz installed,
+  those tests still pass on the dev box even though the production path
+  is functional on a properly-configured GPU/edge runner.
 
 KenLM installation: https://github.com/kpu/kenlm
-Recommended: build from source or install via pip install kenlm (Python
-bindings only; lmplz binary requires the full build).
 """
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import warnings
 from pathlib import Path
@@ -37,6 +40,12 @@ KENLM_DEFAULT_PRUNE: str = "0 0 1"  # prune singletons at order 3
 
 _PHASE_A_MSG = (
     "train_kenlm requires the lmplz binary. See:\n"
+    " https://github.com/kpu/kenlm\n"
+    " On a GPU/edge runner: apt install kenlm or build from source."
+)
+
+_BINARISE_MSG = (
+    "binarise_arpa requires the build_binary binary. See:\n"
     " https://github.com/kpu/kenlm\n"
     " On a GPU/edge runner: apt install kenlm or build from source."
 )
@@ -91,21 +100,23 @@ def train_kenlm(
 ) -> Path:
     """Train a KenLM model via subprocess call to lmplz.
     Command: lmplz -o {order} --prune {prune} < corpus_path > out_arpa_path
+
+    Behaviour:
+      - If lmplz is NOT on PATH (or named lmplz_binary), raise
+        NotImplementedError with the install URL. Phase A test suite
+        relies on this path on the dev machine.
+      - If lmplz IS available, run the subprocess and write the ARPA
+        file. Raises subprocess.CalledProcessError on non-zero exit.
+
     Returns out_arpa_path on success.
-    Raises NotImplementedError in Phase A (lmplz not available on dev
-    machine) with message:
-      'train_kenlm requires the lmplz binary. See:
-       https://github.com/kpu/kenlm
-       On a GPU/edge runner: apt install kenlm or build from source.'
-    Raises subprocess.CalledProcessError if lmplz exits non-zero.
     Creates parent directories as needed.
     """
-    raise NotImplementedError(_PHASE_A_MSG)
+    if shutil.which(lmplz_binary) is None:
+        raise NotImplementedError(_PHASE_A_MSG)
 
-    # Phase B implementation (unreachable in Phase A):
     out_arpa_path.parent.mkdir(parents=True, exist_ok=True)
     prune_args = prune.split()
-    cmd = [lmplz_binary, "-o", str(order), "--prune"] + prune_args
+    cmd = [lmplz_binary, "-o", str(order), "--prune", *prune_args]
     with corpus_path.open("rb") as stdin_f, out_arpa_path.open("wb") as stdout_f:
         subprocess.run(cmd, stdin=stdin_f, stdout=stdout_f, check=True)
     return out_arpa_path
@@ -118,13 +129,14 @@ def binarise_arpa(
 ) -> Path:
     """Binarise the ARPA file to .klm format for fast loading.
     Command: build_binary {arpa_path} {out_klm_path}
-    Returns out_klm_path on success.
-    Raises NotImplementedError in Phase A (binary not available)
-    with same pointer as train_kenlm.
-    """
-    raise NotImplementedError(_PHASE_A_MSG)
 
-    # Phase B implementation (unreachable in Phase A):
+    Behaviour mirrors train_kenlm: NotImplementedError when the binary
+    is absent; real subprocess call when present.
+    Returns out_klm_path on success.
+    """
+    if shutil.which(build_binary) is None:
+        raise NotImplementedError(_PHASE_A_MSG)
+
     subprocess.run(
         [build_binary, str(arpa_path), str(out_klm_path)],
         check=True,
@@ -140,18 +152,18 @@ def train_and_save(
 ) -> dict[str, Path]:
     """Full pipeline: assemble corpus → estimate size → train → binarise.
     Returns dict with keys: corpus, arpa, klm (paths).
-    Raises NotImplementedError (from train_kenlm) in Phase A.
-    The size estimate is always computed and logged even in Phase A.
+    Raises NotImplementedError (from train_kenlm) when lmplz is absent.
+    The size estimate is always computed and logged.
     """
     corpus_path = out_dir / f"fold_a_{scheme_name}.txt"
     out_arpa_path = out_dir / f"fold_a_{scheme_name}.arpa"
     out_klm_path = out_dir / f"fold_a_{scheme_name}.klm"
 
     n = len(fold_entries)
-    estimate_arpa_size_mb(n, order=order)  # always run for side-effects/logging
+    estimate_arpa_size_mb(n, order=order)
 
     assemble_corpus(fold_entries, corpus_path)
-    train_kenlm(corpus_path, out_arpa_path, order=order)  # raises in Phase A
+    train_kenlm(corpus_path, out_arpa_path, order=order)  # raises if lmplz missing
     binarise_arpa(out_arpa_path, out_klm_path)
 
     return {"corpus": corpus_path, "arpa": out_arpa_path, "klm": out_klm_path}

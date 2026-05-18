@@ -71,57 +71,82 @@ text for Phase B tasks instead of reading verbatim PROMPT FOR CLAUDE
 CODE blocks from development.md. This caused 12 of 17 Phase B tasks
 to diverge from the plan.
 
-WHAT WAS BUILT vs WHAT development.md PLANNED:
-  Tasks 19-21: Match development.md (engine adapter stubs). DONE.
-  Task 22 built: eval/calibration.py (JSONL loader + synthetic corpus).
-    dev.md Task 22 requires: eval/folds.py (five-fold structure,
-    FoldEntry dataclass, fold isolation check, download_fold_a.py).
-    STATUS: SUPPLEMENTARY — must still build dev.md Task 22.
-  Task 23 built: eval/refusal_direction.py (difference-in-means).
-    dev.md Task 23 requires same but with HiddenStateAdapter integration
-    and .npz save/load. STATUS: PARTIAL — needs completion.
-  Task 24 built: eval/threshold_calibrator.py (FPR calibrator).
-    dev.md Task 24 requires: eval/harmfulness_direction.py (Zhao recipe,
-    paired harmless construction, orthogonality validator).
-    STATUS: SUPPLEMENTARY — must still build dev.md Task 24.
-  Task 25 built: eval/kenlm_stub.py + eval/tripwire_r_calibration.py.
-    dev.md Task 25 requires: eval/kenlm_trainer.py (real KenLM trainer
-    with lmplz subprocess, Tier C+ memory budget, ArpaSize estimator).
-    STATUS: PARTIAL — must still build dev.md Task 25.
-  Task 26 built: eval/attack_corpus.py (AttackPrompt dataclass).
-    dev.md Task 26 requires: eval/judges.py (StrongREJECT + LG3
-    judge stack with agreement-required protocol).
-    STATUS: SUPPLEMENTARY — must still build dev.md Task 26.
-  Task 27 built: eval/cliff_metrics.py (geometric + behavioral only).
-    dev.md Task 27 requires all three: geometric + Wasserstein-2 +
-    behavioral. Wasserstein-2 (delta_w_cliff) is missing.
-    STATUS: PARTIAL — must add delta_w_cliff.
-  Tasks 28-33 built: runner.py, conductor/context.py,
-    eval/orchestrator.py (request-cycle), run_full_evaluation.py,
-    generate_cliff_corpus.py, docs/preregistration.md.
-    dev.md Tasks 28-33 require: bcn2.py, FiveFoldOrchestrator,
-    stats.py, drift_sim.py, figures.py, repro.py + manifest builder.
-    STATUS: SUPPLEMENTARY — all dev.md tasks still unbuilt.
+CONTINUATION STATUS: C22–C35 ALL DONE.
 
-WHAT IS STILL MISSING from dev.md:
-  C22: eval/folds.py + scripts/download_fold_a.py
-  C23: Completion of eval/refusal_direction.py (HiddenStateAdapter
-       integration + .npz save/load)
-  C24: eval/harmfulness_direction.py (Zhao et al. recipe)
-  C25: eval/kenlm_trainer.py (real KenLM trainer)
-  C26: eval/judges.py (StrongREJECT + LG3 stack)
-  C27: delta_w_cliff added to eval/cliff_metrics.py
-  C28: eval/bcn2.py (BCN-2 cross-family constructor)
-  C29: eval/five_fold_orchestrator.py (FiveFoldOrchestrator)
-  C30: eval/stats.py (power calc, Mann-Whitney)
-  C31: eval/drift_sim.py (bandit drift simulator)
-  C32: eval/figures.py (matplotlib figures)
-  C33: eval/repro.py + scripts/build_preregistration_manifest.py
-  C34: scripts/dry_run.py + tests/test_dry_run_e2e.py
-  C35: README.md replacement + configs/example.yaml
+---
 
-Resolution: From this point all prompts are read verbatim from
-development.md. Missing tasks are labeled C22-C35 (Continuation)
-in commit messages to distinguish from already-committed Tasks 1-33.
-Claude Code is informed of this context in every prompt header.
-Affects: All remaining tasks.
+## 2026-05-03 — C25 — KenLM order: 3-gram vs 5-gram
+
+Context: Prompt specified order=3; blueprint §5.5 says 5-gram for full
+deployment.
+Decision: order=3 retained as default for Tier C/C+ budget. Callers
+pass order=5 for Tier A/B. Comment added in code.
+Paper action: §5.5 should distinguish Tier C+ (order=3) from Tier A/B
+(order=5).
+
+---
+
+## 2026-05-03 — C25 — §12.5 section reference misaligned in kenlm_trainer.py
+
+Context: Prompt cited §12.5; blueprint §12.5 is statistical power.
+Decision: Docstring verbatim; paper §12 numbering audit needed.
+
+---
+
+## 2026-05-03 — C26 — Blueprint section mismatches in judges.py
+
+1. §5.9 cited — blueprint §5.9 is LOOKOUT-JG runtime gate, not judge
+   stack. Real sections are §11.3 and §12.6. Fix docstring before submission.
+2. arXiv:2312.06674 (LG1) cited for LG3 — blueprint cites
+   arXiv:2411.17713-lineage. verified_citations.md needs LG3 ID update.
+3. attack_success_rate returns 0.0 when all disputed — safe default.
+
+---
+
+## 2026-05-03 — C28 — BCN-2 storage format conflict
+
+Context: Blueprint §12.2 says LSH storage; prompt specifies plain JSONL.
+Decision: JSONL followed — LSH is a release concern, not Phase A.
+Also: fp16_refused hardcoded True on load (filter guarantees refused-only).
+Affects: Phase B — add LSH layer before public BCN-2 corpus release.
+
+---
+
+## 2026-05-03 — C28 — Section reference mismatches in bcn2.py
+
+Prompt cited §11.2 (= Wasserstein) and §12.3 (= Models) for BCN-2.
+Docstrings kept verbatim; paper section numbering audit needed.
+
+---
+
+## 2026-05-03 — C30 — preregistration.md alpha conflict with stats.py
+
+Context: preregistration.md H4/H5 cite p < 0.05 (uncorrected); §4
+mandates Bonferroni → alpha = 0.01. stats.py uses 0.01 (correct).
+Decision: preregistration.md H4/H5 acceptance criteria must be updated
+to p < 0.01 before submission.
+
+---
+
+## 2026-05-03 — C31 — ADWIN vs Page-Hinkley algorithm conflict
+
+Context: Blueprint §6.4 specifies ADWIN (Bifet & Gavaldà 2007).
+Prompt specified "Page-Hinkley variant". These are distinct algorithms.
+Followed prompt (Page-Hinkley). Combined warmup+drift stream used for
+detection — drift-only stream with ADWIN_DELTA=0.002 requires ~3100
+steps; combined stream fires within T_drift=50.
+Affects: Phase B — replace with true ADWIN if §6.4 is authoritative.
+Paper action: §6.4 algorithm name vs implementation must be reconciled.
+
+---
+
+## 2026-05-03 — C35 — Tier C gate list: blueprint DOT diagram vs TIER_GATES
+
+Context: Blueprint §10 DOT diagram shows Tier C active gates as
+VESTIBULE-LZ + PROBE-RM(1L) + PH + CT. cliffguard/ladder/tier.py
+TIER_GATES defines Tier C as VESTIBULE-LZ, VESTIBULE-PS, ATTEST-WH only.
+Decision: README reflects TIER_GATES (the code), not the blueprint diagram.
+The code is the Phase A implementation authority; the blueprint diagram
+may reflect a planned Phase B configuration.
+Affects: Paper §10 — reconcile DOT diagram with actual Phase A gate set
+before submission. Flag at paper revision.

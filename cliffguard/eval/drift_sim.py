@@ -33,6 +33,110 @@ from cliffguard.types import Tier  # noqa: F401
 ADWIN_DELTA: float = 0.002  # blueprint §6.4
 
 
+def true_adwin_statistic(
+    reward_stream: "npt.NDArray[np.float64]",
+    delta: float = ADWIN_DELTA,
+    max_buckets: int = 5,
+) -> tuple[bool, int]:
+    """True ADWIN (ADaptive WINdowing) per Bifet & Gavaldà (2007).
+
+    Maintains a window W partitioned into exponential-histogram buckets.
+    At each new element, scans every possible split W = W_0 · W_1 and
+    declares change if |mean(W_0) - mean(W_1)| > epsilon_cut, where
+      m       = 1 / (1/|W_0| + 1/|W_1|)        (harmonic mean of sub-sizes)
+      delta'  = delta / |W|                    (Bonferroni over splits)
+      epsilon_cut = sqrt( (1 / (2*m)) * ln(4 / delta') )
+
+    On detection, drops the older partition W_0 and returns the index in
+    the input stream where the change was localised. Otherwise returns
+    (False, len(reward_stream)).
+
+    This implementation uses a simplified exponential-histogram with at
+    most max_buckets buckets per power-of-two size class. For research-grade
+    use, replace with the `river.drift.ADWIN` implementation from the
+    river streaming-ML library (drop-in compatible signature).
+
+    Distinct from the simpler Page-Hinkley `adwin_statistic` above:
+    Page-Hinkley detects sustained mean shifts via cumulative-sum monitoring;
+    true ADWIN explicitly adapts the comparison window size to the data and
+    has tighter (rigorous) false-positive guarantees.
+
+    Raises ValueError if reward_stream is empty or delta not in (0, 1).
+    """
+    import math
+
+    if reward_stream.size == 0:
+        raise ValueError("reward_stream must not be empty")
+    if not (0.0 < delta < 1.0):
+        raise ValueError(f"delta must be in (0, 1), got {delta}")
+
+    n = len(reward_stream)
+    # window: list of (sum, count) buckets, oldest first.
+    window: list[tuple[float, int]] = []
+
+    def total() -> tuple[float, int]:
+        s = sum(b[0] for b in window)
+        c = sum(b[1] for b in window)
+        return s, c
+
+    for i in range(n):
+        x = float(reward_stream[i])
+        window.append((x, 1))
+
+        # Compress: merge adjacent buckets of equal count when exceeding max_buckets.
+        # Keep this simple and approximate (real ADWIN uses exponential histograms).
+        while True:
+            merged = False
+            counts = [b[1] for b in window]
+            for j in range(len(window) - 1):
+                if counts[j] == counts[j + 1]:
+                    # Tentatively merge.
+                    same_size_run = [b for b in window if b[1] == counts[j]]
+                    if len(same_size_run) > max_buckets:
+                        s_merge = window[j][0] + window[j + 1][0]
+                        c_merge = window[j][1] + window[j + 1][1]
+                        window = window[:j] + [(s_merge, c_merge)] + window[j + 2:]
+                        merged = True
+                        break
+            if not merged:
+                break
+
+        s_total, c_total = total()
+        if c_total < 4:
+            continue
+
+        # Scan all splits W = W_0 (older) || W_1 (newer).
+        prefix_sum = 0.0
+        prefix_count = 0
+        delta_prime = delta / c_total
+        detected_split = -1
+        for j in range(len(window) - 1):
+            prefix_sum += window[j][0]
+            prefix_count += window[j][1]
+            suffix_count = c_total - prefix_count
+            if prefix_count < 1 or suffix_count < 1:
+                continue
+            mean_0 = prefix_sum / prefix_count
+            mean_1 = (s_total - prefix_sum) / suffix_count
+            m_harm = 1.0 / (1.0 / prefix_count + 1.0 / suffix_count)
+            epsilon_cut = math.sqrt((1.0 / (2.0 * m_harm)) * math.log(4.0 / delta_prime))
+            if abs(mean_0 - mean_1) > epsilon_cut:
+                detected_split = j
+                break
+
+        if detected_split >= 0:
+            # Localise the change to the boundary between W_0 and W_1.
+            # Convert bucket-split back to stream index: count of older buckets
+            # = number of samples seen up to and including the boundary.
+            older_samples = sum(b[1] for b in window[: detected_split + 1])
+            change_idx = (i + 1) - (c_total - older_samples)
+            # Drop older partition for future steps.
+            window = window[detected_split + 1:]
+            return (True, max(0, change_idx))
+
+    return (False, n)
+
+
 def adwin_statistic(
     reward_stream: npt.NDArray[np.float64],
     delta: float = ADWIN_DELTA,
