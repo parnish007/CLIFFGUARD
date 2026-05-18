@@ -146,7 +146,7 @@ class TransformersBnbAdapter:
             return prompt
         if hasattr(self._tokenizer, "apply_chat_template") and self._tokenizer.chat_template:
             try:
-                return self._tokenizer.apply_chat_template(
+                return self._tokenizer.apply_chat_template(  # type: ignore[no-any-return]
                     [{"role": "user", "content": prompt}],
                     tokenize=False,
                     add_generation_prompt=True,
@@ -231,4 +231,4 @@ class TransformersBnbAdapter:
             log_probs = torch.log_softmax(last_logits.float(), dim=-1)
             top_k = torch.topk(log_probs, k=min(k, log_probs.shape[0]))
 
-        return top_k.values.cpu().numpy().astype(np.float64)
+        return top_k.values.cpu().numpy().astype(np.float64)  # type: ignore[no-any-return]

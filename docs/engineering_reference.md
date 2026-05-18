@@ -38,6 +38,47 @@ Reference for Phase B implementers wiring real inference engines to the CLIFFGUA
 | `ladder/router.py` | §10 | `route`, `gate_count` | — | None — Phase A is complete |
 | `ladder/tier.py` | §10 | `gates_for_tier`, `is_gate_active` | — | None — Phase A is complete |
 
+## Data Type Contracts
+
+All public API functions operate on types defined in `cliffguard/types.py`. Phase B implementers must not create ad-hoc return types.
+
+| Type | Module | Key Fields | Notes |
+|---|---|---|---|
+| `GateVerdict` | `types.py` | `gate_name: GateName`, `fired: bool`, `score: float`, `margin: Margin \| None` | Returned by every `evaluate()` function |
+| `Margin` | `types.py` | `value: float`, `threshold: float`, `scheme: QuantScheme` | Carries the calibrated threshold alongside the score |
+| `CalibrationTable` | `eval/calibration.py` | `{QuantScheme: float}` mapping scheme → τ_q | Built by `build_calibration_table()` per primitive |
+| `FoldResult` | `eval/fold_runner.py` | `fold_name`, `tier`, `scheme`, `n_prompts`, `n_blocked`, `n_passed`, `fpr`, `asr`, `notes` | Input to `results_writer.write_fold_result()` |
+| `Tier` | `types.py` | Enum: `A`, `B`, `C`, `C_PLUS` | Used by LADDER router; `Tier.value` is the string form |
+| `QuantScheme` | `types.py` | Enum: `FP16`, `NF4`, `AWQ_INT4`, `GGUF_Q4_K_M`, `GGUF_Q3_K_M`, … | `QuantScheme.value` is the string form |
+| `HiddenStateAdapter` | `engines/base.py` | Abstract base; `get_hidden_states(prompt, layer)`, `get_top_k_logprobs(prompt, k)` | Phase B must subclass this |
+| `GateName` | `types.py` | Literal string union of all 12 gate names | Used as dict keys in CONDUCTOR context builder |
+
+**Serialisation rule:** enum fields must be serialised via `.value` before writing to JSON (see `results_writer._serialize_fold_result`). `json.load()` returns `Any`; use `# type: ignore[no-any-return]` and narrow with `isinstance()` before accessing fields.
+
+## Error Handling Contracts
+
+| Condition | Module | Behaviour | Action for Phase B |
+|---|---|---|---|
+| Hidden states unavailable (NPU frozen graph, API endpoint) | `probe/*.py` | `HiddenStateAdapter.get_hidden_states` raises `NotImplementedError` | LADDER routes to black-box path; PROBE gates return `GateVerdict(fired=False, score=0.0, margin=None)` |
+| KenLM binary not found | `tripwire/r.py` | `FileNotFoundError` on ARPA path at load time | `evaluate()` returns `GateVerdict(fired=False, …)` with a log warning; TRIPWIRE-H continues alone |
+| ATTEST hash mismatch | `attest/wh.py` | `attest()` returns `AttestResult.BLOCK` | CONDUCTOR sets context vector index 12 to 0.0; final verdict is BLOCK regardless of other gates |
+| ATTEST manifest not found | `attest/wh.py` | `attest()` returns `AttestResult.DEGRADED` | CONDUCTOR sets context vector index 12 to 0.5; system continues in degraded mode |
+| Calibration table missing for scheme | `eval/calibration.py` | `KeyError` on `CalibrationTable[scheme]` | Build calibration tables for all deployed schemes before production use |
+| Fold A corpus below `MIN_CALIBRATION_SIZE` | `eval/calibration.py` | Raises `ValueError` | Collect ≥ 2000 benign prompts; minimum required for KS estimation error to stay within ε = 0.02 |
+
+## Environment Variables
+
+| Variable | Default | Effect |
+|---|---|---|
+| `UV_CACHE_DIR` | system default | Redirect uv package cache (useful when C: is full on Windows) |
+| `UV_PROJECT_ENVIRONMENT` | `.venv/` | Redirect virtual environment directory |
+| `HF_HOME` | `~/.cache/huggingface` | Redirect HuggingFace model cache |
+| `CLIFFGUARD_ARTIFACTS_DIR` | `artifacts/` | Override the artifacts directory at runtime (takes precedence over `configs/*.yaml`) |
+| `CLIFFGUARD_DATA_DIR` | `data/` | Override the data directory at runtime |
+| `CLIFFGUARD_LOG_LEVEL` | `WARNING` | Set logging verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
+
+None of these are required for Phase A dry runs. `UV_CACHE_DIR` and `UV_PROJECT_ENVIRONMENT` are most commonly needed on Windows — see the Troubleshooting section in [docs/setup.md](setup.md).
+
 ## Engine Adapters
 
 Phase B inference hooks live in `cliffguard/engines/`. Each adapter exposes two methods: `get_hidden_states(prompt, layers)` returning a dict of layer → hidden-state tensor, and `get_top_k_logprobs(prompt, k)` returning a top-k log-probability array.

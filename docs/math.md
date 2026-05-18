@@ -79,6 +79,10 @@ where KS(F_q, F_q') is the Kolmogorov-Smirnov distance between the benign-margin
 
 **Acceptance criterion:** κ = 0.25, cliff at Q3_K_M or below in ≥ 2 of 3 families.
 
+### Intuition for κ = 0.25
+
+κ = 0.25 is grounded in prior empirical evidence: Egashira et al. (ICLR 2025) measured attack-success-rate deltas of Δ = 88.7 % (insecure code), 85.0 % (content injection), and 30.1 % (refusal bypass) between FP16 and GGUF-quantized models. Hong et al. (arXiv:2403.15447) found a ~50-point toxicity-safety drop at GPTQ-3-bit versus FP16. For the geometric metric, κ = 0.25 corresponds to a cosine similarity of 1 − 2·(0.25)² = 0.875 between the FP16 and quantized refusal directions — a rotation large enough that the safety subspace at Q3_K_M is meaningfully misaligned with FP16. κ is pre-registered and cannot be adjusted after data collection begins.
+
 ### H2 — FPR Decoupling (White-Box)
 
 **Claim:** PROBE-RM FPR after per-quantization calibration varies less than ε = 0.02 across {FP16, NF4, AWQ-INT4, Q4_K_M, Q3_K_M}.
@@ -118,6 +122,26 @@ where KS(F_q, F_q') is the Kolmogorov-Smirnov distance between the benign-margin
 **Null for Tier C+:** Tier C+ does not achieve significant ABR reduction (p ≥ 0.05).
 
 **Acceptance criterion:** p(Tier C) ≥ 0.05 AND p(Tier C+) < 0.05. Note that H5 Tier C uses uncorrected α = 0.05 (absence of effect is the claim). Implemented in `eval/stats.py` (`test_h5_tier_c_weakness`).
+
+## Sensitivity Corollary (§3.4)
+
+The sensitivity bound formalizes why the cliff is a structural consequence of quantization, not an artifact of a specific attack.
+
+**Geometric assumption (G1).** Let z_t(q) denote the residual-stream activation at token t for prompt q. There exists a safety subspace S = span{r̂, ĥ} ⊂ ℝ^d such that in expectation over (q, q') ∈ harmful × harmless:
+
+```math
+\|\Pi_S z_{t_\text{inst}}(q) - \Pi_S z_{t_\text{inst}}(q')\| \;\ge\; \xi \cdot \|z_{t_\text{inst}}(q) - z_{t_\text{inst}}(q')\|
+```
+
+for some ξ > 0 (the safety-subspace fraction). G1 is empirically supported by Arditi et al. (arXiv:2406.11717) and Zhao et al. (arXiv:2507.11878) for instruction-tuned LLMs at 7B–72B parameters.
+
+**Sensitivity bound.** Let q' = q + δ be an adversarial perturbation and let π(q) = Π_S z_{t_inst}(q) be the safety projection. If quantization acts as a Lipschitz operator on the residual stream with constant L_q̃:
+
+```math
+\|\pi(q) - \pi(q')\| \;\le\; L_{\tilde{q}} \cdot (\|\delta_z\|_2 + 2\,\varepsilon_{\tilde{q}})
+```
+
+where ε_q̃ is the per-quantization residual reconstruction error and δ_z is the induced activation perturbation. **The cliff is the regime where ε_q̃ inflates enough that π(q) flips sign on harmful prompts.** This is why PROBE-RM degrades at Q3_K_M and why the FPR-decoupling theorem cannot recover information lost when the per-class margin distributions overlap.
 
 ## PROBE-RM Margin
 
@@ -189,3 +213,69 @@ where H is Shannon entropy in nats. JSD ∈ [0, log N].
 **Firing direction — LOW:** the gate fires when JSD < τ_q. A refusing model produces high-variance refusal outputs across paraphrases (high JSD); a model that has been coerced into compliance produces low-variance, consistent outputs (low JSD). Low divergence = consistent compliance = suspicious.
 
 The gate is computed on top-k log-probability vectors (one per paraphrase, vocabulary restricted to top-k tokens as returned by the API), making it compatible with the black-box endpoint path.
+
+## PROBE-HD Harmfulness Margin
+
+Zhao et al. (arXiv:2507.11878, NeurIPS 2025) showed that harmfulness and refusal are encoded in **separate** residual-stream directions. PROBE-HD extracts the harmfulness direction ĥ at the user-instruction token t_inst:
+
+```math
+m_h = \frac{\hat{h} \cdot z_\ell(t_{\text{inst}})}{\|\hat{h}\|}
+```
+
+where ĥ is the harmfulness direction (difference-in-means on harmful vs. harmless residual streams at the instruction token, normalized to unit norm). **Gate fires HIGH** when m_h > τ_q — high harmfulness projection at the request stage indicates the model recognises the prompt as harmful, regardless of whether it will ultimately refuse (the refusal decision is PROBE-RM's signal at t_post-inst).
+
+Together PROBE-HD (at t_inst) and PROBE-RM (at t_post-inst) probe the full 2-D safety subspace S = span{r̂, ĥ}.
+
+## PROBE-MT Margin Trajectory
+
+Compute the refusal margin ρ_ℓ at layers at 25 %, 50 %, and 75 % of model depth. Define:
+
+```math
+\dot{\rho} = \rho_{\text{late}} - \rho_{\text{mid}}, \qquad \ddot{\rho} = (\rho_{\text{late}} - \rho_{\text{mid}}) - (\rho_{\text{mid}} - \rho_{\text{early}})
+```
+
+**Gate fires LOW** when ρ̇ < τ_q. A falling margin trajectory (ρ̇ < 0) indicates the model is drifting away from refusal as it processes the input — characteristic of adversarial suffixes that redirect the model over the course of the forward pass. Both ρ̇ and ρ̈ are stored in the CONDUCTOR context vector at indices 3 and 4.
+
+Cost: K_ℓ = 3 projections, ~36 µs on GPU, ~600 µs on Pi 5.
+
+## VESTIBULE-LZ Compression Ratio
+
+```math
+\rho_{\text{LZ}}(x) = \frac{|z(x)|}{|x|}
+```
+
+where |z(x)| is the zlib-compressed length and |x| is the raw byte length of the input string.
+
+**Gate fires HIGH** when ρ_LZ(x) > τ_q. GCG-style adversarial suffixes consist of near-random tokens that compress poorly (high ratio). ArtPrompt ASCII art has a distinctive compression signature detectable via the calibrated threshold.
+
+Cost: ~20 µs per 1 KB. No model access required — pure stdlib `zlib`.
+
+## VESTIBULE-PS Signal Score
+
+Implements the spotlighting / provenance-marking approach of Hines et al. (arXiv:2403.14720). Counts structural signals that indicate injected content within the input:
+
+```
+signal_score(x) = Σᵢ wᵢ · count_signals(x, pattern_i)
+```
+
+Marker types: instruction-density patterns (imperative verb sequences near entity references), role-assignment strings, delimiter anomalies, encoding anomalies (non-printable characters, base-N payloads, high ASCII-art density), structural-segregation signals.
+
+**Gate fires HIGH** when signal_score(x) > τ_q. High signal score indicates injected instruction structure within retrieved content or tool outputs.
+
+## TRIPWIRE-R Log-Likelihood Ratio
+
+The per-token log-likelihood ratio between the protected model and a fixed KenLM reference:
+
+```math
+\Delta_t = \log P_M(y_t \mid \text{ctx}) - \log P_{\text{ref}}(y_t \mid \text{ctx})
+```
+
+Combined with TRIPWIRE-H via a linear combination fit on calibration traces:
+
+```math
+C_t = \alpha H_t + \beta \Delta_t
+```
+
+CUSUM runs on C_t. **Gate fires LOW** when the accumulated statistic falls below τ_q — the model's output is drifting away from benign-reference n-gram expectations.
+
+**Why a fixed reference helps:** pure perplexity gates (P_M alone) must be re-tuned under quantization because P_M shifts. The KenLM reference P_ref is fixed at calibration time, so quantization affects only the P_M term. The ratio Δ_t partially cancels the drift. KenLM order: 5 for Tier A/B, 3 for Tier C/C+ (see `kenlm.order_tier_ab` / `kenlm.order_tier_c` in `configs/example.yaml`).

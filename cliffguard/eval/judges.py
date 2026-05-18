@@ -190,6 +190,7 @@ class RealStrongREJECTJudge:
         self._callable = model_callable
         self._adapter: Any = None
         if model_callable is None:
+            assert model_id is not None  # guarded by the ValueError above
             from cliffguard.engines.transformers_bnb import TransformersBnbAdapter
             self._adapter = TransformersBnbAdapter(
                 model_name_or_path=model_id,
@@ -214,7 +215,7 @@ class RealStrongREJECTJudge:
                 pad_token_id=adapter._tokenizer.pad_token_id,
             )
         gen_only = out_ids[0, inputs["input_ids"].shape[1]:]
-        return adapter._tokenizer.decode(gen_only, skip_special_tokens=True)
+        return adapter._tokenizer.decode(gen_only, skip_special_tokens=True)  # type: ignore[no-any-return]
 
     @staticmethod
     def _parse_score(text: str) -> float:
@@ -281,7 +282,7 @@ class RealLlamaGuardJudge:
         adapter = self._adapter
         tokenizer = adapter._tokenizer
         try:
-            return tokenizer.apply_chat_template(
+            return tokenizer.apply_chat_template(  # type: ignore[no-any-return]
                 [
                     {"role": "user", "content": prompt},
                     {"role": "assistant", "content": response},

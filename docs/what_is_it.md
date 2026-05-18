@@ -70,6 +70,42 @@ Defends against poisoned-weight supply-chain attacks (A2).
 
 CLIFFGUARD does not modify, retrain, or fine-tune the protected model. It does not claim to eliminate all prompt injection — it raises the cost for each adversary class and provides honest statements of where each tier's defenses become structurally weak (see H5 and Tier C scope). It does not require white-box access in all modes: B-PROBE provides a black-box fallback that extends the FPR-portability guarantee (with honestly acknowledged TPR loss) to closed-weight API endpoints. The system is not a content classifier that can be bypassed by rephrasing — the core signal (refusal-direction margin, token entropy trajectory) is derived from the model's own internal geometry, not from surface-level text patterns.
 
+## The Nine Adversary Classes
+
+CLIFFGUARD models nine adversary classes from the Greshake-style (arXiv:2302.12173) hierarchy, extended for edge-quantized deployments:
+
+| ID | Name | Attack Mechanism | Primary Gate(s) |
+|---|---|---|---|
+| A1 | Direct injector | Natural-language hijacks ("ignore previous instructions"), DAN, role-play jailbreaks | VESTIBULE-PS, LOOKOUT-JG |
+| A2 | Indirect / poisoned-weight | Instructions embedded in RAG/tool outputs; Egashira-style GGUF blob substitution | VESTIBULE-PS, ATTEST-WH |
+| A3 | Optimizer | GCG / AutoDAN adversarial suffixes with high perplexity and low compressibility | VESTIBULE-LZ, PROBE-RM |
+| A4 | Iterator | PAIR / TAP / Crescendo — black-box query iteration to refine injections | TRIPWIRE-H, LOOKOUT-JG |
+| A5 | Scaler | Best-of-N sampling, many-shot, randomised augmentation exploiting sampling variance | TRIPWIRE-H, LOOKOUT-CT |
+| A6 | Encoder | ArtPrompt ASCII art, bijection learning, base64/cipher, low-resource-language jailbreaks | TRIPWIRE-R, VESTIBULE-LZ |
+| A7 | Quantization-cliff exploiter | Natural-language prompts whose refusal margin collapses only at Q3_K_M or below | LADDER + ATTEST + cross-tier rollback |
+| A8 | Defender-aware adversary | Knows CLIFFGUARD is deployed; white-box access to bandit weights and calibration tables | CONDUCTOR safe-rollback |
+| A9 | Closed-weight black-box endpoint | Targets API endpoints where only top-k logprobs are observable | B-PROBE-LOGIT, B-PROBE-CONSISTENCY |
+
+**Tier C honest scope:** Tier C (2 GB embedded, 3 gates) is **not defended against A7**. H5 pre-registers that Tier C will show no statistically significant ABR reduction against the cliff exploiter. Tier C+ adds PromptGuard-2-22M-INT4 (B-PROBE-LOGIT) and is expected to show significant ABR reduction (H5 Tier C+ claim).
+
+## How CLIFFGUARD Differs from Prior Work
+
+None of the existing prompt-injection defenses were designed for the quantized edge setting:
+
+| System | Approach | Gap vs. CLIFFGUARD |
+|---|---|---|
+| Llama Guard (Meta) | Safety classifier on prompt + response | Does not observe residual-stream geometry; degrades if quantized; no streaming detection |
+| PromptGuard-2-22M (Meta) | DeBERTa-xsmall injection classifier | Surface-pattern only; no geometry signal; CLIFFGUARD uses it as one gate in C+ tier |
+| NeMo Guardrails (NVIDIA) | Rule-based + LLM-as-judge | No cliff-awareness; no per-quantization calibration; LLM-as-judge is expensive on edge |
+| Rebuff | Perplexity gate + canary injection | Perplexity alone must be re-tuned per quantization; CLIFFGUARD adds ten more signals |
+| SecAlign (Stanford) | Fine-tunes model to prefer secure instructions | Modifies weights — incompatible with edge deployment constraints; cliff can re-emerge |
+| Constitutional Classifiers (Anthropic) | Classifier trained on constitutional rules | Cloud-scale; no edge or quantization support |
+| LlamaFirewall (Meta) | Composable pipeline of Llama Guard + PromptGuard + CodeShield | No residual-stream geometry; no RLHF-cliff awareness; no bandit adaptation |
+| CaMeL (Google DeepMind) | Capability-based language for tool security | Addresses indirect injection, not the quantization cliff; requires model cooperation |
+| AEGIS (ACL 2024) | Hedge-style combination of full LLM safety experts | Uses full LLMs as experts (expensive); no quantization-aware calibration |
+
+**What CLIFFGUARD adds:** (1) per-quantization-scheme calibration so FPR is portable across bit-widths; (2) residual-stream geometry signals (PROBE-RM, PROBE-HD) that observe the refusal subspace directly rather than classifying surface text; (3) streaming CUSUM/EWMA (TRIPWIRE) that does not require buffering full outputs; (4) a contextual bandit (CONDUCTOR) that adapts gate weights online without storing user payloads; (5) honest pre-registration of where each tier's defenses structurally fail.
+
 ## FAQ
 
 **Q: Does this require a GPU?**

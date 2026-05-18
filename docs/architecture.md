@@ -11,6 +11,39 @@
 
 # System Architecture
 
+## Threat Model
+
+CLIFFGUARD addresses nine adversary classes drawn from a Greshake-style (arXiv:2302.12173) hierarchy extended for edge-quantized deployments:
+
+| ID | Adversary | Primary Mechanism | Gates That Respond |
+|---|---|---|---|
+| **A1** | Direct injector | "Ignore previous instructions", DAN, role-play jailbreaks, persuasive prompts | VESTIBULE-PS, LOOKOUT-JG |
+| **A2** | Indirect / poisoned-weight | Instructions in RAG/tool outputs (BIPIA, AgentDojo); Egashira-style GGUF blob substitution | VESTIBULE-PS, ATTEST-WH |
+| **A3** | Optimizer | GCG (arXiv:2307.15043), AutoDAN (arXiv:2310.04451) adversarial suffixes — high perplexity, low compressibility | VESTIBULE-LZ, PROBE |
+| **A4** | Iterator | PAIR (arXiv:2310.08419), TAP (arXiv:2312.02119), Crescendo (arXiv:2404.01833) — iterative refinement | TRIPWIRE, LOOKOUT |
+| **A5** | Scaler | Best-of-N (arXiv:2412.03556), many-shot, randomised augmentation exploiting sampling variance | TRIPWIRE-H, LOOKOUT-CT |
+| **A6** | Encoder | ArtPrompt (arXiv:2402.11753), bijection learning (arXiv:2410.01294), base64/cipher, low-resource-language | TRIPWIRE-R, VESTIBULE-LZ |
+| **A7** | Quantization-cliff exploiter | Natural-language prompts whose refusal margin collapses only at Q3_K_M or below | LADDER + ATTEST + cross-tier rollback |
+| **A8** | Defender-aware adversary | Knows CLIFFGUARD is deployed; white-box access to bandit weights and calibration tables | CONDUCTOR safe-rollback |
+| **A9** | Closed-weight black-box endpoint | Targets API endpoints where only text and top-k logprobs are observable | B-PROBE, LOOKOUT-JG |
+
+**Pre-registered coverage gaps:**
+- **Tier C is not defended against A7** — H5 pre-registers this: Tier C runs only VESTIBULE-LZ, VESTIBULE-PS, and ATTEST-WH, which do not observe the refusal-margin signal.
+- **A8 is partially mitigated** — the CONDUCTOR safe-rollback rule limits exposure when the adversary learns current arm weights, but Kerckhoffs-level resistance is not claimed.
+- **Out of scope:** side-channel exfiltration (timing, DNS), supply-chain attacks below the GGUF/safetensors layer, hardware fault injection, multimodal image/audio injection.
+
+## Why Not Just Use a Content Classifier?
+
+Content classifiers (Llama Guard, PromptGuard 2, NeMo Guardrails, Constitutional Classifiers) operate on surface text patterns. Three structural problems apply in the quantized edge setting:
+
+1. **Bypass by rephrasing.** A classifier trained on surface patterns is evaded by A3/A4/A6 adversaries who encode harmful intent in ASCII art, ciphers, or iteratively refined natural language without triggering classifier keywords.
+
+2. **Cliff degradation of the classifier itself.** A classifier quantized to fit edge hardware faces the same cliff problem it is defending against — its classification accuracy degrades at Q3_K_M alongside the model's generation safety.
+
+3. **No geometry signal.** A classifier produces a label from surface text without observing the model's residual-stream geometry — the refusal-margin collapse that is the primary indicator of cliff exploitation (A7). PROBE gates observe the margin directly from residual-stream projections.
+
+**CLIFFGUARD's approach:** use a compliance classifier (LOOKOUT-JG, Llama Guard 3) as *one gate among twelve*, not as the sole mechanism. The other eleven gates observe input structure (VESTIBULE), internal geometry (PROBE), streaming entropy (TRIPWIRE), output canaries (LOOKOUT-CT), and supply-chain integrity (ATTEST) — signals that a surface classifier cannot access.
+
 ## 1. Request Cycle
 
 > The request cycle is stateless per-request. ATTEST-WH runs once
