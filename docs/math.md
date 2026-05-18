@@ -2,6 +2,23 @@
 
 All numeric values in this document are pre-registered in `docs/preregistration.md` or cited from the referenced papers. No quantities are fabricated.
 
+## Overview
+
+CLIFFGUARD's mathematics rests on four pillars: **information-theoretic** (injection as a Neyman–Pearson change-of-source problem), **control-theoretic** (CUSUM/EWMA detectors as feedback controllers), **RL-theoretic** (LinUCB bandit for gate weighting), and **interpretability-theoretic** (refusal and harmfulness directions as a 2-D residual-stream safety subspace).
+
+| Symbol | Meaning | Gate |
+|---|---|---|
+| ρ(x) | Refusal margin — cosine projection onto r̂ at post-instruction token | PROBE-RM |
+| m_h(x) | Harmfulness margin — projection onto ĥ at instruction token | PROBE-HD |
+| ρ̇, ρ̈ | Margin trajectory first and second derivatives across layers | PROBE-MT |
+| S_t | CUSUM statistic on per-token entropy | TRIPWIRE-H |
+| Δ_t | Log-likelihood ratio vs KenLM reference | TRIPWIRE-R |
+| ρ_LZ(x) | Compression ratio of input string | VESTIBULE-LZ |
+| JSD(P₁,…,Pₙ) | Jensen-Shannon divergence across N paraphrase distributions | B-PROBE-CONSISTENCY |
+| UCB(a, x_t) | LinUCB upper confidence bound for arm a at context x_t | CONDUCTOR |
+
+Pre-registered thresholds: **κ = 0.25** (cliff jump), **ε = 0.02** (FPR portability), **α_corrected = 0.01** (Bonferroni), **fpr_target = 0.05**.
+
 ## Safety Cliff (Definition 11.1)
 
 The safety cliff is a quantization boundary q* at which refusal behavior degrades non-linearly. Three independent metrics characterise it:
