@@ -2,12 +2,15 @@
 
 Public API:
   banner()                            — print repo + GPU + Drive status
+  ensure_repo_cwd()                   — assert/cd into /content/CLIFFGUARD
   symlink_datasets_from_drive(...)    — link /content/drive/.../datasets → data/
   choose_model()                      — VRAM-based model + scheme picker
   run_fold_a_with_checkpoint(config)  — Fold A with per-scheme checkpointing
   run_fold_b_with_checkpoint(config)  — Fold B with per-scheme checkpointing
   sync_artifacts_to_drive(...)        — copy artifacts/ → Drive
   assemble_fold_b(out_dir)            — pull AdvBench + JBB into fold_b/
+  verify_fold_a_complete(config, ...) — guard before running Fold B
+  fold_isolation_audit()              — check Fold A / B SHA-256 disjointness
 
 All checkpoint files use the same shape so a killed-then-restarted session
 re-reads the checkpoint and skips completed (model, scheme) pairs.
@@ -15,10 +18,18 @@ re-reads the checkpoint and skips completed (model, scheme) pairs.
 Colab-specific imports (`google.colab`) are guarded — the module imports
 cleanly outside Colab so it can be used from a regular GPU host or from
 `scripts/colab_run.py`.
+
+Notes on the live-mode behavioural metric (`Δ_B-cliff`):
+  Phase B uses a PROBE-RM margin-threshold proxy in
+  `cliffguard/eval/five_fold_live.py:243-250`, NOT the StrongREJECT +
+  Llama-Guard-3-8B judge stack required by the paper §11.3. The proxy
+  is correctly typed but is a behavioural surrogate. A real-judge
+  implementation is tracked in `development.md` as Phase C work.
 """
 
 from __future__ import annotations
 
+import gc
 import json
 import os
 import shutil
@@ -36,17 +47,45 @@ from typing import Any
 DEFAULT_DRIVE_ROOT = Path("/content/drive/MyDrive/cliffguard")
 DEFAULT_LOCAL_DATA = Path("data")
 DEFAULT_LOCAL_ARTIFACTS = Path("artifacts")
+DEFAULT_REPO_ROOT = Path("/content/CLIFFGUARD")
+
+
+# --------------------------------------------------------------------------
+# Working-directory discipline
+# --------------------------------------------------------------------------
+
+def ensure_repo_cwd(repo_root: Path = DEFAULT_REPO_ROOT) -> Path:
+    """`chdir` into the repo root and assert the expected layout.
+
+    Many cells call `!python scripts/...` or open `data/folds/...` with
+    relative paths. If a previous `%cd` or runtime restart moved CWD,
+    those calls silently fail. Call this at the start of every code cell
+    that touches the filesystem to guarantee CWD == repo root.
+    """
+    if not repo_root.exists():
+        raise RuntimeError(
+            f"Repo not found at {repo_root}. Run the clone cell first."
+        )
+    os.chdir(repo_root)
+    expected = ["cliffguard", "scripts", "notebooks", "docs", "tests"]
+    missing = [d for d in expected if not (repo_root / d).is_dir()]
+    if missing:
+        raise RuntimeError(
+            f"{repo_root} is not a CLIFFGUARD checkout (missing: {missing})."
+        )
+    return repo_root
 
 
 # --------------------------------------------------------------------------
 # Banner
 # --------------------------------------------------------------------------
 
-def _git_short_sha() -> str:
+def _git_short_sha(repo_root: Path = DEFAULT_REPO_ROOT) -> str:
     try:
         out = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
             capture_output=True, text=True, check=False,
+            cwd=str(repo_root) if repo_root.exists() else None,
         )
         return out.stdout.strip() or "unknown"
     except FileNotFoundError:
@@ -66,19 +105,45 @@ def _gpu_info() -> tuple[str, float, float]:
     return (name, free_bytes / (1024**3), total_bytes / (1024**3))
 
 
-def banner(drive_root: Path = DEFAULT_DRIVE_ROOT) -> None:
+def banner(
+    drive_root: Path = DEFAULT_DRIVE_ROOT,
+    repo_root: Path = DEFAULT_REPO_ROOT,
+) -> None:
     """Print a one-screen status banner for the notebook."""
     name, free_gb, total_gb = _gpu_info()
     print("=" * 72)
-    print("CLIFFGUARD — Colab session")
+    print("CLIFFGUARD - Colab session")
     print("=" * 72)
-    print(f"  Repo HEAD:    {_git_short_sha()}")
+    print(f"  Repo HEAD:    {_git_short_sha(repo_root)}")
+    print(f"  Repo root:    {repo_root}  (exists: {repo_root.exists()})")
+    print(f"  CWD:          {Path.cwd()}")
     print(f"  Host:         {socket.gethostname()}")
     print(f"  GPU:          {name}")
     print(f"  VRAM:         {free_gb:.2f} GB free / {total_gb:.2f} GB total")
     print(f"  Drive root:   {drive_root}  (exists: {drive_root.exists()})")
     print(f"  Time (UTC):   {datetime.now(timezone.utc).isoformat()}")
     print("=" * 72)
+
+
+# --------------------------------------------------------------------------
+# GPU memory hygiene
+# --------------------------------------------------------------------------
+
+def torch_cleanup() -> None:
+    """Aggressively free GPU memory between schemes.
+
+    `del adapter` alone leaves cached allocator blocks on a T4 — enough
+    to make the next scheme's load fail with an opaque "weight conversion"
+    error or an OOM. Call this between every `(model, scheme)` pair.
+    """
+    gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+    except ImportError:
+        pass
 
 
 # --------------------------------------------------------------------------
@@ -92,29 +157,32 @@ def symlink_datasets_from_drive(
     """Make `data/` shadow `drive_root/datasets/` so HuggingFace and the
     fold loaders write to Drive automatically.
 
-    If `local_data_dir` already exists and is not a symlink, it is left
-    alone (we don't want to delete user data). In that case the user must
-    manually move existing files into Drive.
+    Always resolves `local_data_dir` against the current CWD — call
+    `ensure_repo_cwd()` first if you want it to land at
+    `<repo>/data/` (the expected location).
     """
     drive_datasets = drive_root / "datasets"
     drive_datasets.mkdir(parents=True, exist_ok=True)
+    # Ensure the fold subtree exists on Drive so download_fold_a.py finds it.
+    (drive_datasets / "folds" / "fold_a").mkdir(parents=True, exist_ok=True)
+    (drive_datasets / "folds" / "fold_b").mkdir(parents=True, exist_ok=True)
 
     if local_data_dir.is_symlink():
         existing_target = local_data_dir.resolve()
         if existing_target == drive_datasets.resolve():
-            print(f"[symlink_datasets] already linked: {local_data_dir} → {drive_datasets}")
+            print(f"[symlink_datasets] already linked: {local_data_dir} -> {drive_datasets}")
             return
         local_data_dir.unlink()
     elif local_data_dir.exists():
         print(
-            f"[symlink_datasets] {local_data_dir} exists and is not a symlink — "
+            f"[symlink_datasets] {local_data_dir} exists and is not a symlink - "
             "leaving it alone. Move its contents to "
             f"{drive_datasets} manually if you want Drive persistence."
         )
         return
 
     local_data_dir.symlink_to(drive_datasets, target_is_directory=True)
-    print(f"[symlink_datasets] linked {local_data_dir} → {drive_datasets}")
+    print(f"[symlink_datasets] linked {local_data_dir} -> {drive_datasets}")
 
 
 # --------------------------------------------------------------------------
@@ -126,10 +194,10 @@ def choose_model() -> dict[str, Any]:
        {model_id, layer, schemes, est_runtime_min, vram_gb}.
 
     Selection logic (free VRAM in GB):
-      >= 35  → Llama-3.1-8B-Instruct, layer 20, [FP16, NF4, AWQ_INT4]
-      >= 14  → Llama-3.2-3B-Instruct, layer 14, [FP16, NF4]
-      >=  8  → Llama-3.2-1B-Instruct, layer  8, [FP16, NF4]
-      <   8  → Qwen2.5-0.5B-Instruct, layer  6, [FP16]   (CPU-degraded)
+      >= 35  -> Llama-3.1-8B-Instruct, layer 20, [FP16, NF4, AWQ_INT4]
+      >= 14  -> Llama-3.2-3B-Instruct, layer 14, [FP16, NF4]
+      >=  8  -> Llama-3.2-1B-Instruct, layer  8, [FP16, NF4]
+      <   8  -> Qwen2.5-0.5B-Instruct, layer  6, [FP16]   (CPU-degraded)
 
     Memory rule of thumb: ~2 GB per 1B params in FP16; ~0.5 GB per 1B
     in NF4. These thresholds leave headroom for KV cache + activations.
@@ -214,9 +282,138 @@ def _find_existing_run_dir(
             payload = _load_checkpoint(cp)
         except json.JSONDecodeError:
             continue
-        if payload.get("model_id") == model_id and payload.get("pending_schemes"):
+        if payload.get("model_id") == model_id:
             return d
     return None
+
+
+# --------------------------------------------------------------------------
+# Fold A: load from disk (avoid rerunning calibration in Fold B)
+# --------------------------------------------------------------------------
+
+def _load_fold_a_results_from_disk(run_dir: Path, model_id: str) -> Any:
+    """Reconstruct a `FoldAResults` dataclass from saved `.npz` and
+    `calibration_summary.json`. Used by `run_fold_b_with_checkpoint` so
+    Fold B does not re-run calibration on every cell re-execution.
+    """
+    import numpy as np  # local import: keep helper import-cheap
+
+    from cliffguard.eval.five_fold_orchestrator import FoldAResults
+    from cliffguard.eval.threshold_calibrator import CalibrationTable
+    from cliffguard.types import QuantScheme
+
+    family_key = model_id.split("/")[-1]
+    fold_a_dir = run_dir / "fold_a"
+
+    cal_path = fold_a_dir / "calibration_summary.json"
+    if not cal_path.exists():
+        raise FileNotFoundError(
+            f"calibration_summary.json missing in {fold_a_dir}. "
+            "Run run_fold_a_with_checkpoint() first."
+        )
+    with cal_path.open(encoding="utf-8") as f:
+        cal_json = json.load(f)
+
+    refusal_directions: dict[str, Any] = {}
+    for npz in fold_a_dir.glob(f"r_hat_{family_key}_*.npz"):
+        scheme_str = npz.stem[len(f"r_hat_{family_key}_"):]
+        arr = np.load(npz)
+        # Saved by calibrate_refusal_direction as the "direction" key.
+        if "direction" in arr.files:
+            refusal_directions[f"{family_key}:{scheme_str}"] = arr["direction"]
+        else:
+            # Fallback: first array
+            refusal_directions[f"{family_key}:{scheme_str}"] = arr[arr.files[0]]
+
+    thresholds = {
+        QuantScheme(s): float(v)
+        for s, v in cal_json.get("thresholds", {}).items()
+    }
+    cal_table = CalibrationTable(thresholds=thresholds)
+
+    return FoldAResults(
+        refusal_directions=refusal_directions,
+        calibration_tables={"PROBE-RM": cal_table},
+        kenlm_paths={},
+        fp16_behavior=[],
+        fold_a_hashes=frozenset(),
+    )
+
+
+# --------------------------------------------------------------------------
+# Guards
+# --------------------------------------------------------------------------
+
+def verify_fold_a_complete(
+    config: dict[str, Any],
+    artifacts_dir: Path = DEFAULT_LOCAL_ARTIFACTS,
+) -> Path:
+    """Raise `RuntimeError` if Fold A's checkpoint does not include every
+    scheme in `config['schemes']`. Run BEFORE `run_fold_b_with_checkpoint`
+    so a partially-completed Fold A cannot silently produce a degenerate
+    Fold B result (e.g. `cliff(FP16, FP16) = 0`).
+
+    Returns the validated Fold A run directory.
+    """
+    model_id = config["model_id"]
+    requested = set(config["schemes"])
+
+    run_dir = _find_existing_run_dir(artifacts_dir, "a", model_id)
+    if run_dir is None:
+        raise RuntimeError(
+            "No Fold A run directory found. Call run_fold_a_with_checkpoint() first."
+        )
+
+    cp = _load_checkpoint(run_dir / "fold_a" / "checkpoint.json")
+    completed = set(cp.get("completed_schemes", []))
+    missing = requested - completed
+
+    if missing:
+        raise RuntimeError(
+            f"Fold A incomplete: schemes {sorted(missing)} have not finished. "
+            f"completed={sorted(completed)}, requested={sorted(requested)}.\n"
+            "Re-run run_fold_a_with_checkpoint(config) to finish them, OR "
+            "narrow config['schemes'] to the completed set.\n"
+            "Cliff measurement on a single scheme is degenerate and will "
+            "silently return zero cliff."
+        )
+
+    if len(requested) < 2:
+        raise RuntimeError(
+            "Fold B needs >= 2 schemes (cliff is scheme-vs-scheme). "
+            f"config['schemes'] = {sorted(requested)} has only "
+            f"{len(requested)} scheme."
+        )
+    print(f"[guard] Fold A complete for {sorted(completed & requested)} - OK to run Fold B")
+    return run_dir
+
+
+def fold_isolation_audit(
+    fold_a_dir: Path = Path("data/folds/fold_a"),
+    fold_b_dir: Path = Path("data/folds/fold_b"),
+) -> None:
+    """Run `cliffguard.eval.folds.fold_isolation_check` over the two
+    assembled corpora and print the result. Raises `AssertionError` on
+    overlap — Fold B prompts must not appear in Fold A.
+    """
+    from cliffguard.eval.folds import (
+        Fold, _load_jsonl_fold, fold_isolation_check,
+    )
+
+    fa = _load_jsonl_fold(
+        fold_a_dir,
+        [p.name for p in fold_a_dir.glob("*.jsonl")],
+        Fold.A, "benign",
+    )
+    fb = _load_jsonl_fold(
+        fold_b_dir,
+        [p.name for p in fold_b_dir.glob("*.jsonl")],
+        Fold.B, "harmful_test",
+    )
+    sets = fold_isolation_check({Fold.A: fa, Fold.B: fb})
+    print(f"[fold_isolation] Fold A: {len(sets[Fold.A])} unique prompts")
+    print(f"[fold_isolation] Fold B: {len(sets[Fold.B])} unique prompts")
+    print("[fold_isolation] OK - no overlap between Fold A and Fold B.")
 
 
 # --------------------------------------------------------------------------
@@ -234,7 +431,9 @@ def run_fold_a_with_checkpoint(
 
     `config` is the dict returned by `choose_model()`.
 
-    Returns the run directory path.
+    Between schemes, runs `torch_cleanup()` to free the VRAM the previous
+    scheme's model occupied — without this, a T4 will reject the next
+    NF4 load with a "weight conversion" error.
     """
     from cliffguard.eval.five_fold_live import live_execute_fold_a
     from cliffguard.eval.five_fold_orchestrator import (
@@ -274,11 +473,11 @@ def run_fold_a_with_checkpoint(
 
     pending = [s for s in requested_schemes if s.value not in completed]
     if not pending:
-        print("[fold_a] all schemes already complete — nothing to do.")
+        print("[fold_a] all schemes already complete - nothing to do.")
         return run_dir
 
-    # Run one scheme at a time so a kill costs only one scheme.
     for scheme in pending:
+        torch_cleanup()  # free residue from previous scheme BEFORE loading next
         single_orch = FiveFoldOrchestrator(
             OrchestratorConfig(
                 data_dir=Path("data/"),
@@ -287,11 +486,7 @@ def run_fold_a_with_checkpoint(
                 tiers=[Tier.A],
             )
         )
-        single_orch._run_dir_override = run_dir  # type: ignore[attr-defined]
-        # `live_execute_fold_a` calls orch.make_run_dir(); we patch it to
-        # reuse our checkpoint-aware directory.
-        original_make_run_dir = single_orch.make_run_dir
-        single_orch.make_run_dir = lambda: run_dir  # type: ignore[assignment, return-value]
+        single_orch.make_run_dir = lambda: run_dir  # type: ignore[assignment]
 
         print(f"[fold_a] running scheme {scheme.value} ...")
         try:
@@ -301,15 +496,18 @@ def run_fold_a_with_checkpoint(
                 layer=layer,
                 fold_a_dir=fold_a_dir,
             )
-        finally:
-            single_orch.make_run_dir = original_make_run_dir  # type: ignore[assignment]
+        except Exception as exc:  # noqa: BLE001
+            print(f"[fold_a] FAILED scheme={scheme.value}: {type(exc).__name__}: {exc}")
+            print(f"[fold_a] checkpoint NOT advanced; rerun the cell to retry.")
+            torch_cleanup()
+            raise
 
         completed.add(scheme.value)
         checkpoint["completed_schemes"] = sorted(completed)
         checkpoint["pending_schemes"] = [s.value for s in requested_schemes if s.value not in completed]
         _save_checkpoint(checkpoint_path, checkpoint)
+        torch_cleanup()
 
-        # Sync after every scheme — bound the loss window to one scheme.
         try:
             sync_artifacts_to_drive(artifacts_dir=artifacts_dir, drive_root=drive_root)
         except Exception as exc:  # noqa: BLE001
@@ -329,15 +527,18 @@ def run_fold_b_with_checkpoint(
     drive_root: Path = DEFAULT_DRIVE_ROOT,
     fold_b_dir: Path = Path("data/folds/fold_b"),
 ) -> Path:
-    """Run Fold B reusing the Fold A directions stored in the latest
-    matching run directory.
+    """Run Fold B reusing the Fold A directions saved on disk.
 
-    Pre-conditions:
-      - run_fold_a_with_checkpoint(config) has produced an
-        artifacts/runs/<run_id>/fold_a/ directory.
-      - data/folds/fold_b/*.jsonl exists (use assemble_fold_b()).
+    Fold A's raw data dir is intentionally not needed here — Fold B
+    reads the saved `r_hat_*.npz` and `calibration_summary.json` from
+    `artifacts/runs/<run_id>/fold_a/`, never re-loading the raw prompts.
+
+    Pre-conditions (checked here):
+      - `verify_fold_a_complete(config)` would pass (all schemes done).
+      - `data/folds/fold_b/*.jsonl` exists.
+      - `len(config['schemes']) >= 2`  (cliff is scheme-vs-scheme).
     """
-    from cliffguard.eval.five_fold_live import live_execute_fold_b, live_execute_fold_a
+    from cliffguard.eval.five_fold_live import live_execute_fold_b
     from cliffguard.eval.five_fold_orchestrator import (
         FiveFoldOrchestrator,
         OrchestratorConfig,
@@ -348,16 +549,26 @@ def run_fold_b_with_checkpoint(
     layer = config["layer"]
     schemes = [QuantScheme(s) for s in config["schemes"]]
 
-    run_dir = _find_existing_run_dir(artifacts_dir, "a", model_id)
-    if run_dir is None:
-        raise RuntimeError(
-            "Fold B needs Fold A first; run run_fold_a_with_checkpoint() and rerun."
-        )
+    # GUARD 1: Fold A must be complete for every requested scheme.
+    run_dir = verify_fold_a_complete(config, artifacts_dir=artifacts_dir)
 
+    # GUARD 2: Fold B corpus must exist.
     if not fold_b_dir.exists() or not any(fold_b_dir.glob("*.jsonl")):
         raise RuntimeError(
             f"Fold B corpus not found at {fold_b_dir}; call assemble_fold_b() first."
         )
+
+    # Skip if already done.
+    fold_b_checkpoint = run_dir / "fold_b" / "checkpoint.json"
+    existing_cp = _load_checkpoint(fold_b_checkpoint)
+    if set(existing_cp.get("completed_schemes", [])) >= {s.value for s in schemes}:
+        print(f"[fold_b] already complete for {sorted(existing_cp['completed_schemes'])}.")
+        return run_dir
+    fold_b_checkpoint.parent.mkdir(parents=True, exist_ok=True)
+
+    # GUARD 3: load FoldAResults from DISK, do not re-calibrate.
+    print(f"[fold_b] loading Fold A directions from {run_dir / 'fold_a'} ...")
+    fa = _load_fold_a_results_from_disk(run_dir, model_id)
 
     orch = FiveFoldOrchestrator(
         OrchestratorConfig(
@@ -368,22 +579,9 @@ def run_fold_b_with_checkpoint(
         )
     )
     orch.make_run_dir = lambda: run_dir  # type: ignore[assignment]
-
-    # Reuse the Fold A artifacts on disk by replaying calibration.
-    print("[fold_b] reloading Fold A directions ...")
-    fa = live_execute_fold_a(
-        orch=orch, model_id=model_id, layer=layer,
-        fold_a_dir=Path("data/folds/fold_a"),
-    )
     orch.fold_a_results = fa
 
-    fold_b_checkpoint = run_dir / "fold_b" / "checkpoint.json"
-    fold_b_checkpoint.parent.mkdir(parents=True, exist_ok=True)
-    existing_cp = _load_checkpoint(fold_b_checkpoint)
-    if existing_cp.get("completed_schemes") == [s.value for s in schemes]:
-        print("[fold_b] already complete.")
-        return run_dir
-
+    torch_cleanup()
     out = live_execute_fold_b(orch, model_id=model_id, layer=layer, fold_b_dir=fold_b_dir)
     with (run_dir / "fold_b" / "cliff_results.json").open("w") as f:
         json.dump(out, f, indent=2)
@@ -394,6 +592,7 @@ def run_fold_b_with_checkpoint(
         "completed_schemes": [s.value for s in schemes],
         "pending_schemes": [],
     })
+    torch_cleanup()
 
     try:
         sync_artifacts_to_drive(artifacts_dir=artifacts_dir, drive_root=drive_root)
@@ -419,7 +618,7 @@ def sync_artifacts_to_drive(
     destination. Uses `shutil.copy2` (preserves mtimes).
     """
     if not artifacts_dir.exists():
-        print(f"[sync] {artifacts_dir} does not exist — nothing to sync.")
+        print(f"[sync] {artifacts_dir} does not exist - nothing to sync.")
         return
     drive_results = drive_root / "results"
     drive_results.mkdir(parents=True, exist_ok=True)
@@ -438,7 +637,7 @@ def sync_artifacts_to_drive(
             continue
         shutil.copy2(src, dst)
         n_copied += 1
-    print(f"[sync] copied {n_copied} new/changed files → {drive_results}")
+    print(f"[sync] copied {n_copied} new/changed files -> {drive_results}")
 
 
 # --------------------------------------------------------------------------
@@ -454,6 +653,11 @@ def assemble_fold_b(
 
     File shape matches `cliffguard.eval.folds._load_jsonl_fold`:
         {"prompt": "<text>", "source": "<dataset-name>"}
+
+    NOTE: This is a subset of the paper §12.6 Fold B spec — JBB + AdvBench
+    are present, HarmBench + ArtPrompt are not. This is acceptable for
+    Phase B reproduction at the scale this notebook targets; a full
+    paper-spec corpus needs additional sources.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     adv_path = out_dir / "advbench.jsonl"

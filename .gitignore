@@ -18,3 +18,6 @@ decisions_log.md
 notebooks/.ipynb_checkpoints/
 *.ipynb_checkpoints
 .venv-colab/
+notebooks/I_DID/
+notebooks/.env
+.env
