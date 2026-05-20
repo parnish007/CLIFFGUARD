@@ -291,10 +291,47 @@ def _find_existing_run_dir(
 # Fold A: load from disk (avoid rerunning calibration in Fold B)
 # --------------------------------------------------------------------------
 
+def _accumulate_calibration(fold_a_dir: Path) -> None:
+    """Merge the just-written calibration_summary.json into calibration_all.json.
+
+    live_execute_fold_a overwrites calibration_summary.json for every scheme,
+    so per-scheme thresholds are lost. This function accumulates all thresholds
+    into a persistent calibration_all.json so Fold B sees every scheme.
+    Called in run_fold_a_with_checkpoint after each scheme completes.
+    """
+    summary_path = fold_a_dir / "calibration_summary.json"
+    all_path = fold_a_dir / "calibration_all.json"
+
+    if not summary_path.exists():
+        return
+
+    with summary_path.open(encoding="utf-8") as f:
+        new_data = json.load(f)
+
+    if all_path.exists():
+        with all_path.open(encoding="utf-8") as f:
+            merged = json.load(f)
+    else:
+        merged = {
+            "primitive": new_data.get("primitive", "PROBE-RM"),
+            "fpr_target": new_data.get("fpr_target"),
+            "thresholds": {},
+            "model_id": new_data.get("model_id"),
+            "layer": new_data.get("layer"),
+        }
+
+    merged["thresholds"].update(new_data.get("thresholds", {}))
+
+    tmp = all_path.with_suffix(".json.tmp")
+    with tmp.open("w", encoding="utf-8") as f:
+        json.dump(merged, f, indent=2)
+    tmp.replace(all_path)
+
+
 def _load_fold_a_results_from_disk(run_dir: Path, model_id: str) -> Any:
     """Reconstruct a `FoldAResults` dataclass from saved `.npz` and
-    `calibration_summary.json`. Used by `run_fold_b_with_checkpoint` so
-    Fold B does not re-run calibration on every cell re-execution.
+    `calibration_all.json` (preferred) or `calibration_summary.json` (fallback).
+    Used by `run_fold_b_with_checkpoint` so Fold B does not re-run calibration.
     """
     import numpy as np  # local import: keep helper import-cheap
 
@@ -305,11 +342,16 @@ def _load_fold_a_results_from_disk(run_dir: Path, model_id: str) -> Any:
     family_key = model_id.split("/")[-1]
     fold_a_dir = run_dir / "fold_a"
 
-    cal_path = fold_a_dir / "calibration_summary.json"
+    # calibration_all.json accumulates thresholds across all schemes.
+    # calibration_summary.json is overwritten per-scheme — use only as fallback.
+    all_path = fold_a_dir / "calibration_all.json"
+    summary_path = fold_a_dir / "calibration_summary.json"
+    cal_path = all_path if all_path.exists() else summary_path
+
     if not cal_path.exists():
         raise FileNotFoundError(
-            f"calibration_summary.json missing in {fold_a_dir}. "
-            "Run run_fold_a_with_checkpoint() first."
+            f"calibration_all.json and calibration_summary.json both missing in "
+            f"{fold_a_dir}. Run run_fold_a_with_checkpoint() first."
         )
     with cal_path.open(encoding="utf-8") as f:
         cal_json = json.load(f)
@@ -509,6 +551,7 @@ def run_fold_a_with_checkpoint(
         checkpoint["completed_schemes"] = sorted(completed)
         checkpoint["pending_schemes"] = [s.value for s in requested_schemes if s.value not in completed]
         _save_checkpoint(checkpoint_path, checkpoint)
+        _accumulate_calibration(run_dir / "fold_a")
         torch_cleanup()
 
         try:
