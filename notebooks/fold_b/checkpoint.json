@@ -1,0 +1,11 @@
+{
+  "run_id": "A_colab-4157b7fb14a3_20260520_050923",
+  "fold": "B",
+  "model_id": "meta-llama/Llama-3.2-3B-Instruct",
+  "completed_schemes": [
+    "FP16",
+    "NF4"
+  ],
+  "pending_schemes": [],
+  "last_updated": "2026-05-20T05:37:17.979716+00:00"
+}

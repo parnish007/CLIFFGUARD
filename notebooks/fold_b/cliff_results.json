@@ -1,0 +1,18 @@
+{
+  "model_id": "meta-llama/Llama-3.2-3B-Instruct",
+  "layer": 14,
+  "geometric_by_scheme": {
+    "FP16": 0.0,
+    "NF4": 0.16698781389084177
+  },
+  "wasserstein_by_scheme": {
+    "FP16": 0.0,
+    "NF4": 0.01431949848460401
+  },
+  "behavioral_by_scheme": {
+    "FP16": 0.0,
+    "NF4": 0.0
+  },
+  "cliff_boundary": null,
+  "h1_accepted_for_this_family": false
+}
