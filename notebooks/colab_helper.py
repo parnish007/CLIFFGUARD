@@ -329,7 +329,10 @@ def _load_fold_a_results_from_disk(run_dir: Path, model_id: str) -> Any:
         QuantScheme(s): float(v)
         for s, v in cal_json.get("thresholds", {}).items()
     }
-    cal_table = CalibrationTable(thresholds=thresholds)
+    cal_table = CalibrationTable(
+        primitive=cal_json.get("primitive", "PROBE-RM"),
+        thresholds=thresholds,
+    )
 
     return FoldAResults(
         refusal_directions=refusal_directions,
