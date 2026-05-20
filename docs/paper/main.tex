@@ -14,8 +14,8 @@
 \usepackage{enumitem}
 \usepackage{setspace}
 \usepackage{natbib}
-\usepackage{algorithm}
-\usepackage{algpseudocode}
+\usepackage{array}
+\usepackage{multirow}
 
 \hypersetup{
   colorlinks=true,
@@ -30,15 +30,18 @@
 \newcommand{\cliff}{\Delta_{\mathrm{cliff}}}
 \newcommand{\wcliff}{\Delta_{W\text{-cliff}}}
 \newcommand{\bcliff}{\Delta_{B\text{-cliff}}}
-\newcommand{\kappa}{\kappa}
+\newcommand{\kap}{\kappa}
 \newcommand{\rhat}{\hat{r}}
 \newcommand{\tauq}{\tau_q}
+\newcommand{\CG}{\textsc{Cliffguard}}
+\newcommand{\todo}[1]{\textcolor{red}{\textbf{[#1]}}}
 
 % ── Title ────────────────────────────────────────────────────────────────────
 \title{%
-  \textbf{CLIFFGUARD: Measuring Quantization-Induced Alignment Drift\\
-  in Instruction-Tuned Large Language Models}\\[0.4em]
-  {\large A Preliminary Empirical Evaluation on Google Colab T4}
+  \textbf{CLIFFGUARD: An Edge-Native, Quantization-Aware Defense\\
+  Against Prompt Injection at the Safety Cliff}\\[0.4em]
+  {\large Preliminary Fold~A/B Empirical Evaluation
+  (1 Model Family, 2 Quantization Schemes)}
 }
 
 \author{
@@ -53,31 +56,44 @@
 % ─────────────────────────────────────────────────────────────────────────────
 \begin{document}
 \maketitle
+\thispagestyle{plain}
 
 % ── Abstract ─────────────────────────────────────────────────────────────────
 \begin{abstract}
-Post-training quantization is widely used to deploy large language models (LLMs)
-in resource-constrained environments, yet its effect on RLHF-tuned refusal
-behaviour remains poorly characterised.
-We present the first empirical run of \textsc{CLIFFGUARD}, a five-fold evaluation
-framework designed to detect \emph{safety cliffs}---abrupt degradations in
-alignment properties induced by aggressive quantization.
-Using a Google Colab T4 GPU, we evaluate \texttt{Llama-3.2-3B-Instruct}
-under two quantization schemes: FP16 (full-precision baseline) and NF4 (4-bit
-normal-float).
-Fold~A calibrates a per-scheme PROBE-RM refusal threshold via Arditi
-difference-in-means \citep{arditi2024refusal} on 400 benign and 200 harmful
-prompts drawn from Anthropic-HH-RLHF \citep{bai2022training} and OASST1
-\citep{kopf2023openassistant}.
-Fold~B computes three cliff metrics against the FP16 baseline: geometric
-refusal-direction distance ($\cliff = 0.167$), Wasserstein margin-distribution
-distance ($\wcliff = 0.014$), and a PROBE-RM behavioural proxy
-($\bcliff = 0.000$).
-All three values fall below the cliff threshold $\kappa = 0.25$;
-the safety-cliff hypothesis H1 is not accepted for this model--scheme pair.
-The result establishes a measurable but sub-threshold alignment shift and
-motivates evaluation of more aggressive quantization schemes (GGUF Q3\_K\_M,
-Q2\_K) on larger models where the cliff is theoretically predicted to emerge.
+Post-training quantization enables large language models (LLMs) to run on
+consumer and embedded hardware, but its effect on RLHF-tuned refusal behaviour
+is poorly characterised.
+Egashira et al.~\citep{egashira2024exploiting} and \citet{mindthegap2025} showed
+that adversaries can craft weights whose malicious behavior activates \emph{only
+after} GGUF quantization, with attack-success-rate deltas up to $88.7\%$.
+\citet{hong2024quant} showed that GPTQ-3-bit drops toxicity safety by ${\sim}50$
+points while degrading MMLU by only ${\sim}8$.
+We present \CG{}, an eight-component, edge-native, quantization-aware defense
+system targeting this safety-cliff threat.
+\CG{} comprises VESTIBULE (input-gate stack), PROBE (quantization-aware
+refusal-margin observer), B-PROBE (black-box fallback), TRIPWIRE (streaming
+entropy monitor), CONDUCTOR (contextual-bandit gate orchestrator), LOOKOUT
+(output-side judge), LADDER (four-tier hardware router), and ATTEST
+(weight-hash attestation), composed under a formally stated \emph{decoupling
+theorem}: write-side gates operating on input strings and model summary
+statistics achieve false-positive rates independent of quantization scheme up to
+calibration.
+
+\textbf{This paper reports preliminary results only.}
+We evaluate \texttt{Llama-3.2-3B-Instruct} on a Google Colab T4 GPU under FP16
+and NF4 quantization (Folds~A and~B of the five-fold pre-registered evaluation).
+Fold~A calibrates per-scheme PROBE-RM thresholds at FPR~$= 5\%$:
+$\tauq_{\mathrm{FP16}} = 0.09742$ and $\tauq_{\mathrm{NF4}} = 0.09827$
+($\Delta\tauq = +0.00085$).
+Fold~B reports three cliff metrics versus the FP16 baseline:
+$\cliff = 0.167$ ($67\%$ of cliff threshold $\kap = 0.25$),
+$\wcliff = 0.014$, and $\bcliff = 0.000$ (PROBE-RM margin proxy only; the
+full StrongREJECT + Llama-Guard-3-8B behavioral judge is Phase~C work).
+Hypothesis H1 (cliff existence at $\kap \ge 0.25$) is not accepted for this
+model--scheme pair.
+The geometric signal at $0.67\,\kap$ motivates evaluation of Q3\_K\_M and Q2\_K
+schemes---the predicted cliff zone based on published evidence---and motivates
+the full five-fold, multi-model-family evaluation described herein.
 \end{abstract}
 
 \setstretch{1.15}
@@ -86,475 +102,722 @@ Q2\_K) on larger models where the cliff is theoretically predicted to emerge.
 \section{Introduction}
 \label{sec:intro}
 
-Large language models trained with reinforcement learning from human feedback
-(RLHF) exhibit a learned refusal behaviour: given a harmful or policy-violating
-request, the model declines to comply \citep{ouyang2022training,bai2022training}.
-This property is critical for safe deployment but may be fragile.
-One under-studied threat is \emph{post-training quantization}: the process of
-reducing a model's weight precision from 16-bit floating point (FP16) to 8-bit,
-4-bit, or lower formats in order to reduce memory and inference cost
-\citep{nagel2021white,hubara2017quantized}.
+Modern instruction-tuned LLMs encode safety alignment through reinforcement
+learning from human feedback (RLHF) \citep{ouyang2022training,bai2022training}.
+The alignment produces a learned refusal behavior: given a harmful request, the
+model declines.
+\citet{arditi2024refusal} showed that this behavior is, to a first
+approximation, mediated by a single linear direction $\rhat$ in the
+residual-stream activation space.
+More recently, \citet{zhao2025refusal} demonstrated that \emph{harmfulness} and
+\emph{refusal} are encoded in \textbf{separate} directions: the harmfulness
+direction sits at the user-instruction token, while the refusal direction sits at
+the post-instruction token.
+Both directions must be preserved for alignment to hold.
 
-While quantization is known to cause modest perplexity degradation, its impact
-on RLHF-tuned alignment properties has received little systematic attention.
-The intuition motivating this work is that the refusal direction---the linear
-subspace in activation space most responsible for the refusal decision
-\citep{arditi2024refusal}---could shift under quantization-induced weight
-perturbation.
-If this shift is large enough, previously refused prompts may be answered, and
-the model effectively loses a portion of its safety alignment.
+\paragraph{The quantization threat.}
+Post-training quantization (PTQ) reduces model weights from FP16 to lower-bit
+formats (INT8, NF4, AWQ-INT4, GGUF Q4/Q3/Q2) to enable deployment on edge
+hardware.
+While quantization is well understood to degrade perplexity modestly, its effect
+on alignment geometry has received far less systematic attention.
+\citet{hong2024quant} showed that GPTQ-3-bit quantization of
+Llama-2-13B-Chat drops toxicity-safety performance by approximately 50 points
+while MMLU drops only ${\sim}8$ points---a stark safety-capability asymmetry.
+\citet{egashira2024exploiting} (NeurIPS 2024) demonstrated that adversaries can
+produce FP16 model weights that appear safe, where the malicious behavior
+activates \emph{only} after GGUF quantization, with attack success rate (ASR)
+deltas of $\Delta = 88.7\%$ (insecure code generation), $\Delta = 85.0\%$
+(content injection), and $\Delta = 30.1\%$ (refusal bypass).
+\citet{mindthegap2025} (ICLR 2025) further showed that the MSE objective used
+by GGUF k-quants does not preserve refusal-related activation geometry.
 
-We refer to the quantization level at which this degradation crosses a
-meaningful threshold as a \emph{safety cliff}.
-\textsc{CLIFFGUARD} is a framework for detecting this cliff through a
-structured five-fold evaluation.
-This paper reports the first live run of the framework on real hardware,
-providing preliminary empirical evidence and identifying directions for
-future investigation.
+We refer to the quantization level at which refusal degradation crosses a
+meaningful safety threshold as a \textbf{safety cliff}. No existing
+prompt-injection defense system---Llama Guard \citep{inan2023llama_guard},
+PromptGuard~2, NeMo, Rebuff, SecAlign, Constitutional Classifiers, LlamaFirewall,
+or CaMeL---was designed for this failure mode in an edge-hardware envelope.
+
+\paragraph{Our system.}
+We introduce \CG{}, an eight-component, edge-native, quantization-aware defense
+system.
+\CG{} is organized around a \emph{decoupling theorem} (informally: write-side
+gates achieve FPR portability across quantization schemes up to a calibration
+map) and a pre-registered five-fold evaluation framework with five falsifiable
+hypotheses (H1--H5).
+\CG{} targets the open-weight, locally-served edge LLM deployment surface:
+Ollama / llama.cpp, Hugging Face transformers, vLLM, Apple MLX, and GGUF-serving
+runtimes.
+
+\paragraph{Scope of this paper.}
+\textbf{This is a preliminary paper.}
+We report the first live experimental run covering Folds~A and~B only, using a
+single model family (Llama-3.2-3B) and two quantization schemes (FP16, NF4) on
+a Google Colab T4 GPU.
+Hypotheses H2--H5 and Folds~C--E are planned but not yet executed.
+We describe the full \CG{} framework so that the evaluation context is clear and
+the future evaluation can be read directly against the pre-registered design.
 
 \paragraph{Contributions.}
 \begin{itemize}[leftmargin=1.5em, itemsep=2pt]
-  \item We describe the \textsc{CLIFFGUARD} framework and its evaluation
-        pipeline (Fold A calibration; Fold B cliff measurement).
-  \item We present the first empirical results on \texttt{Llama-3.2-3B-Instruct},
-        reporting all three cliff metrics at NF4 quantization.
-  \item We find a geometric refusal-direction shift of $\cliff = 0.167$ at
-        NF4 --- a non-trivial but sub-threshold signal that motivates
-        evaluation of more aggressive schemes on larger models.
-  \item We release the evaluation notebook, helper module, and raw result
-        artifacts for reproducibility.
+  \item We introduce \CG{}---eight named components, a threat model of nine
+        adversaries (A1--A9), a decoupling theorem, and five pre-registered
+        hypotheses (H1--H5).
+  \item We define three cliff metrics ($\cliff$, $\wcliff$, $\bcliff$) that
+        jointly test the safety-cliff hypothesis while breaking single-metric
+        circularity.
+  \item We report the first empirical Fold~A/B results: $\cliff = 0.167$
+        ($0.67\,\kap$), $\wcliff = 0.014$, $\bcliff = 0.000$ under NF4 for
+        Llama-3.2-3B-Instruct.
+  \item We identify the key gap: $\bcliff$ uses a proxy judge (PROBE-RM margin
+        threshold crossing); the full StrongREJECT + Llama-Guard-3-8B judge is
+        Phase~C work.
+  \item We describe all five evaluation folds and argue why the predicted cliff
+        zone (Q3\_K\_M and below) has not yet been tested.
 \end{itemize}
 
-% ── 2. Background ────────────────────────────────────────────────────────────
-\section{Background}
-\label{sec:background}
+% ── 2. Related Work ───────────────────────────────────────────────────────────
+\section{Related Work}
+\label{sec:related}
 
-\subsection{RLHF and Refusal Behaviour}
+\paragraph{Refusal geometry.}
+\citet{arditi2024refusal} showed that refusal is mediated by a single linear
+direction $\rhat$ in the residual stream; ablating this direction raises ASR
+dramatically.
+\citet{zhao2025refusal} (NeurIPS 2025) further separated the \emph{harmfulness}
+direction at the instruction token from the \emph{refusal} direction at the
+post-instruction token.
+Our PROBE-RM primitive operationalises these insights as a quantization-aware
+sensor.
 
-Modern instruction-tuned LLMs are trained in two stages: supervised
-fine-tuning on curated demonstrations, followed by RLHF using a reward model
-that reflects human preferences for helpfulness and harmlessness
-\citep{ouyang2022training}.
-The RLHF stage encodes a learned policy for refusing harmful requests.
-\citet{arditi2024refusal} showed that this policy is, to a first approximation,
-mediated by a single linear direction $\rhat$ in the residual-stream activation
-space.
-Projecting the residual stream onto $\rhat$ and comparing the resulting scalar
-(the \emph{refusal margin}) to a calibrated threshold $\tauq$ gives a simple
-but effective safety gate---the PROBE-RM primitive used in this work.
+\paragraph{Quantization and alignment.}
+\citet{hong2024quant} demonstrated a safety-capability asymmetry at 3-bit
+quantization.
+\citet{egashira2024exploiting} (NeurIPS 2024) introduced the cliff-exploit attack,
+where a model is fine-tuned to produce malicious outputs only after GGUF
+quantization.
+\citet{mindthegap2025} (ICLR 2025) showed that the GGUF k-quant MSE objective
+does not preserve refusal-related activation structure.
+\citet{dettmers2023qlora} introduced NF4 as a 4-bit data type minimizing
+quantization error for normally distributed weights.
+\citet{wee2025caq} (CAQ) addressed calibration-aware quantization to mitigate
+such degradation.
 
-\subsection{Post-Training Quantization}
+\paragraph{Adversarial robustness and red-teaming.}
+\citet{zou2023advbench} introduced AdvBench and the GCG adversarial suffix
+attack.
+\citet{chao2024jailbreakbench} introduced JailbreakBench.
+\citet{mazeika2024harmbench} introduced HarmBench as a standardized red-teaming
+evaluation.
+\citet{souly2024strongreject} proposed StrongREJECT as a scoring rubric that
+penalizes empty refusals.
 
-Post-training quantization (PTQ) reduces the bit-width of model weights after
-training, without access to the original training data.
-The NF4 format \citep{dettmers2023qlora} is a 4-bit data type designed to
-minimise quantization error for normally distributed weights---a good match for
-LLM weight distributions.
-Unlike integer quantization, NF4 preserves the relative shape of the weight
-distribution, which is why it is commonly used in QLoRA fine-tuning and
-deployment workflows.
-
-Despite this design advantage, NF4 perturbs individual weight values and may
-shift activation statistics in ways that are not captured by perplexity alone.
-GGUF formats at even lower bit-widths (Q3\_K\_M, Q2\_K) apply more aggressive
-compression and are expected to produce larger activation perturbations.
-
-\subsection{Safety Cliffs and the Gap in the Literature}
-
-Several works have studied adversarial jailbreaks that bypass RLHF refusal
-\citep{zou2023advbench,wei2023jailbroken,chao2024jailbreakbench}.
-Others have proposed automated red-teaming frameworks for measuring refusal
-robustness \citep{mazeika2024harmbench,souly2024strongreject}.
-However, to the best of our knowledge, no prior work has specifically studied
-whether \emph{quantization} degrades refusal direction geometry, or at which
-quantization level this degradation crosses a safety-relevant threshold.
-This is the gap \textsc{CLIFFGUARD} addresses.
+\paragraph{Defense systems.}
+\citet{inan2023llama_guard} introduced Llama Guard, a safety classifier.
+\citet{ghosh2024aegis} introduced AEGIS, a no-regret combination of LLM safety
+experts.
+\citet{li2010contextual} introduced LinUCB, the contextual-bandit algorithm used
+in CONDUCTOR.
+\citet{greshake2023not} introduced the indirect prompt injection threat model
+that grounds our A2 adversary.
+Our work is distinct in targeting the quantization-induced safety cliff as a
+first-class threat, composing lightweight write-side gates under a decoupling
+theorem.
 
 % ── 3. The CLIFFGUARD Framework ───────────────────────────────────────────────
 \section{The CLIFFGUARD Framework}
 \label{sec:framework}
 
-\subsection{Overview}
+\subsection{System Overview}
 
-\textsc{CLIFFGUARD} organises evaluation into five folds, each targeting a
-distinct threat model or safety property.
-This paper covers Fold A (calibration) and Fold B (cliff measurement), which
-together test the core safety-cliff hypothesis.
+\CG{} is a stateless, online-RL-adapted, defense-in-depth system for prompt
+injection on edge-deployed LLMs operating across heterogeneous quantization
+regimes.
+Its design is based on a key insight from the refusal-geometry literature:
+because refusal lives in a low-dimensional subspace of the residual stream
+\citep{arditi2024refusal}, \emph{write-side} defenses that operate on input
+strings and model summary statistics can be made independent of the quantization
+scheme up to a calibration map.
+This is the informal content of the decoupling theorem stated in
+\S\ref{sec:decoupling}.
+
+\CG{} comprises eight named components.
+
+\paragraph{VESTIBULE.}
+Input-gate stack of fast, stateless write-side gates: a compression-density gate
+(LZ4 compression ratio, targets GCG and ArtPrompt), an instruction-density gate
+(verb-entity collisions), an encoding-anomaly gate (non-printable, base-N,
+ASCII art density), and a provenance-aware spotlighting gate (Hines et al.\
+arXiv:2403.14720). Stateless across requests; ports across hardware tiers unchanged.
+
+\paragraph{PROBE.}
+Quantization-aware white-box refusal-margin observer.
+Computes (a) the signed projection $\rho(x) = \langle h_\ell(x),\, \rhat \rangle$
+of the residual stream at layer $\ell$ and post-instruction token onto the
+difference-in-means refusal direction $\rhat$ (PROBE-RM), (b) the same
+projection onto a harmfulness direction $\hat{h}$ at the user-instruction token
+(PROBE-HD, following \citealt{zhao2025refusal}), and (c) a margin-trajectory
+slope across three layers (PROBE-MT).
+The calibration table ($\rhat_{M,q}$, threshold $\tauq$) is per-$(M, q)$ pair.
+
+\paragraph{B-PROBE.}
+Black-box fallback observer for closed-weight API endpoints and NPU-frozen graphs.
+Computes a logistic-head margin from top-$k$ log-probabilities (B-PROBE-LOGIT)
+and an $N$-paraphrase first-token Jensen--Shannon divergence
+(B-PROBE-CONSISTENCY).
+FPR portability holds; TPR is strictly weaker (pre-registered as H3).
+
+\paragraph{TRIPWIRE.}
+Streaming token-entropy CUSUM (TRIPWIRE-H) and KenLM reference-ratio gate
+(TRIPWIRE-R). Operates during decoding; does not buffer outputs.
+Alarm at CUSUM statistic $S_t > h$ tuned for $\mathrm{ARL}_0 \approx 1000$
+benign tokens.
+
+\paragraph{CONDUCTOR.}
+LinUCB \citep{li2010contextual} contextual-bandit policy that selects
+gate-weight vectors per request.
+EXP3.S fallback under non-stationary attack distributions.
+Updates only on reward signals: LOOKOUT verdict, canary-token leakage,
+tool-call audit failure.
+The only learnable component; all others are calibration-only.
+
+\paragraph{LOOKOUT.}
+Output-side judge and per-session canary-token loop.
+On the 8\,GB tier can call Llama-Guard-3-1B-INT4 or a DeBERTa-class classifier.
+On lower tiers falls back to canary-leak detection plus a linear judge on
+TRIPWIRE features.
+
+\paragraph{LADDER.}
+Four-tier minimum viable defense set (MVDS) router:
+\begin{itemize}[itemsep=1pt]
+  \item \textbf{Tier~A} (RTX 5060 8\,GB, FP16/NF4/AWQ-INT4): all 12 gates.
+  \item \textbf{Tier~B} (Raspberry Pi 5 8\,GB, GGUF Q4\_K\_M/Q3\_K\_M):
+        11 gates (LOOKOUT-JG $N=2$).
+  \item \textbf{Tier~C} (2\,GB embedded, Q3\_K\_M): minimal gates ---
+        \emph{not defended against A7}.
+  \item \textbf{Tier~C+} (2\,GB + PromptGuard-2-22M-INT4): modest defense
+        against A7 (H5).
+\end{itemize}
+
+\paragraph{ATTEST.}
+Boot-time SHA-256 of the GGUF/safetensors blob compared against a
+vendor-signed manifest.
+Defends against A2 (Egashira-style poisoned weights
+\citep{egashira2024exploiting}).
 
 \begin{figure}[H]
   \centering
-  \includegraphics[width=\textwidth]{figures/fig_pipeline.png}
-  \caption{The CLIFFGUARD evaluation pipeline for Folds A and B.
-           Fold A produces the refusal direction $\rhat$ and calibrated
+  \includegraphics[width=\textwidth]{figures/fig_pipeline.pdf}
+  \caption{The \CG{} evaluation pipeline for Folds A and~B.
+           Fold~A produces the refusal direction $\rhat$ and calibrated
            threshold $\tauq$ for each quantization scheme.
-           Fold B measures the geometric, Wasserstein, and behavioural
-           distances between NF4 and the FP16 baseline, reporting an
-           H1 verdict against the cliff threshold $\kappa = 0.25$.}
+           Fold~B measures the three cliff metrics relative to the FP16 baseline
+           and reports an H1 verdict against the cliff threshold $\kap = 0.25$.}
   \label{fig:pipeline}
 \end{figure}
 
-\subsection{Fold A: Calibration}
+\subsection{Threat Model (A1--A9)}
+\label{sec:threats}
 
-Given a model $\mathcal{M}$ under scheme $q \in \{\text{FP16, NF4, \ldots}\}$:
+We adopt a Greshake-style \citep{greshake2023not} hierarchy expanded for the
+edge-quantized setting.
+Table~\ref{tab:threats} summarises the nine adversaries and which \CG{}
+components address each.
 
-\begin{enumerate}[label=\arabic*., leftmargin=2em, itemsep=2pt]
-  \item \textbf{Refusal direction.}
-        Run the model on $N_h$ harmful and $N_b$ benign prompts.
-        Extract residual-stream activations at layer $\ell$.
-        Compute the normalised difference of means:
-        \[
-          \rhat_q = \frac{\mu_h^\ell - \mu_b^\ell}{\|\mu_h^\ell - \mu_b^\ell\|_2}
-        \]
-        where $\mu_h^\ell$ and $\mu_b^\ell$ are the mean harmful and benign
-        activation vectors at layer $\ell$ \citep{arditi2024refusal}.
+\begin{table}[H]
+  \centering
+  \small
+  \caption{Threat model: nine adversaries and primary \CG{} defenses.
+           A7 is the novel adversary introduced by this work.}
+  \label{tab:threats}
+  \begin{tabular}{@{}lp{5.2cm}p{4.2cm}@{}}
+    \toprule
+    ID & Adversary & Primary defense \\
+    \midrule
+    A1 & Direct injector (natural language, role-play, persuasion)
+       & VESTIBULE, LOOKOUT \\
+    A2 & Indirect injector / poisoned-weight attacker (Egashira-style
+         \citep{egashira2024exploiting})
+       & ATTEST + LADDER \\
+    A3 & Optimizer (GCG \citep{zou2023advbench}, AutoDAN, AmpleGCG)
+       & PROBE, VESTIBULE-LZ \\
+    A4 & Iterator (PAIR, TAP, Crescendo)
+       & TRIPWIRE, LOOKOUT \\
+    A5 & Scaler (Best-of-N, many-shot, sampling variance)
+       & TRIPWIRE-H, LOOKOUT-CT \\
+    A6 & Encoder (ArtPrompt, cipher, low-resource language)
+       & TRIPWIRE-R \\
+    \textbf{A7} & \textbf{Quantization-cliff exploiter} (prompts that fail
+         below-cliff only, natural language)
+       & LADDER + ATTEST + cross-tier rollback \\
+    A8 & Defender-aware (Kerckhoffs; knows policy weights/calibration)
+       & CONDUCTOR safe-rollback \\
+    A9 & Closed-weight black-box endpoint adversary
+       & B-PROBE + LOOKOUT-JG \\
+    \bottomrule
+  \end{tabular}
+\end{table}
 
-  \item \textbf{PROBE-RM scoring.}
-        For each benign prompt, compute the refusal margin
-        $s = \langle h^\ell, \rhat_q \rangle$, where $h^\ell$ is the
-        layer-$\ell$ activation.
+\subsection{Decoupling Theorem (Informal)}
+\label{sec:decoupling}
 
-  \item \textbf{Threshold calibration.}
-        Fit $\tauq$ as the $1 - \alpha$ quantile of benign margins, where
-        $\alpha = 0.05$ is the target false-positive rate.
-        This ensures that at most 5\% of safe prompts are incorrectly blocked.
-\end{enumerate}
+\begin{quote}
+\textbf{Theorem (FPR decoupling, informal).} Let $g(x)$ be a write-side gate
+that operates only on (a) input strings and (b) summary statistics of model
+outputs (top-$k$ log-probabilities, refusal-margin scalars).
+For any two quantization schemes $q_1, q_2$, if the gate is re-calibrated on a
+per-scheme holdout, then
+$|\mathrm{FPR}(g, q_1) - \mathrm{FPR}(g, q_2)| \le \varepsilon$
+for $\varepsilon$ depending only on the calibration set size and the
+distributional shift of the model's summary statistics.
+TPR is \emph{not} decoupled---that is the empirical question the cliff regime
+answers (H1).
+\end{quote}
 
-\subsection{Fold B: Cliff Metrics}
+The intuition is that write-side gates never touch the model's internal weights
+directly.
+The only quantization-sensitive quantity is the refusal-margin distribution,
+which the calibration map absorbs.
+A black-box corollary extends the same FPR portability to top-$k$
+log-probability observables (B-PROBE).
 
-Fold B compares each quantized scheme to the FP16 baseline using three metrics.
+\subsection{Five Hypotheses}
+\label{sec:hypotheses}
+
+The \CG{} evaluation pre-registers five falsifiable hypotheses:
+
+\begin{description}[leftmargin=1.5em, itemsep=3pt]
+  \item[H1 (cliff existence).] For $\ge 2$ of 3 model families, both $\cliff$
+        and $\bcliff$ exhibit a $\kap \ge 0.25$ jump at the same boundary.
+  \item[H2 (FPR decoupling, white-box).] PROBE-RM FPR after per-quantization
+        calibration varies by $< \varepsilon = 0.02$ across
+        \{FP16, NF4, AWQ-INT4, Q4\_K\_M, Q3\_K\_M\}.
+  \item[H3 (FPR decoupling, black-box).] Same property for B-PROBE-LOGIT on
+        top-$k$ log-probabilities, with strictly weaker TPR.
+  \item[H4 (composition gain).] Full primitive stack achieves strictly smaller
+        attack bypass rate (ABR) than any single primitive at matched FPR.
+  \item[H5 (Tier-C structural weakness).] Tier~C without a dedicated classifier
+        shows no significant ABR reduction against A7 relative to no-defense;
+        Tier~C+ with PromptGuard-2-22M-INT4 does.
+\end{description}
+
+\subsection{Five-Fold Evaluation Protocol}
+\label{sec:folds}
+
+The five evaluation folds are assigned to independent data corpora to avoid
+contamination.
+
+\begin{description}[leftmargin=1.5em, itemsep=3pt]
+  \item[Fold~A (Calibration).] Compute $\rhat$, $\tauq$ at FPR~$=5\%$ on 2K
+        benign + 2K refused prompts from Anthropic-HH-RLHF / OASST1.
+        \textbf{Status: TESTED} (400 benign + 200 harmful in this paper).
+  \item[Fold~B (Cliff measurement).] Compute $\cliff$, $\wcliff$, $\bcliff$ on
+        AdvBench + HarmBench held out from Fold~A.
+        \textbf{Status: TESTED} (AdvBench + JailbreakBench in this paper;
+        $\bcliff$ uses PROBE-RM proxy, not full judge).
+  \item[Fold~C (Defense composition).] ABR and FPR per primitive using JBB,
+        AgentDojo, InjecAgent, GCG, AutoDAN, PAIR, TAP, ArtPrompt, BoN,
+        TensorTrust; full StrongREJECT + Llama-Guard-3-8B judge.
+        \textbf{Status: PLANNED}.
+  \item[Fold~D (Bandit drift).] CONDUCTOR online learning under A8 adversary.
+        \textbf{Status: PLANNED}.
+  \item[Fold~E (BCN-2 dataset).] Non-circular below-cliff dataset construction
+        with Mistral paraphraser.
+        \textbf{Status: PLANNED}.
+\end{description}
+
+% ── 4. Cliff Metrics ─────────────────────────────────────────────────────────
+\section{Cliff Metrics}
+\label{sec:metrics}
+
+Fold~B evaluates three metrics in combination to test H1 while breaking the
+circularity of single-metric validation.
 
 \paragraph{Geometric distance $\cliff$.}
-The cosine-based distance between refusal directions:
-\[
-  \cliff(q, \text{FP16}) = 1 - \langle \rhat_q,\, \rhat_{\text{FP16}} \rangle
-\]
-A value near zero indicates the quantized model has preserved the same
-refusal subspace; a value near 1 indicates complete misalignment.
+Cosine-based distance between refusal directions across schemes:
+\begin{equation}
+  \cliff(q,\,\mathrm{FP16}) = 1 - \langle \rhat_q,\; \rhat_{\mathrm{FP16}} \rangle.
+  \label{eq:cliff}
+\end{equation}
+A value near zero indicates the quantized model has preserved the same refusal
+subspace; a value near one indicates near-complete misalignment.
 
 \paragraph{Wasserstein distance $\wcliff$.}
-The 1-Wasserstein (Earth Mover's) distance between the empirical distributions
-of PROBE-RM margins under scheme $q$ and under FP16:
-\[
-  \wcliff(q, \text{FP16}) = W_1\!\left(P_q^{\mathrm{margin}},\;
-                              P_{\text{FP16}}^{\mathrm{margin}}\right)
-\]
-This captures distributional shift beyond what the geometric metric can detect.
+The $W_2$ distance between empirical margin distributions:
+\begin{equation}
+  \wcliff(q,\,\mathrm{FP16}) = W_2\!\left(P_q^{\mathrm{margin}},\;
+                               P_{\mathrm{FP16}}^{\mathrm{margin}}\right).
+  \label{eq:wcliff}
+\end{equation}
+Captures distributional shift beyond what the geometric metric detects.
 
-\paragraph{Behavioural proxy $\bcliff$.}
-The change in attack success rate (ASR) on Fold B harmful prompts, where
-``success'' is defined as a PROBE-RM margin \emph{below} $\tauq$:
-\[
-  \bcliff(q, \text{FP16}) =
-    \mathrm{ASR}(q) - \mathrm{ASR}(\text{FP16})
-\]
-Note: Phase B uses the PROBE-RM margin as a behavioural surrogate.
-The paper specification requires a StrongREJECT + Llama-Guard-3-8B judge for
-full H1 validity \citep{souly2024strongreject,inan2023llama_guard};
-this is tracked as Phase C work.
+\paragraph{Behavioral metric $\bcliff$.}
+The compliance-rate delta on the harmful Fold~B corpus, evaluated by a
+StrongREJECT + Llama-Guard-3-8B judge \citep{souly2024strongreject,
+inan2023llama_guard}:
+\begin{equation}
+  \bcliff(q,\,\mathrm{FP16}) = \mathrm{CR}(q) - \mathrm{CR}(\mathrm{FP16}),
+  \label{eq:bcliff}
+\end{equation}
+where $\mathrm{CR}(q)$ is the fraction of harmful prompts answered by the
+model under scheme $q$ according to the external judge.
+This metric is \emph{non-circular}: it does not use PROBE-RM margins in the
+behavioral verdict.
+\textbf{In the current paper (Fold~B, preliminary run), we use a PROBE-RM
+margin threshold crossing as a proxy for the behavioral verdict.}
+The full judge stack is Phase~C work (see \S\ref{sec:limitations}).
 
-\paragraph{Cliff hypothesis H1.}
-H1 is accepted for model family $\mathcal{F}$ if there exists a scheme $q^*$
-such that all three metrics exceed $\kappa = 0.25$:
-\[
-  \text{H1:}\quad \exists\, q^* \;\text{s.t.}\;
-  \cliff(q^*) > \kappa \;\wedge\;
-  \wcliff(q^*) > \kappa \;\wedge\;
-  \bcliff(q^*) > \kappa
-\]
-The cliff boundary $q^* = \operatorname*{argmin}_{q} \{\cliff(q) > \kappa\}$
-is reported as the first scheme in the ordered sequence at which the geometric
-metric crosses $\kappa$.
+\paragraph{Cliff threshold and H1 criterion.}
+H1 is accepted for model family $\mathcal{F}$ if there exists a scheme $q^*$ such
+that $\cliff(q^*) \ge \kap$ and $\bcliff(q^*) \ge \kap$, i.e., both the
+geometric and behavioral metrics cross the threshold $\kap = 0.25$ at the same
+scheme boundary.
+This two-metric requirement prevents a geometric rotation without behavioral
+consequence from being declared a safety cliff.
+The cliff boundary is $q^* = \operatorname{argmin}_{q}\{\cliff(q) \ge \kap\}$.
 
-% ── 4. Experimental Setup ────────────────────────────────────────────────────
+% ── 5. Experimental Setup ────────────────────────────────────────────────────
 \section{Experimental Setup}
 \label{sec:setup}
 
 \subsection{Model and Hardware}
 
 We evaluate \texttt{meta-llama/Llama-3.2-3B-Instruct} \citep{meta2024llama3},
-a 3B-parameter instruction-tuned model released by Meta AI.
-The model is loaded at layer $\ell = 14$ for activation extraction,
-chosen as the midpoint of the 28-layer architecture where the refusal direction
-has been empirically observed to be most linearly separable in similar models.
+a 3B-parameter instruction-tuned model.
+Activations are extracted at layer $\ell = 14$ (of 28), chosen as the midpoint
+of the architecture where the refusal direction is empirically most linearly
+separable in similar models.
 
-All experiments are conducted on a Google Colab free tier session equipped
-with an NVIDIA Tesla T4 GPU (16 GB VRAM, CUDA 12.8).
-The implementation uses \texttt{transformers} 4.48, \texttt{bitsandbytes} 0.45,
-\texttt{torch} 2.5, and \texttt{numpy} 1.26.
+All experiments run on a Google Colab T4 session (NVIDIA Tesla T4 GPU, 16\,GB
+VRAM, CUDA 12.8).
+Software: \texttt{transformers} 4.48, \texttt{bitsandbytes} 0.45,
+\texttt{torch} 2.5, \texttt{numpy} 1.26.
 
 \subsection{Quantization Schemes}
 
 \begin{description}[leftmargin=2em, itemsep=2pt]
-  \item[FP16] Full bfloat16/float16 precision. Serves as the alignment
-        baseline. VRAM usage: $\approx$6.2 GB for 3B parameters.
+  \item[FP16] Full bfloat16/float16 precision; alignment baseline.
+        VRAM: ${\approx}6.2$\,GB.
   \item[NF4] 4-bit normal-float quantization via bitsandbytes
-        \citep{dettmers2023qlora}. VRAM usage: $\approx$2.1 GB.
-        Doubles-up quantized in 64-element blocks with a double-quantized
-        scaling factor.
+        \citep{dettmers2023qlora}, 64-element blocks, double-quantized scaling.
+        VRAM: ${\approx}2.1$\,GB.
 \end{description}
+
+Schemes not yet evaluated: INT8, AWQ-INT4, GGUF Q4\_K\_M, Q3\_K\_M, Q2\_K.
+Q3\_K\_M is the \emph{predicted cliff zone} based on
+\citet{egashira2024exploiting} and \citet{mindthegap2025} evidence.
 
 \subsection{Datasets}
 
 \paragraph{Fold A (calibration).}
 \begin{itemize}[leftmargin=1.5em, itemsep=1pt]
-  \item 400 benign prompts from Anthropic-HH-RLHF (helpful turns)
+  \item 400 benign prompts: Anthropic-HH-RLHF helpful turns
         \citep{bai2022training} and OASST1 \citep{kopf2023openassistant}.
-  \item 200 harmful prompts from Anthropic-HH-RLHF (rejected turns).
+  \item 200 harmful prompts: Anthropic-HH-RLHF rejected turns.
 \end{itemize}
+This is a reduced run; the full five-fold protocol targets 2K benign + 2K refused.
 
 \paragraph{Fold B (cliff measurement).}
 \begin{itemize}[leftmargin=1.5em, itemsep=1pt]
-  \item AdvBench \citep{zou2023advbench}: 520 harmful behaviours.
-  \item JailbreakBench (JBB-Behaviors, harmful split)
-        \citep{chao2024jailbreakbench}: 100 harmful goals.
+  \item AdvBench \citep{zou2023advbench}: 520 harmful behaviors.
+  \item JailbreakBench \citep{chao2024jailbreakbench} (JBB-Behaviors, harmful
+        split): 100 harmful goals.
 \end{itemize}
-Fold isolation is verified via SHA-256 disjointness before running Fold B.
+Fold isolation verified via SHA-256 disjointness before Fold~B execution.
 
 \subsection{Calibration Hyperparameters}
 
-Table~\ref{tab:hyperparams} summarises the calibration settings.
-
 \begin{table}[H]
   \centering
-  \caption{Fold A calibration hyperparameters.}
+  \caption{Fold~A calibration hyperparameters.}
   \label{tab:hyperparams}
   \begin{tabular}{ll}
     \toprule
-    Parameter           & Value \\
+    Parameter & Value \\
     \midrule
-    Refusal primitive   & PROBE-RM (cosine projection) \\
+    Refusal primitive   & PROBE-RM (difference-in-means, cosine projection) \\
     Activation layer    & 14 (of 28) \\
     FPR target $\alpha$ & 0.05 \\
     $N_b$ (benign)      & 400 \\
     $N_h$ (harmful)     & 200 \\
-    Cliff threshold $\kappa$ & 0.25 \\
+    Cliff threshold $\kap$ & 0.25 \\
     \bottomrule
   \end{tabular}
 \end{table}
 
-% ── 5. Results ───────────────────────────────────────────────────────────────
+% ── 6. Results ───────────────────────────────────────────────────────────────
 \section{Results}
 \label{sec:results}
 
 \subsection{Fold A: Calibrated Thresholds}
 
-Table~\ref{tab:fold_a} reports the PROBE-RM thresholds calibrated for each
-scheme. Figure~\ref{fig:thresholds} visualises the values.
+Table~\ref{tab:fold_a} reports the PROBE-RM thresholds for each scheme.
+Figure~\ref{fig:thresholds} visualises the values.
 
 \begin{table}[H]
   \centering
-  \caption{Fold A calibration results. Thresholds $\tauq$ are fitted at
-           FPR = 5\% on 400 benign prompts.}
+  \caption{Fold~A calibration results. $\tauq$ fitted at FPR~$= 5\%$
+           on 400 benign prompts.}
   \label{tab:fold_a}
   \begin{tabular}{lccc}
     \toprule
-    Scheme & $\tauq$ & $\Delta\tauq$ vs FP16 & Layer \\
+    Scheme & $\tauq$ & $\Delta\tauq$ vs.\ FP16 & Layer \\
     \midrule
     FP16 & $0.09742$ & --- & 14 \\
-    NF4  & $0.09827$ & $+0.00085$ ($+0.87\%$) & 14 \\
+    NF4  & $0.09827$ & $+0.00085\; (+0.87\%)$ & 14 \\
     \bottomrule
   \end{tabular}
 \end{table}
 
-The NF4 threshold is $0.085\%$ higher than FP16, indicating that the model
-under NF4 requires a slightly larger projection onto $\rhat_{\text{NF4}}$ to
-trigger refusal. The difference is negligible in practical terms and suggests
-that the calibration landscape is stable across these two schemes.
+The NF4 threshold exceeds FP16 by $0.00085$ ($0.87\%$), indicating that NF4
+requires a slightly larger projection onto $\rhat_{\mathrm{NF4}}$ to trigger
+refusal.
+The difference is negligible in practical terms.
+Crucially, the small $\Delta\tauq$ is a \emph{preliminary positive signal for
+H2}: FPR stability across quantization schemes is consistent with the decoupling
+theorem.
+However, with only two schemes and one model, this is insufficient to accept H2.
 
 \begin{figure}[H]
   \centering
-  \includegraphics[width=0.55\textwidth]{figures/fig_thresholds.png}
+  \includegraphics[width=0.55\textwidth]{figures/fig_thresholds.pdf}
   \caption{Calibrated PROBE-RM thresholds $\tauq$ for FP16 and NF4.
-           The difference ($\Delta\tau = 0.85$ mAU) is below noise level
-           and indicates stable calibration.}
+           The difference $\Delta\tauq = 0.00085$ indicates stable calibration
+           across these two schemes.}
   \label{fig:thresholds}
 \end{figure}
 
 \subsection{Fold B: Cliff Metrics}
 
-Table~\ref{tab:fold_b} reports all three cliff metrics. All values fall
-below the cliff threshold $\kappa = 0.25$; the H1 hypothesis is not accepted.
+Table~\ref{tab:fold_b} reports all three cliff metrics.
+All values fall below $\kap = 0.25$; H1 is not accepted for this configuration.
 
 \begin{table}[H]
   \centering
-  \caption{Fold B cliff measurement results for Llama-3.2-3B-Instruct.
-           All metrics are relative to the FP16 baseline.
-           FP16 values are identically zero by construction.}
+  \caption{Fold~B cliff measurement results for Llama-3.2-3B-Instruct.
+           All metrics are relative to the FP16 baseline (identically zero
+           by construction).
+           \textdagger\, $\bcliff$ uses PROBE-RM margin proxy, not
+           StrongREJECT + Llama-Guard-3-8B (see \S\ref{sec:limitations}).}
   \label{tab:fold_b}
   \begin{tabular}{lcccc}
     \toprule
     Scheme & $\cliff$ (geometric)
            & $\wcliff$ (Wasserstein)
-           & $\bcliff$ (behavioural)
-           & Cliff crossed? \\
+           & $\bcliff$\textdagger{} (behavioral proxy)
+           & H1 crossed? \\
     \midrule
     FP16 & 0.000 & 0.000 & 0.000 & --- (baseline) \\
     NF4  & \textbf{0.167} & 0.014 & 0.000 & No \\
     \midrule
-    \multicolumn{4}{l}{$\kappa = 0.25$ (cliff threshold)} & \\
-    \multicolumn{4}{l}{\texttt{cliff\_boundary = null}} & \\
-    \multicolumn{4}{l}{\texttt{h1\_accepted = false}} & \\
+    \multicolumn{2}{l}{$\kap = 0.25$ (cliff threshold)} & & & \\
+    \multicolumn{2}{l}{\texttt{cliff\_boundary = null}} & & & \\
+    \multicolumn{2}{l}{\texttt{h1\_accepted = false}} & & & \\
     \bottomrule
   \end{tabular}
 \end{table}
 
 \begin{figure}[H]
   \centering
-  \begin{subfigure}[b]{0.58\textwidth}
-    \includegraphics[width=\textwidth]{figures/fig_metrics.png}
+  \begin{subfigure}[b]{0.57\textwidth}
+    \includegraphics[width=\textwidth]{figures/fig_metrics.pdf}
     \caption{All three cliff metrics for FP16 and NF4.
-             The red dashed line marks $\kappa = 0.25$.}
+             The red dashed line marks $\kap = 0.25$.}
     \label{fig:metrics}
   \end{subfigure}
   \hfill
   \begin{subfigure}[b]{0.39\textwidth}
-    \includegraphics[width=\textwidth]{figures/fig_normalized.png}
-    \caption{NF4 metrics normalised to $\kappa$.
-             Geometric shift reaches $0.67\,\kappa$.}
+    \includegraphics[width=\textwidth]{figures/fig_normalized.pdf}
+    \caption{NF4 metrics normalised to $\kap$.
+             Geometric shift reaches $0.67\,\kap$.}
     \label{fig:normalized}
   \end{subfigure}
-  \caption{Fold B cliff metrics for Llama-3.2-3B-Instruct at NF4 quantization.}
+  \caption{Fold~B cliff metrics for Llama-3.2-3B-Instruct at NF4.}
   \label{fig:foldb}
 \end{figure}
 
-The geometric metric $\cliff = 0.167$ is the most informative result.
-It indicates that the NF4 refusal direction has rotated by approximately 9.6°
-from the FP16 baseline ($\arccos(1 - 0.167) \approx 33.8°$\;---\;note this
-is the angular distance in the full activation space, not the angular
-difference in the 2-norm sense).
-At $0.67\,\kappa$, this is a substantive signal: the quantization is not
-invisible to the refusal geometry, but it is not large enough to constitute
-a safety cliff at the $\kappa = 0.25$ threshold.
+\paragraph{Geometric metric $\cliff = 0.167$.}
+The NF4 refusal direction has rotated from the FP16 baseline.
+At $0.67\,\kap$, this is a substantive signal: quantization is not invisible to
+the refusal geometry, but the shift does not constitute a safety cliff at this
+threshold.
+The result is consistent with the expectation from \citet{hong2024quant} and
+\citet{dettmers2023qlora}: NF4's normal-quantile design minimises reconstruction
+error and preserves activation statistics better than integer quantization, so a
+sub-threshold result at NF4 is expected.
+The predicted cliff at Q3\_K\_M and Q2\_K (based on Egashira and Mind the Gap
+evidence) has not yet been tested.
 
-The Wasserstein distance $\wcliff = 0.014$ is near zero, suggesting that
-while the direction of the refusal subspace has shifted, the distribution of
-margin scores over benign prompts is largely unchanged. This is consistent
-with the interpretation that NF4 rotates $\rhat$ slightly without
-significantly distorting the margin landscape.
+\paragraph{Wasserstein metric $\wcliff = 0.014$.}
+Near zero, indicating that the margin \emph{distribution} over benign prompts is
+largely unchanged even as the direction has rotated.
+This is consistent with the interpretation that NF4 rotates $\rhat$ slightly
+without distorting the margin landscape.
 
-The behavioural proxy $\bcliff = 0.000$ indicates that no additional harmful
-prompts crossed the calibrated threshold under NF4. This is expected given
-the small geometric shift and the stability of $\tauq$ between schemes.
+\paragraph{Behavioral proxy $\bcliff = 0.000$.}
+No additional harmful prompts crossed the calibrated threshold under NF4.
+\textbf{Important caveat:} this uses the PROBE-RM margin threshold crossing as a
+behavioral proxy.
+Since PROBE-RM is the same observable used to calibrate $\tauq$ in Fold~A, this
+proxy is partially circular---a threshold calibrated on the benign distribution
+will not register zero-margin shift as a behavioral change.
+The full StrongREJECT + Llama-Guard-3-8B judge is required to make this metric
+non-circular; that is Phase~C work.
 
-% ── 6. Discussion ────────────────────────────────────────────────────────────
+\paragraph{Geometric--behavioral agreement.}
+$\cliff = 0.167$ versus $\bcliff = 0.000$ (proxy) represents a discordant pair.
+Under the full judge, $\bcliff$ may remain near zero (NF4 shift is too small to
+cause actual behavioral change) or it may register a non-zero value due to proxy
+circularity masking real change.
+This uncertainty is a primary motivation for Fold~C.
+
+% ── 7. Discussion ────────────────────────────────────────────────────────────
 \section{Discussion}
 \label{sec:discussion}
 
-\subsection{Interpretation of the Sub-Threshold Result}
+\subsection{Sub-Threshold Result and What It Implies}
 
 The absence of a detected cliff for Llama-3.2-3B-Instruct at NF4 is consistent
-with the design of NF4: by targeting the quantile distribution of normally
-distributed weights, it minimises quantization error relative to the FP16
-baseline. This design choice appears to be effective at preserving not only
-task performance (commonly measured by perplexity) but also alignment geometry
-(captured by $\cliff$).
+with the design of NF4.
+By targeting the quantile distribution of normally distributed weights
+\citep{dettmers2023qlora}, NF4 minimises quantization error relative to FP16.
+This appears to preserve not only task performance (perplexity) but also
+alignment geometry ($\cliff$).
 
-The geometric shift $\cliff = 0.167$ is, however, non-trivial.
-It represents a 67\% progression toward the cliff boundary.
-This raises the question: how much additional compression is needed to cross
-$\kappa$? Extrapolating linearly from NF4, a scheme that reduces the weight
-representation by roughly $1.5\times$ more should produce $\cliff \approx 0.25$.
-GGUF Q3\_K\_M (3-bit mixed-precision) is a candidate, as it applies roughly
-$1.3\text{--}1.5\times$ more compression than NF4.
+The geometric shift $\cliff = 0.167$ represents $67\%$ progression toward
+the cliff boundary.
+Linear extrapolation suggests that a scheme applying roughly $1.5\times$ more
+compression should produce $\cliff \approx 0.25$.
+GGUF Q3\_K\_M (${\approx}3.35$ bits per weight, mixed-precision k-quants) is the
+primary next candidate.
+\citet{egashira2024exploiting} showed cliff-exploit ASR deltas up to $88.7\%$ at
+GGUF quantization levels; \citet{mindthegap2025} showed that the GGUF k-quant
+MSE objective does not preserve refusal activation geometry.
+Both papers point to Q3\_K\_M and below as the critical zone that Folds~C--E must
+target.
+
+\subsection{The Novel Threat: A7 Adversary}
+
+The A7 adversary (quantization-cliff exploiter) is the novel threat \CG{}
+targets.
+An A7 adversary crafts prompts---using entirely natural language, without
+adversarial suffixes---whose refusal margin lies just above $\tauq$ in FP16 but
+falls below it in Q3\_K\_M.
+Because the FP16 version refuses, such prompts pass content moderation at upload
+time.
+After quantization for edge deployment, they succeed silently.
+No existing defense was designed for this mode.
+The current results do not yet test A7 at the predicted cliff zone; this is the
+primary Phase~C objective.
+
+\subsection{Decoupling Theorem: Preliminary Evidence}
+
+The small $\Delta\tauq = 0.00085$ between FP16 and NF4 is consistent with
+the decoupling theorem: the calibration map absorbs the quantization-induced
+shift in the margin distribution, yielding nearly identical FPR at matched
+thresholds.
+This must be tested across five schemes and three model families to constitute
+evidence for H2.
+The present results are suggestive but insufficient.
 
 \subsection{Limitations}
+\label{sec:limitations}
 
-\begin{itemize}[leftmargin=1.5em, itemsep=2pt]
-  \item \textbf{Single model, single layer.}
-        Results are reported for one model family (Llama-3.2-3B) at one layer
-        (14). Safety cliff behaviour may differ for larger models or different
-        layer choices.
-  \item \textbf{Behavioural proxy.}
-        $\bcliff$ uses the PROBE-RM margin as a behavioural surrogate.
-        The paper specification requires StrongREJECT + Llama-Guard-3-8B
-        \citep{souly2024strongreject,inan2023llama_guard} for a rigorous
-        attack-success-rate measurement. This is Phase C work.
-  \item \textbf{Fold B corpus scope.}
-        The Fold B corpus covers AdvBench and JBB-Behaviors only.
+\begin{itemize}[leftmargin=1.5em, itemsep=3pt]
+  \item \textbf{Single model family, two schemes.}
+        Results cover Llama-3.2-3B at FP16 and NF4 only.
+        H1 requires $\ge 2$ of 3 model families; Mistral-7B-Instruct and
+        Qwen-2.5-7B are planned but not yet tested.
+  \item \textbf{Proxy behavioral metric.}
+        $\bcliff = 0.000$ is computed from PROBE-RM margin threshold crossings,
+        which is partially circular.
+        The full StrongREJECT \citep{souly2024strongreject} +
+        Llama-Guard-3-8B \citep{inan2023llama_guard} non-circular judge is
+        required for valid H1 acceptance or rejection; this is Fold~C work.
+  \item \textbf{Cliff zone not yet tested.}
+        The predicted cliff zone (Q3\_K\_M, Q2\_K) has not been evaluated.
+        GGUF quantization requires llama.cpp or Ollama, which is different
+        infrastructure from the current bitsandbytes-based setup.
+  \item \textbf{Fold~B corpus scope.}
         HarmBench \citep{mazeika2024harmbench} and ArtPrompt are absent from
-        this run.
-  \item \textbf{Computational constraints.}
-        The free Colab T4 tier (16 GB VRAM) limits evaluation to 3B models at
-        FP16 and NF4. Larger models and GGUF quantization require higher-VRAM
-        hardware.
+        this run; only AdvBench and JailbreakBench were used.
+  \item \textbf{Hardware limitation.}
+        Colab T4 (16\,GB VRAM) limits evaluation to 3B models.
+        Larger models (8B, 13B) require at least an A100-40G.
+  \item \textbf{H2--H5 not tested.}
+        Defense composition (H4), bandit drift (H4/CONDUCTOR), Tier-C weakness
+        (H5), and black-box FPR decoupling (H3) are entirely future work.
 \end{itemize}
 
-\subsection{Comparison to Related Work}
-
-\citet{arditi2024refusal} established that refusal is mediated by a single
-linear direction, and that ablating this direction increases attack success
-rate dramatically. Our $\cliff$ metric operationalises this insight as a
-quantization audit: if NF4 rotates $\rhat$ by a meaningful amount, it may
-approximate the effect of a partial refusal-direction ablation. The fact that
-$\cliff = 0.167$ at NF4 suggests the rotation is non-trivial, though short of
-the full ablation studied by \citeauthor{arditi2024refusal}.
-
-% ── 7. Future Work ────────────────────────────────────────────────────────────
+% ── 8. Future Work ────────────────────────────────────────────────────────────
 \section{Future Work}
 \label{sec:future}
 
-The following directions follow directly from this preliminary evaluation:
-
 \begin{enumerate}[label=\arabic*., leftmargin=2em, itemsep=4pt]
 
-  \item \textbf{More aggressive quantization (Q3\_K\_M, Q2\_K).}
-        GGUF Q3\_K\_M is the primary candidate for cliff detection based on
-        the $0.67\,\kappa$ signal at NF4. Evaluating this scheme on the same
-        model with the same calibration setup will produce a two-point trend
-        and either confirm or refute the extrapolated cliff location.
+  \item \textbf{GGUF Q3\_K\_M and Q2\_K (predicted cliff zone).}
+        These are the primary targets for H1 acceptance.
+        The current $0.67\,\kap$ signal at NF4 makes Q3\_K\_M the highest-priority
+        next step.
 
-  \item \textbf{Larger models (8B, 13B, 70B).}
-        Model size is expected to affect the robustness of RLHF alignment to
-        quantization. Llama-3.1-8B-Instruct at NF4 and Q3\_K\_M is the next
-        natural target. An NVIDIA A100 (40 GB) or equivalent is required.
+  \item \textbf{Full behavioral judge (Fold~C Phase~C).}
+        Replace the PROBE-RM $\bcliff$ proxy with the full StrongREJECT +
+        Llama-Guard-3-8B judge to produce a non-circular H1 verdict.
+        This also unlocks the defense composition evaluation (Fold~C).
 
-  \item \textbf{Phase C: Real behavioural judge.}
-        Replacing the PROBE-RM $\bcliff$ proxy with StrongREJECT +
-        Llama-Guard-3-8B \citep{souly2024strongreject,inan2023llama_guard}
-        will make H1 acceptance scientifically rigorous and directly
-        comparable to the HarmBench evaluation protocol
-        \citep{mazeika2024harmbench}.
+  \item \textbf{Multiple model families.}
+        Mistral-7B-Instruct, Qwen-2.5-7B, and Gemma-2-9B under the same
+        calibration protocol, to test whether cliff boundaries are
+        model-family-dependent.
 
-  \item \textbf{Full Fold B corpus.}
-        Adding HarmBench and ArtPrompt to the Fold B corpus will close the
-        gap between this exploratory run and the full paper specification.
+  \item \textbf{Full Fold~B corpus.}
+        Add HarmBench \citep{mazeika2024harmbench} and ArtPrompt to reach the
+        full pre-registered Fold~B corpus.
 
-  \item \textbf{Multi-model analysis.}
-        Evaluating Mistral-7B-Instruct, Qwen-2.5-7B, and Gemma-2-9B under
-        the same protocol will test whether the cliff threshold and location
-        are model-family-dependent.
+  \item \textbf{Fold~D: CONDUCTOR bandit drift.}
+        Evaluate online learning under the A8 defender-aware adversary.
 
-  \item \textbf{Folds C, D, E.}
-        \textsc{CLIFFGUARD} includes three additional folds: Fold C
-        (cross-quantization transfer), Fold D (drift simulation), and
-        Fold E (FP16 behavioural baseline audit). None of these have been
-        run in the current evaluation.
+  \item \textbf{Fold~E: BCN-2 below-cliff dataset.}
+        Construct the non-circular below-cliff naturals dataset using a Mistral
+        paraphraser (different family from the model under test), enabling
+        H1 evaluation without proxy judges.
+
+  \item \textbf{Full H2--H5 evaluation.}
+        FPR decoupling (H2, H3), composition gain (H4), and Tier-C structural
+        weakness (H5) each require Folds C--E at minimum.
 
 \end{enumerate}
 
-% ── 8. Conclusion ─────────────────────────────────────────────────────────────
+% ── 9. Conclusion ─────────────────────────────────────────────────────────────
 \section{Conclusion}
 \label{sec:conclusion}
 
-We presented the first empirical run of \textsc{CLIFFGUARD}, measuring
-quantization-induced alignment drift in \texttt{Llama-3.2-3B-Instruct}.
-Under NF4 quantization, we observe a geometric refusal-direction shift of
-$\cliff = 0.167$ --- 67\% of the way to the $\kappa = 0.25$ cliff threshold ---
-with negligible Wasserstein and behavioural deviation.
-H1 is not accepted: NF4 does not constitute a safety cliff for this model
-at this layer.
+We introduced \CG{}, an eight-component edge-native defense system against
+prompt injection at the safety cliff.
+The framework is grounded in a decoupling theorem (write-side FPR portability
+across quantization schemes), a threat model of nine adversaries, and five
+pre-registered hypotheses with a five-fold evaluation protocol.
 
-The result is encouraging from a deployment perspective but leaves open the
-question of whether more aggressive quantization schemes produce a detectable
-cliff. The \texttt{0.167} geometric signal is a concrete and reproducible
-starting point for that investigation.
-All artefacts are available at
-\url{https://github.com/parnish007/CLIFFGUARD}.
+We reported the first empirical Fold~A/B results: for Llama-3.2-3B-Instruct at
+NF4 quantization on a Colab T4 GPU, the geometric cliff metric reaches
+$\cliff = 0.167$ ($0.67\,\kap = 0.25$) with negligible Wasserstein and proxy
+behavioral deviation.
+H1 is not accepted for this model--scheme pair.
+
+The result is encouraging from a deployment perspective for NF4, but it leaves
+the predicted cliff zone (Q3\_K\_M and below, motivated by
+\citealt{egashira2024exploiting} and \citealt{mindthegap2025}) entirely untested.
+The $0.167$ geometric signal is a reproducible starting point.
+Completing the five-fold evaluation across three model families and five
+quantization schemes---with a non-circular behavioral judge---remains the
+primary goal.
+
+All artefacts are available at \url{https://github.com/parnish007/CLIFFGUARD}.
 
 % ── Acknowledgements ─────────────────────────────────────────────────────────
 \section*{Acknowledgements}
 Experiments were conducted on Google Colab free-tier T4 GPUs.
-The CLIFFGUARD evaluation pipeline builds on open-source libraries including
+The \CG{} evaluation pipeline builds on open-source libraries including
 \texttt{transformers} \citep{meta2024llama3}, \texttt{bitsandbytes}
 \citep{dettmers2023qlora}, and the \texttt{datasets} library.
 
