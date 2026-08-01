@@ -74,3 +74,34 @@ def test_calibrate_tripwire_r_respects_fpr_target() -> None:
     # Both are 0.0 (percentile of zeros), but the call must not raise.
     assert isinstance(r1, float)
     assert isinstance(r2, float)
+
+
+def test_calibrate_tripwire_r_uses_lower_tail() -> None:
+    """D0 regression for the direct calibration path.
+
+    TRIPWIRE-R fires LOW. Codex found (docs/build_log.md Entry 2) that this
+    production call site still selected the upper tail after the resolver was
+    added to build_calibration_table, because it calls calibrate_threshold
+    directly. The realised FPR under the fires-LOW rule must be <= target."""
+    import numpy as np
+    from cliffguard.eval.threshold_calibrator import empirical_fpr
+
+    class _Scorer:
+        def score(self, text: str) -> float:
+            return 0.0
+
+    rng = np.random.default_rng(0)
+    scores = rng.normal(0.0, 1.0, 5000)
+
+    from cliffguard.eval import tripwire_r_calibration as trc
+
+    original = trc.score_corpus_tripwire_r
+    trc.score_corpus_tripwire_r = lambda corpus, scorer, k: scores  # type: ignore[assignment]
+    try:
+        tau = trc.calibrate_tripwire_r(["x"] * 10, _Scorer(), fpr_target=0.05)  # type: ignore[arg-type]
+    finally:
+        trc.score_corpus_tripwire_r = original  # type: ignore[assignment]
+
+    assert empirical_fpr(scores, tau, fires_high=False) <= 0.05
+    # and it must NOT be the upper-tail value
+    assert empirical_fpr(scores, tau, fires_high=False) < 0.5

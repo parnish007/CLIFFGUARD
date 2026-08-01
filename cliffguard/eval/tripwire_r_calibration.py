@@ -47,6 +47,11 @@ def calibrate_tripwire_r(
 ) -> float:
     """Score corpus and return calibrated tau_q for TRIPWIRE-R.
     Calls score_corpus_tripwire_r then calibrate_threshold.
+
+    TRIPWIRE-R fires LOW (`fired = score < tau`), so the threshold must come
+    from the LOWER tail. Calibrating it against the upper tail inverts the FPR
+    (a 0.05 target becomes a realised 0.95) — defect D0.
+
     Returns the threshold float."""
     scores = score_corpus_tripwire_r(corpus, scorer, k)
-    return calibrate_threshold(scores, fpr_target=fpr_target)
+    return calibrate_threshold(scores, fpr_target=fpr_target, fires_high=False)
