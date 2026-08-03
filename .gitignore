@@ -43,6 +43,7 @@ docs/review_brief*.md
 docs/corrections_*.md
 docs/theory_panel_*.md
 docs/research_audit_*.md
+docs/colab_readiness_audit.md
 claude_code_setup.md
 project_instructions.md
 decisions_log.md
@@ -75,6 +76,11 @@ scratchpad/
 tmp/
 *.log
 external_data/
+
+# Downloaded run archives and their extractions
+notebooks/cliffguard_colab_*/
+notebooks/cliffguard_colab_*.zip
+notebooks/colab_alreadyrun.ipynb
 
 # ---------------------------------------------------------------------------
 # Notebook noise

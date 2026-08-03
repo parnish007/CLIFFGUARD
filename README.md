@@ -120,48 +120,53 @@ flowchart LR
 
 ## Quick Start
 
-> ### Status — instrumentation phase (2026-08-03)
+> ### Finding — the safety cliff is a measurement artifact (2026-08-04)
 >
-> The measurement pipeline runs end to end on a 6 GB laptop GPU: a
-> round-to-nearest quantization ladder from 8 down to 2 bits, real generations at
-> every rung, a fluency-based degeneracy detector, frozen-versus-refit probe
-> transfer, minimum-detectable-effect analysis, and gold-labelled reasoning
-> evaluation. Every runner takes `--model`; the read layer resolves to mid-depth
-> from the model's own config.
+> Three instruction-tuned models (Qwen2.5-1.5B, Qwen2.5-3B, Phi-3.5-mini),
+> round-to-nearest from 8 down to 2 bits, real generations at every rung, graded
+> by a 7 B judge behind a degeneracy gate.
+>
+> **Coherent harmful compliance never exceeds 2.2 % at any bit-width on any
+> model.** The identical completions scored with a conventional refusal-phrase
+> list give apparent unsafe-flip rates up to **38.4 %**.
+>
+> | bits/param | judge | phrase list |
+> |---|---|---|
+> | 4.5 | **2.2 %** | 10.8 % |
+> | 3.5 | 0.0 % | 15.4 % |
+> | 2.5 | 0.0 % | **38.4 %** |
+>
+> The phrase list is counting two things as compliance: degenerate output that
+> contains no refusal phrase, and refusals worded outside the list — including
+> refusals in other languages.
+>
+> **What quantization does break is capability, and the threshold is
+> model-specific.** GSM8K accuracy is statistically flat down to 5.5 bits/param
+> on Qwen2.5-3B and to 3.5 on Phi-3.5-mini, then collapses to zero. On Qwen-3B
+> the 4.5-bit rung loses 38 % of accuracy relative to full precision with **zero
+> degenerate output** — the model writes fluent, plausible arithmetic and gets it
+> wrong. Capability failure precedes fluency failure by a full rung, so a
+> deployment check that screens only for incoherent output passes a model that
+> has lost a third of its reasoning.
+>
+> A frozen linear refusal probe retains 96–100 % of its full-precision
+> discriminability across the whole range where behaviour is unchanged, and fails
+> only where the model has already degenerated. **It is a fluency detector
+> wearing a safety label.**
+>
+> Full write-up, including four errors of ours that each produced a plausible and
+> false number:
+> **[`docs/paper/quantization_safety_cliff.md`](docs/paper/quantization_safety_cliff.md)**
 >
 > ```bash
-> python scripts/run_local_ladder.py       --n 250
-> python scripts/run_behavioural_ladder.py --n 250
-> python scripts/run_sector_ladder.py      --n 200
-> python scripts/analyse_probe_transfer.py
+> python scripts/run_behavioural_ladder.py --model <hf-id> --n 250
+> python scripts/run_sector_ladder.py      --model <hf-id> --n 200
+> python scripts/classify_completions_judge.py <run-dir> >        --judge-model Qwen/Qwen2.5-7B-Instruct --judge-4bit
 > ```
 >
-> **One validated result, and one honest gap.**
->
-> Reasoning has a measured cliff: on GSM8K, accuracy is flat from 16 bits down to
-> 4.5 and then collapses, at a bit-width where the model is *still fluent* and
-> produces **zero** degenerate output. Capability failure precedes fluency failure
-> by a full rung, so a deployment check that screens only for incoherent output
-> passes a model that has already lost most of its arithmetic. Gold arithmetic
-> labels, so no classifier sits between the model and the number.
->
-> There is **no validated safety metric**. Two instruments were built and both
-> failed, in opposite directions: a refusal phrase list whose reported flip rate
-> moved by more than 4× depending on which strings it contained, and a small
-> self-judge that saturated at one class. Producing a safety rate is the next
-> milestone, not a solved problem, and no safety number from this repository
-> should be quoted until it exists.
->
-> **Results are not published here yet.** Single-model local runs are
-> pre-publication material and two rounds of review have already forced
-> retractions of headline claims; publishing early would put withdrawn numbers
-> into the public history. What is and is not established is tracked in
-> [`docs/claims_and_evidence.md`](docs/claims_and_evidence.md) and
-> [`docs/theorems.md` §8](docs/theorems.md), including every retraction.
->
-> **Reproducing the hosted-GPU arms:** open
-> [`notebooks/colab_run.ipynb`](notebooks/colab_run.ipynb) in Colab, select a T4,
-> and run all. See [`notebooks/README.md`](notebooks/README.md).
+> Raw completions are saved verbatim at every rung, so any classifier can be
+> re-applied without regenerating. **The completions are the data; the labels are
+> an opinion about them.**
 
 <details>
 <summary><b>Tier A — GPU (RTX 5060)</b></summary>
