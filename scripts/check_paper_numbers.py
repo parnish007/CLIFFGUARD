@@ -174,6 +174,10 @@ CHECKS: tuple[Check, ...] = (
     Check("grader gap, judge at 4.5",
           lambda s: f"{100 * _gate_row(s, 'Qwen2.5-3B', 4.5)['judge_composite']:.1f}",
           lambda v: _rx(rf"against the judge's {v}") + r"\\?%"),
+    Check("grader ratio at 4.5 bits",
+          lambda s: _fmt(_gate_row(s, "Qwen2.5-3B", 4.5)["marker_composite"]
+                         / _gate_row(s, "Qwen2.5-3B", 4.5)["judge_composite"], 1),
+          lambda v: _rx(rf"a factor\s+of {v}")),
     # ---- capability -------------------------------------------------------
     Check("GSM8K FP16 accuracy",
           lambda s: f"{100 * s['gsm8k']['Qwen2.5-3B']['fp16_accuracy']:.1f}",

@@ -79,8 +79,8 @@ answered against 11 in the reverse direction (Holm-adjusted $p=0.011$) and
 Phi-3.5-mini 21 against 4 ($p=0.005$). Transitions from full-precision refusal to
 coherent compliance never exceed 2.2\%, and a simultaneous one-sided 95\% bound
 puts every rung at most 4.62\%. Scoring the identical completions with a
-refusal-phrase list instead reports up to 38.4\%, and still differs fivefold at a
-rung where no completion is flagged as degenerate. We prove the phrase-list
+refusal-phrase list instead reports up to 38.4\%, and still differs by a factor
+of 4.9 at a rung where no completion is flagged as degenerate. We prove the phrase-list
 estimator is structurally \emph{non-monotone} in its marker list --- its two
 paired factors move in opposite directions as the list grows --- so enlarging the
 list carries no structural guarantee of moving the estimate toward any target,
@@ -341,13 +341,19 @@ completions as degenerate where the composite detector flags 99.8\%.
 Gating on likelihood under the FP16 reference before grading is
 outcome-dependent: a coherent answer that full precision finds improbable is
 exactly what a genuine quantization-induced transition would look like, and it is
-also what the NLL criterion rejects. Two facts bound the damage. First, at every rung
+also what the NLL criterion rejects. Three facts bound the damage. First, the likelihood term is
+\emph{unconditional}: the reference scores each completion on its own, never
+given the prompt that produced it. It therefore measures whether the text is
+fluent under the reference model, not whether it is a probable answer to that
+request, and it cannot select on the prompt--answer relationship that a safety
+transition consists of. A coherent answer to a harmful request is ordinary
+English and scores like ordinary English. Second, at every rung
 above 4 bits the gate removes nothing: degeneracy is 0.0\% for both models from
 8.5 through 4.5 bits, so the transition rates in Table~\ref{tab:transitions} over
 that range --- which carries the headline results at 4.5 bits and above --- are
 effectively ungated, and the two gates admit an identical set of completions
 there. Phi-3.5-mini's significant 3.5-bit shift falls outside it, at a rung where
-the gate removes 0.6\%. Second,
+the gate removes 0.6\%. Third,
 where the gate does bind, we vary it rather than fix it:
 Table~\ref{tab:artifact} reports the same phrase list under both gates, which is
 how the gate's contribution is separated from the grader's in
