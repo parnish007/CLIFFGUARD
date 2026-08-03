@@ -120,32 +120,48 @@ flowchart LR
 
 ## Quick Start
 
-> ### Status — local measurement phase (2026-08-03)
+> ### Status — instrumentation phase (2026-08-03)
 >
 > The measurement pipeline runs end to end on a 6 GB laptop GPU: a
 > round-to-nearest quantization ladder from 8 down to 2 bits, real generations at
-> every rung, a fluency-based degeneracy detector, frozen-vs-refit probe transfer,
-> and gold-labelled reasoning evaluation.
+> every rung, a fluency-based degeneracy detector, frozen-versus-refit probe
+> transfer, minimum-detectable-effect analysis, and gold-labelled reasoning
+> evaluation. Every runner takes `--model`; the read layer resolves to mid-depth
+> from the model's own config.
 >
 > ```bash
-> python scripts/run_local_ladder.py --n 250          # weights, eta, probe ladder
-> python scripts/run_behavioural_ladder.py --n 250    # generations + classification
-> python scripts/run_sector_ladder.py --n 200         # GSM8K reasoning
-> python scripts/analyse_probe_transfer.py            # frozen vs refit estimands
+> python scripts/run_local_ladder.py       --n 250
+> python scripts/run_behavioural_ladder.py --n 250
+> python scripts/run_sector_ladder.py      --n 200
+> python scripts/analyse_probe_transfer.py
 > ```
 >
-> **Results are not published here yet.** Single-model local runs are
-> pre-publication working material, and two rounds of review have already forced
-> retractions of headline claims — publishing them early would put withdrawn
-> numbers in the public history. Findings will be added once the multi-model runs
-> are complete.
+> **One validated result, and one honest gap.**
 >
-> What the code establishes so far, and what it does not, is tracked in
+> Reasoning has a measured cliff: on GSM8K, accuracy is flat from 16 bits down to
+> 4.5 and then collapses, at a bit-width where the model is *still fluent* and
+> produces **zero** degenerate output. Capability failure precedes fluency failure
+> by a full rung, so a deployment check that screens only for incoherent output
+> passes a model that has already lost most of its arithmetic. Gold arithmetic
+> labels, so no classifier sits between the model and the number.
+>
+> There is **no validated safety metric**. Two instruments were built and both
+> failed, in opposite directions: a refusal phrase list whose reported flip rate
+> moved by more than 4× depending on which strings it contained, and a small
+> self-judge that saturated at one class. Producing a safety rate is the next
+> milestone, not a solved problem, and no safety number from this repository
+> should be quoted until it exists.
+>
+> **Results are not published here yet.** Single-model local runs are
+> pre-publication material and two rounds of review have already forced
+> retractions of headline claims; publishing early would put withdrawn numbers
+> into the public history. What is and is not established is tracked in
 > [`docs/claims_and_evidence.md`](docs/claims_and_evidence.md) and
-> [`docs/theorems.md` §8](docs/theorems.md). The short version: there is a
-> validated capability cliff, and **no validated safety metric** — a refusal
-> phrase list and a small-model judge were both tried and both failed, in opposite
-> directions.
+> [`docs/theorems.md` §8](docs/theorems.md), including every retraction.
+>
+> **Reproducing the hosted-GPU arms:** open
+> [`notebooks/colab_run.ipynb`](notebooks/colab_run.ipynb) in Colab, select a T4,
+> and run all. See [`notebooks/README.md`](notebooks/README.md).
 
 <details>
 <summary><b>Tier A — GPU (RTX 5060)</b></summary>

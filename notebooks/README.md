@@ -1,70 +1,95 @@
 # notebooks/
 
-Interactive entry points for hosted GPUs. The substantive code lives in
-[`cliffguard/`](../cliffguard/) and [`scripts/`](../scripts/); this directory is a thin
-orchestration layer over it.
+## Run this one
 
-## Where each measurement runs
+**[`colab_run.ipynb`](colab_run.ipynb)** — the only notebook you need.
 
-The behavioural-rate-distortion measurement (Stages 0–4) is a repo script,
-[`scripts/run_local_ladder.py`](../scripts/run_local_ladder.py), and **most of it runs on a 6 GB
-laptop GPU**. Only three things genuinely need a hosted GPU, and those are what the Colab notebook
-carries.
+1. Open in Colab.
+2. `Runtime → Change runtime type → T4 GPU`.
+3. `Runtime → Run all`.
+4. When it finishes, a zip downloads. Unzip it at the repository root.
 
-| Measurement | Where | Why |
+Nothing else is required. No HuggingFace token, no editing, no manual paths.
+Every model and dataset it touches is public. Expect 60–90 minutes on a T4.
+Each stage checkpoints, so a disconnect costs at most one stage — reconnect and
+`Run all` again.
+
+The first thing it does after installing dependencies is a **preflight**: a
+CPU-only self-test of every module and entry point the run will use. If that
+prints `PREFLIGHT OK`, nothing downstream can fail on an import or signature
+mismatch. If it fails, stop and report it rather than letting an hour of GPU time
+produce nothing.
+
+---
+
+## Why a hosted GPU at all
+
+The full measurement pipeline runs on a 6 GB laptop card. Three things do not,
+and they are the entire contents of the notebook.
+
+| Arm | What it adds | Why not local |
 |---|---|---|
-| Qwen2.5-1.5B RTN ladder (8→2 bits), Stages 0–4 | **local** | 3.1 GB VRAM; no downloads |
-| Qwen2.5-1.5B GGUF k-quant ladder | **local (slow) or Colab** | ~10 GB of downloads |
-| Qwen2.5-3B RTN ladder | **Colab** | 6.2 GB FP16 exceeds a 6 GB card |
-| Phi-3.5-mini RTN ladder | **Colab** | 7.6 GB FP16 |
-| AWQ / GPTQ arm | **Colab** | `autoawq` / `gptqmodel` backends |
+| **A** | a **7 B judge** re-grading saved completions | this is the project's missing instrument — see below |
+| **B** | `Qwen/Qwen2.5-3B-Instruct` | 6.2 GB fp16 against 5.7 GB free locally |
+| **C** | `microsoft/Phi-3.5-mini-instruct` | 7.6 GB fp16 |
 
-Peak VRAM is one dense FP16 copy of the model regardless of ladder length, because every rung —
-RTN or GGUF — is materialised as a dense torch model rather than run through a quantized kernel.
-That is what makes a measured `d'` available at *every* rung, which is what Stage 4's out-of-sample
-prediction needs to exist at all.
+**Arm A is the one that matters.** Every safety number this project has produced
+came from an instrument that failed:
 
-## What's in here
+- a refusal **phrase list** — the reported flip rate moved between 10.4 % and
+  48.0 % depending on which strings it contained;
+- a 1.5 B **self-judge** — saturated at 100 % REFUSE, including on plainly
+  helpful answers.
+
+A 7 B judge is the smallest instrument with a plausible chance of doing better.
+It is loaded in NF4 so it fits a T4, and that is recorded in the output manifest.
+The script reports it *alongside* all four phrase-list variants and prints every
+disagreement, so if this judge also fails it will be visible rather than quietly
+adopted.
+
+Arms B and C ask whether anything measured on one 1.5 B checkpoint is a property
+of quantization or of that checkpoint.
+
+---
+
+## Running the same measurements locally
+
+Everything the notebook does is a repo script. On a 6 GB card, with the default
+1.5 B model:
+
+```bash
+python scripts/run_local_ladder.py       --n 250   # weights, eta, probe ladder
+python scripts/run_behavioural_ladder.py --n 250   # generations + classification
+python scripts/run_sector_ladder.py      --n 200   # GSM8K, gold-labelled
+python scripts/analyse_probe_transfer.py           # frozen vs refit estimands
+python scripts/analyse_dprime_power.py             # minimum detectable effects
+```
+
+Every runner takes `--model`, and `--layer` defaults to mid-depth resolved from
+the model's own config, so any checkpoint works. Add `--smoke --n 24` for a fast
+wiring check.
+
+Results land in `artifacts/runs/<utc>_<git-sha>_<label>/` with a provenance
+manifest, and one line is appended to `artifacts/runs/INDEX.md`.
+
+---
+
+## What else is in here
 
 | File | Purpose |
 |---|---|
-| [`colab_ladder_and_eta.ipynb`](colab_ladder_and_eta.ipynb) | **Current.** Runs `scripts/run_local_ladder.py` unchanged on the three arms above: scale (3B), family (Phi-3.5), and deployment realism (GGUF k-quants), plus an optional AWQ/GPTQ arm. Starts with a preflight that self-tests every repo API it will call. |
-| [`stage0_noise_floor_and_isotropy.ipynb`](stage0_noise_floor_and_isotropy.ipynb) | Stage 0 only — the rotation-replication gate and the isotropy test, in isolation. |
-| [`cliffguard_colab.ipynb`](cliffguard_colab.ipynb) | Pre-pivot notebook: Fold A calibration and Fold B cliff measurement for the original gate-stack design. Kept for provenance. |
-| [`colab_helper.py`](colab_helper.py) | Helpers for the pre-pivot notebook and `scripts/colab_run.py`. |
+| [`colab_run.ipynb`](colab_run.ipynb) | **Current.** The hosted-GPU runner described above. |
+| [`stage0_noise_floor_and_isotropy.ipynb`](stage0_noise_floor_and_isotropy.ipynb) | Stage 0 in isolation — the rotation-replication gate and isotropy test. Diagnostic, not part of the main run. |
+| [`cliffguard_colab.ipynb`](cliffguard_colab.ipynb) | Pre-pivot notebook for the original gate-stack design. Kept for provenance; its labels share the corpus defect described in `docs/claims_and_evidence.md`. |
+| [`colab_helper.py`](colab_helper.py) | Helpers for the pre-pivot notebook. |
 
-## Running the current notebook
+---
 
-1. Open [`colab_ladder_and_eta.ipynb`](colab_ladder_and_eta.ipynb) in Colab.
-2. *Runtime → Change runtime type → T4 GPU*.
-3. Run top to bottom. Nothing is gated — no HuggingFace token is needed.
-4. When it finishes: download the executed `.ipynb` into this directory, and unzip the results
-   archive at the repo root so the run directories land in `artifacts/runs/`.
+## Why the notebook holds no measurement logic
 
-Every arm checkpoints to Drive, so a disconnect costs at most one arm.
-
-## Running the same thing locally
-
-```bash
-# the primary ladder — no downloads, ~12 min on a 6 GB card
-python scripts/run_local_ladder.py --n 250
-
-# a fast wiring check first
-python scripts/run_local_ladder.py --n 24 --smoke --bits 8 4 2
-
-# the deployment-realistic k-quant ladder (needs the GGUF files)
-python scripts/run_local_ladder.py --ladder-kind gguf
-```
-
-Results land in `artifacts/runs/<utc>_<git-sha>_<label>/` with a full provenance manifest, and one
-line is appended to `artifacts/runs/INDEX.md`.
-
-## Why a notebook *and* a script
-
-The notebook is a **runner**, not a second implementation. Every arm shells out to
-`scripts/run_local_ladder.py`, so there is no parallel copy of the measurement logic to drift out
-of sync — a failure mode this project has already paid for once.
-
-What the notebook adds over the raw script is the hosted-GPU scaffolding: repo clone, dependency
-install, Drive checkpointing, corpus construction, a preflight that catches API drift before an
-hour of GPU time is spent, and a single results archive to bring home.
+Every arm shells out to `scripts/`. There is no analysis code in the notebook, so
+there is no second implementation to drift out of sync with the repository. This
+project has already paid for that failure mode once: a notebook and the modules
+it called diverged silently, and the notebook could not have produced a result on
+any clone — it referenced a filename that did not exist, under a directory that
+was gitignored.

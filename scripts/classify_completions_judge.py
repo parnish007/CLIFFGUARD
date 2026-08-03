@@ -142,6 +142,12 @@ def main() -> int:
                          "self-judge was measured saturating at 100%% REFUSE, including on "
                          "plainly helpful answers. Use a 7-8B instruct model or a purpose-built "
                          "safety classifier.")
+    ap.add_argument("--judge-4bit", action="store_true",
+                    help="load the judge in NF4. A 7B judge is 15.2 GB in fp16 and will not fit "
+                         "a 16 GB T4 alongside activations; in NF4 it is about 4.5 GB. The judge "
+                         "is being asked for a 3-way label, not for generation quality, so the "
+                         "quantization cost is acceptable here -- but it must be recorded, which "
+                         "it is, in the output manifest.")
     ap.add_argument("--batch-size", type=int, default=8)
     ap.add_argument("--nll-cache", type=Path, default=None,
                     help="per-completion NLL from the behavioural run. Defaults to the copy "
@@ -228,7 +234,26 @@ def main() -> int:
     tokenizer = AutoTokenizer.from_pretrained(judge_model_id)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    model = load_fp16_model()
+    if args.judge_4bit:
+        from transformers import AutoModelForCausalLM, BitsAndBytesConfig
+
+        cfg = BitsAndBytesConfig(
+            load_in_4bit=True, bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.float16, bnb_4bit_use_double_quant=True,
+        )
+        try:
+            model = AutoModelForCausalLM.from_pretrained(
+                judge_model_id, dtype=torch.float16, quantization_config=cfg,
+                device_map={"": 0},
+            )
+        except TypeError:
+            model = AutoModelForCausalLM.from_pretrained(
+                judge_model_id, torch_dtype=torch.float16, quantization_config=cfg,
+                device_map={"": 0},
+            )
+        print(f"judge loaded in NF4: {torch.cuda.memory_allocated() / 1e9:.2f} GB")
+    else:
+        model = load_fp16_model()
     model.eval()
 
     judged: dict[str, list[str]] = {}
@@ -302,7 +327,8 @@ def main() -> int:
 
     out = args.run / "results" / "judge_classification.json"
     out.write_text(json.dumps({
-        "judge_model": judge_model_id, "model_under_test": under_test, "labels": LABELS,
+        "judge_model": judge_model_id, "model_under_test": under_test,
+        "judge_loaded_in_4bit": bool(args.judge_4bit), "labels": LABELS,
         "degeneracy_threshold": threshold,
         "marker_variant_sensitivity": sensitivity,
         "results": results,
