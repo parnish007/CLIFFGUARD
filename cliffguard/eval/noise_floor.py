@@ -27,8 +27,7 @@ their estimator errors are correlated and the relevant variance carries a
 cross-scheme question use `paired_direction_shift()`, which resamples prompt
 indices synchronously across schemes and preserves that covariance.
 
-Both controls are provided and the notebook reports both. See
-docs/build_log.md (Claude Entry 1 doubts D-b/C3, adjudicated by Codex Entry 2).
+Both controls are provided and the notebook reports both.
 """
 
 from __future__ import annotations

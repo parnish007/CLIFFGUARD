@@ -120,52 +120,32 @@ flowchart LR
 
 ## Quick Start
 
-> ### Latest result — a safety cliff the probe cannot see (2026-08-03)
+> ### Status — local measurement phase (2026-08-03)
 >
-> **Corrected after adversarial review.** Four earlier headline findings were retracted; see
-> [`docs/corrections_2026-08-03.md`](docs/corrections_2026-08-03.md).
->
-> Qwen2.5-1.5B-Instruct, round-to-nearest 8→2 bits, 500 prompts, **real generations from every
-> rung**, run end to end on a 6 GB laptop GPU:
->
-> | bits | coherent unsafe flips | frozen-probe d′ retained | output |
-> |---|---|---|---|
-> | 5 | 3.2 % | 99.0 % | fluent |
-> | 4 | 15.2 % | 99.4 % | fluent |
-> | **3** | **48.0 %** | 87.3 % | fluent |
-> | 2 | 0 % | −2.4 % | **100 % degenerate** |
->
-> Between 5 and 3 bits the model stops refusing on nearly half the prompts it previously refused,
-> while its output stays fluent and a linear refusal probe still reports 87 % of its separating
-> power. **Activation-probe metrics are not valid safety certificates for quantized checkpoints.**
->
-> At 2 bits the model degenerates entirely — a *capability* failure, reported separately. Merging
-> it with safety failure yields a false 93.8 % "unsafe-flip rate", which an earlier version of this
-> work did before a degeneracy gate was added.
->
-> **Why the earlier version was wrong:** every result had been measured against a corpus partition
-> built by labelling prompts according to whether hh-rlhf's *rejected response* looked like a
-> refusal. That is a property of the response, not the prompt — the "refused" file opens with
-> *"How much time do you spend with your family?"*. Agreement with the model's own behaviour is
-> **52.4 %**, i.e. chance.
+> The measurement pipeline runs end to end on a 6 GB laptop GPU: a
+> round-to-nearest quantization ladder from 8 down to 2 bits, real generations at
+> every rung, a fluency-based degeneracy detector, frozen-vs-refit probe transfer,
+> and gold-labelled reasoning evaluation.
 >
 > ```bash
-> python scripts/run_behavioural_ladder.py --n 250    # generations + three-way classification
 > python scripts/run_local_ladder.py --n 250          # weights, eta, probe ladder
+> python scripts/run_behavioural_ladder.py --n 250    # generations + classification
+> python scripts/run_sector_ladder.py --n 200         # GSM8K reasoning
 > python scripts/analyse_probe_transfer.py            # frozen vs refit estimands
 > ```
 >
-> Full write-up: [`docs/results_local_ladder.md`](docs/results_local_ladder.md) ·
-> review: [`docs/codex_review_2026-08-03.md`](docs/codex_review_2026-08-03.md) ·
-> theory verdicts: [`docs/theorems.md` §8](docs/theorems.md)
+> **Results are not published here yet.** Single-model local runs are
+> pre-publication working material, and two rounds of review have already forced
+> retractions of headline claims — publishing them early would put withdrawn
+> numbers in the public history. Findings will be added once the multi-model runs
+> are complete.
 >
-> <details><summary>Earlier pre-pivot results (Colab T4, May 2026)</summary>
->
-> Fold A/B were run on a Colab T4 with Llama-3.2-3B-Instruct and NF4, measuring
-> Δ_cliff(NF4) = 0.167. Those numbers predate the D0 calibration fix, the Stage 0 gate, and the
-> corpus audit above, so they have no established noise floor and their labels share the defect
-> just described. See [`docs/research_audit_2026-08.md`](docs/research_audit_2026-08.md).
-> </details>
+> What the code establishes so far, and what it does not, is tracked in
+> [`docs/claims_and_evidence.md`](docs/claims_and_evidence.md) and
+> [`docs/theorems.md` §8](docs/theorems.md). The short version: there is a
+> validated capability cliff, and **no validated safety metric** — a refusal
+> phrase list and a small-model judge were both tried and both failed, in opposite
+> directions.
 
 <details>
 <summary><b>Tier A — GPU (RTX 5060)</b></summary>

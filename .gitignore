@@ -1,23 +1,89 @@
+# ---------------------------------------------------------------------------
+# Build / environment
+# ---------------------------------------------------------------------------
 __pycache__/
+*.py[cod]
 .venv/
-data/
-artifacts/
+.venv-*/
+venv/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.env
+*.env
 
-# Claude / local planning docs — not for version control
+# ---------------------------------------------------------------------------
+# Data and experimental output — never versioned
+#
+# Corpora are rebuilt from source (scripts/download_fold_a.py) and run
+# directories are large, machine-specific, and immutable by design. Results get
+# published deliberately, not by accident of `git add -A`.
+# ---------------------------------------------------------------------------
+data/
+artifacts/
+*.npy
+*.npz
+*.gguf
+*.safetensors
+*.bin
+*.pt
+*.pth
+
+# ---------------------------------------------------------------------------
+# Agent working files — reviews, briefs, cross-model conversation logs
+#
+# The working record of how the analysis was produced. Useful locally; not a
+# publication artifact.
+# ---------------------------------------------------------------------------
 .claude/
+docs/build_log.md
+docs/codex_review*.md
+docs/review_brief*.md
+docs/corrections_*.md
+docs/theory_panel_*.md
+docs/research_audit_*.md
 claude_code_setup.md
-cliffguard-unified-paper.md
 project_instructions.md
 decisions_log.md
+cliffguard-unified-paper.md
 
-# Colab caches
-notebooks/.ipynb_checkpoints/
+# ---------------------------------------------------------------------------
+# Local results — held back until the Colab run completes and results are
+# published deliberately.
+# ---------------------------------------------------------------------------
+docs/results_*.md
+
+# ---------------------------------------------------------------------------
+# Private manuscripts
+#
+# docs/paper/main.tex, refs.bib and figures/ stay tracked because the
+# figure-generation workflow depends on them. Draft proposals and compiled PDFs
+# do not.
+# ---------------------------------------------------------------------------
+docs/paper/proposal.tex
+docs/paper/*roposal*.pdf
+docs/paper/*urposal*.pdf
+docs/paper/*.aux
+docs/paper/*.out
+docs/paper/*.synctex.gz
+
+# ---------------------------------------------------------------------------
+# Scratch and logs
+# ---------------------------------------------------------------------------
+scratchpad/
+tmp/
+*.log
+external_data/
+
+# ---------------------------------------------------------------------------
+# Notebook noise
+# ---------------------------------------------------------------------------
+.ipynb_checkpoints/
 *.ipynb_checkpoints
-.venv-colab/
+notebooks/.ipynb_checkpoints/
 notebooks/I_DID/
 notebooks/.env
-.env
+
+# Agent workflow documents
+development.md

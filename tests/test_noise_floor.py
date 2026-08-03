@@ -215,7 +215,7 @@ def test_theoretical_floor_matches_empirical_order_of_magnitude() -> None:
 
 # ---------------------------------------------------------------------------
 # Paired bootstrap — the correct control for the cross-scheme statistic.
-# Raised by Codex in docs/build_log.md Entry 2: a within-FP16 split-half floor
+# A within-FP16 split-half floor
 # discards the covariance induced by scoring the SAME prompts under both
 # schemes, so no fixed rescaling of it is the right comparison.
 # ---------------------------------------------------------------------------

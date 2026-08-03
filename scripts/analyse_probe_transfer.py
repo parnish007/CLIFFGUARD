@@ -11,10 +11,9 @@ It does NOT answer the question the theory is about:
     does the FP16 readout remain valid after quantization?
 
 Those are different estimands, and conflating them produced the project's
-"rotation and degradation are decoupled" claim. Codex's review
-(docs/codex_review_2026-08-03.md) identified the confusion and predicted the two
-estimands come apart at low precision. This script measures both, plus the full
-matrix between them.
+"rotation and degradation are decoupled" claim, which was withdrawn once the two
+were measured separately: they come apart sharply at low precision. This script
+measures both, plus the full matrix between them.
 
 For every ORDERED pair (source, target):
   fit the difference-in-means direction on the SOURCE scheme's fit half,

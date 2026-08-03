@@ -182,7 +182,7 @@ def conservative_threshold(
     """Threshold with a one-sided POPULATION FPR guarantee, not just a
     same-sample one.
 
-    Motivation (Codex audit, docs/build_log.md Entry 6). `calibrate_threshold`
+    Motivation. `calibrate_threshold`
     is conservative *on the calibration sample*, but it is only a point
     estimator of the population quantile. Measured at n_cal=400, benign N(0,1),
     fpr_target=0.05: held-out mean FPR 0.050, 95% range [0.030, 0.073], and

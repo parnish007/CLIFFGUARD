@@ -350,7 +350,7 @@ def test_numpy_roundtrip_matches_torch_reference() -> None:
 
 
 # ---------------------------------------------------------------------------
-# tail padding — found by adversarial review, docs/codex_review_2026-08-03.md
+# tail padding
 # ---------------------------------------------------------------------------
 
 

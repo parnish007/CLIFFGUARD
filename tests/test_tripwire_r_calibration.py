@@ -79,7 +79,7 @@ def test_calibrate_tripwire_r_respects_fpr_target() -> None:
 def test_calibrate_tripwire_r_uses_lower_tail() -> None:
     """D0 regression for the direct calibration path.
 
-    TRIPWIRE-R fires LOW. Codex found (docs/build_log.md Entry 2) that this
+    TRIPWIRE-R fires LOW. Review found that this
     production call site still selected the upper tail after the resolver was
     added to build_calibration_table, because it calls calibrate_threshold
     directly. The realised FPR under the fires-LOW rule must be <= target."""

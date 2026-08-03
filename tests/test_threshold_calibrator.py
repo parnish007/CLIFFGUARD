@@ -254,7 +254,7 @@ def test_fires_high_for_resolves_known_primitives() -> None:
 
 # ---------------------------------------------------------------------------
 # Tie / atom / tiny-n behaviour and the conservative same-sample guarantee.
-# Raised by Codex in docs/build_log.md Entry 2 (D-a): linear interpolation can
+# Defect D-a: linear interpolation can
 # land strictly between order statistics and OVERSHOOT the target.
 # ---------------------------------------------------------------------------
 
