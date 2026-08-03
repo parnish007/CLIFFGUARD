@@ -1,12 +1,34 @@
-"""UNVERIFIED-AGAINST-REAL-FILE: stream-check an F16/quantized GGUF pair.
+"""Stream-check an F16/quantized GGUF pair.
 
 This harness checks tensor-name and declared-shape correspondence, then asks
 the optional ``gguf`` package to dequantize each tensor sequentially. It never
 retains a dequantized model or even both members of a tensor pair at once. Peak
 resident-set size (RSS) is printed during the run and in the final summary.
 
-The marker above must remain until this script has completed successfully on a
-real F16/Q_K pair and that run has been recorded in ``docs/build_log.md``.
+VERIFIED 2026-08-03 against a real pair: ``qwen2.5-1.5b-instruct-fp16.gguf``
+(3.56 GB) and ``qwen2.5-1.5b-instruct-q4_k_m.gguf`` (1.12 GB) from
+``Qwen/Qwen2.5-1.5B-Instruct-GGUF``. All 339 tensors corresponded and
+dequantized; result PASSED. Recorded in ``docs/build_log.md`` Entry 7.
+
+Measured peak RSS on that run: baseline 964.80 MiB, peak 7.03 GiB, increase
+6.09 GiB. Read that number carefully before quoting the streaming claim. The
+script does hold only one tensor pair at a time, but ``GGUFReader`` memory-maps
+both files, and touched pages count toward the working set -- 4.68 GB of file
+plus the largest dequantized pair (``token_embd``, 233 M elements at float64)
+accounts for the increase. The resident figure is therefore dominated by
+reclaimable mapped pages, not by retained arrays, and it is not a lower bound on
+the memory a caller must have free.
+
+That first real run also exposed a bug in this file's own instrumentation. Every
+RSS figure printed 0.00 B because ``GetCurrentProcess`` was called without an
+explicit ``restype``, so its ``(HANDLE)-1`` pseudo-handle was truncated to 32
+bits and ``GetProcessMemoryInfo`` failed against an invalid handle — silently,
+via the ``except OSError`` fallback. The memory claim was therefore unverified
+even while the correspondence claim passed. Fixed in ``_windows_memory_bytes``.
+
+Note on shapes: the ``shape=`` printed per tensor is ``GGUFReader``'s ne order,
+which is the REVERSE of the numpy array ``gguf.dequantize`` returns. A tensor
+shown as ``(8960, 1536)`` yields a ``(1536, 8960)`` array.
 """
 
 from __future__ import annotations
@@ -50,12 +72,23 @@ def _windows_memory_bytes() -> tuple[int, int]:
 
     counters = ProcessMemoryCounters()
     counters.cb = ctypes.sizeof(counters)
-    process = ctypes.windll.kernel32.GetCurrentProcess()  # type: ignore[attr-defined]
-    ok = ctypes.windll.psapi.GetProcessMemoryInfo(  # type: ignore[attr-defined]
-        process, ctypes.byref(counters), counters.cb
-    )
-    if not ok:
-        raise OSError("GetProcessMemoryInfo failed")
+
+    # GetCurrentProcess returns the pseudo-handle (HANDLE)-1. Without an explicit
+    # restype ctypes treats that as a C int, so on 64-bit Windows it is truncated
+    # to 0x00000000FFFFFFFF instead of the full 0xFFFFFFFFFFFFFFFF. The call then
+    # fails against an invalid handle and every RSS figure silently reads 0.00 B,
+    # which is how this went unnoticed until a real GGUF pair was streamed.
+    kernel32 = ctypes.windll.kernel32
+    kernel32.GetCurrentProcess.restype = ctypes.c_void_p
+    kernel32.GetCurrentProcess.argtypes = []
+    get_info = ctypes.windll.psapi.GetProcessMemoryInfo
+    get_info.restype = ctypes.c_int
+    get_info.argtypes = [ctypes.c_void_p, ctypes.POINTER(ProcessMemoryCounters), ctypes.c_ulong]
+
+    if not get_info(kernel32.GetCurrentProcess(), ctypes.byref(counters), counters.cb):
+        raise OSError(
+            f"GetProcessMemoryInfo failed (GetLastError={ctypes.get_last_error()})"
+        )
     return int(counters.WorkingSetSize), int(counters.PeakWorkingSetSize)
 
 

@@ -262,6 +262,68 @@ rotation in the first place.
 
 ---
 
+## 6d The deployment-realistic arm — llama.cpp k-quants
+
+Run: `artifacts/runs/20260803-083534_fe871f3_local-ladder-gguf-qwen1.5b`
+Command: `--ladder-kind gguf`. Ladder: `Qwen/Qwen2.5-1.5B-Instruct-GGUF`, F16 → Q2_K, all seven
+files converted by Qwen from one F16 checkpoint (10.1 GB, downloaded locally).
+
+| Scheme | payload bits/param | rotation | η | held-out d′ |
+|---|---|---|---|---|
+| GGUF F16 | 16 | **9.49°** | — | 0.4073 |
+| Q8_0 | 8.502 | 9.83° | 4.13e−5 | 0.4064 |
+| Q6_K | 6.565 | 11.61° | 4.25e−4 | 0.4087 |
+| Q5_K_M | 5.760 | 13.04° | 8.26e−4 | 0.4101 |
+| Q4_K_M | 5.003 | 19.61° | 2.35e−3 | 0.4112 |
+| Q3_K_M | 4.135 | 29.98° | 6.18e−3 | 0.4443 |
+| Q2_K | 3.362 | 56.25° | 2.83e−2 | 0.4323 |
+
+8/8 replicate (z = 22–25). Fitted `base = 3.406, 95 % CI [2.858, 4.058]`, R² = 0.9895 — a looser
+fit than RTN's 0.9989, which is what a messier axis should look like. Held-out d′ is flat again
+(0.4129 → 0.4323, *up* slightly), and **F5 fires again**: ratio spread 225×. The normalisation
+control passes here too (−0.24 sd normalised, −0.23 sd raw).
+
+### Two findings specific to this arm
+
+**1. The F16 GGUF conversion alone rotates the direction 9.49°, with zero quantization.**
+
+That is larger than *6-bit* RTN (7.55°) and far larger than 8-bit RTN (1.77°). Converting
+safetensors FP16 → GGUF F16 is not behaviourally lossless with respect to the refusal direction.
+
+This is a methodological problem for any cliff measurement built on a GGUF ladder, including the
+one this project originally planned: **a constant ~9.5° offset is baked into every rung and has
+nothing to do with bit-width.** Comparing a GGUF Q4 model against a *safetensors* FP16 reference —
+which is the natural thing to do, and what the literature generally does — attributes that offset
+to quantization. The correct reference for a GGUF ladder is the GGUF F16 member, not the original
+checkpoint.
+
+**2. The RTN and k-quant decay bases do not agree.**
+
+```
+RTN     base 4.3552   95 % CI [4.1136, 4.6110]
+GGUF    base 3.4060   95 % CI [2.8584, 4.0584]
+```
+
+The intervals do not overlap (4.1136 > 4.0584), narrowly. The decay is exponential in both
+families, but the base is a property of the *quantizer family*, not a universal constant — which
+is another reason `collapse_bits_threshold_closed_form` must never be called with its default
+`base=4.0`.
+
+Note also that k-quant payload bits/param are not integers (8.502, 6.565, 5.760, 5.003, 4.135,
+3.362) because the type assignment is mixed per tensor. Q4_K_M stores 5.003 bits/param, not 4 —
+another reason it is not interchangeable with a 4-bit RTN rung.
+
+**Stage 4 reports 3/3 within 1 sd and RMSE 0.0235**, and as in §6 that is not evidence for C3: the
+measured curve is flat, so a flat prediction cannot be wrong. `b*` is undefined for the same
+label-ceiling reason.
+
+`scripts/verify_gguf_pair.py` was run on the real F16/Q4_K_M pair: all 339 tensors corresponded
+and dequantized, **PASSED**. Its `UNVERIFIED-AGAINST-REAL-FILE` marker is cleared. That run also
+exposed a bug in the script's own RSS instrumentation, which had been silently reporting 0.00 B —
+see the file header.
+
+---
+
 ## 7 What this does and does not establish
 
 **Established.**
