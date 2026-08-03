@@ -120,7 +120,47 @@ flowchart LR
 
 ## Quick Start
 
-> **Real results so far (Colab T4, May 2026):** Fold A (calibration) and Fold B (cliff measurement) have been run end-to-end on a Colab T4 GPU with Llama-3.2-3B-Instruct and NF4 quantization. Fold A calibrated thresholds at τ_FP16 = 0.09742 and τ_NF4 = 0.09827 against 400 benign prompts at FPR = 5%. Fold B measured Δ_cliff(NF4) = 0.167 (geometric) and Δ_B-cliff(NF4) = 0.000 (behavioral proxy). H1 was **not accepted** for this single scheme + family pair — more schemes and model families are required. See the [Evaluation Status](#evaluation-status) section for a full breakdown of what is tested vs planned.
+> ### Latest result — the direction rotates, the behaviour does not (2026-08-03)
+>
+> A full 7-rung quantization ladder on **Qwen2.5-1.5B-Instruct** (round-to-nearest, 8→2 bits,
+> n = 250/class), run end-to-end on a **6 GB laptop GPU in 12 minutes with no downloads**:
+> `python scripts/run_local_ladder.py --n 250`
+>
+> - The FP16→quantized rotation of the refusal direction **replicates at 8/8 rungs** (z = 15–26)
+>   and grows smoothly **1.77° → 88.69°**, roughly doubling per bit removed.
+> - Weight-space noise follows `η(b) = η₄·base^(4−b)` with **base = 4.355, 95 % CI [4.114, 4.611],
+>   R² = 0.9989** — the interval *excludes* 4, so the assumed base is rejected while the law itself
+>   is confirmed with a sharper constant.
+> - **Held-out d′ does not move**: 0.4129 → 0.3914, against a standard deviation of 0.085. No
+>   detectable degradation at a rung where η has grown 7400× and the direction has rotated 88.7°.
+> - At 2 bits the mean projection onto the direction goes **negative** — it has reoriented past
+>   orthogonal — and d′ is *still* 0.39. **Separability survives a reversed coordinate system.**
+>
+> The quantized model has not lost the harmful/benign distinction; it has **moved where the
+> distinction lives**. The practical consequence: **direction drift is not a valid safety metric.**
+>
+> A controlled arm settles the salience question at an identical bit budget: activation-aware
+> quantization rotates the direction **22–26 % less** while injecting **1.5–2.0× more** total
+> weight noise — it buys rotation resistance by spending extra error elsewhere.
+>
+> **Load-bearing caveat:** d′₀ = 0.41 is an hh-rlhf *label* ceiling, not a model property.
+> "Refused" describes the dataset's rejected response, not what this model does. The honest claim
+> is *within the range this probe can measure*, **not** "quantization is safe."
+>
+> Full write-up: [`docs/results_local_ladder.md`](docs/results_local_ladder.md) ·
+> theory verdicts: [`docs/theorems.md` §8](docs/theorems.md) ·
+> claim status: [`docs/claims_and_evidence.md`](docs/claims_and_evidence.md)
+>
+> <details><summary>Earlier pre-pivot results (Colab T4, May 2026)</summary>
+>
+> Fold A (calibration) and Fold B (cliff measurement) were run end-to-end on a Colab T4 with
+> Llama-3.2-3B-Instruct and NF4. Fold A calibrated τ_FP16 = 0.09742 and τ_NF4 = 0.09827 against 400
+> benign prompts at FPR = 5 %. Fold B measured Δ_cliff(NF4) = 0.167 (geometric) and
+> Δ_B-cliff(NF4) = 0.000 (behavioural proxy). H1 was **not accepted** for that single scheme +
+> family pair. Note that these numbers predate the D0 calibration fix and the Stage 0 replication
+> gate, so the 0.167 figure has no established noise floor — see
+> [`docs/research_audit_2026-08.md`](docs/research_audit_2026-08.md).
+> </details>
 
 <details>
 <summary><b>Tier A — GPU (RTX 5060)</b></summary>

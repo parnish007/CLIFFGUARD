@@ -16,6 +16,7 @@ from scripts.run_local_ladder import (  # noqa: E402
     load_prompts,
     rtn_bits_per_parameter,
     rtn_quantize_dequantize,
+    salience_scaled_quantize_dequantize,
 )
 
 
@@ -156,6 +157,124 @@ def test_bits_per_parameter_ordering_matches_measured_error() -> None:
         for b, g in by_bits
     ]
     assert errors == sorted(errors), f"bit accounting disagrees with measured error: {errors}"
+
+
+# ---------------------------------------------------------------------------
+# salience-aware quantization — the controlled arm of claim C5
+# ---------------------------------------------------------------------------
+
+
+def _scale(cols: int = 256, seed: int = 1) -> object:
+    """A spiky activation profile: a few channels far above the rest."""
+    generator = torch.Generator().manual_seed(seed)
+    base = torch.rand(cols, generator=generator) * 0.1 + 0.01
+    base[::32] *= 40.0
+    return base
+
+
+def test_alpha_zero_is_exactly_plain_rtn() -> None:
+    """The control must be bit-identical, or the comparison measures two changes."""
+    w = _weight()
+    assert torch.equal(
+        salience_scaled_quantize_dequantize(w, 4, 64, _scale(), alpha=0.0),
+        rtn_quantize_dequantize(w, 4, 64),
+    )
+
+
+def test_salience_scaling_changes_the_reconstruction() -> None:
+    w = _weight()
+    assert not torch.equal(
+        salience_scaled_quantize_dequantize(w, 4, 64, _scale(), alpha=0.5),
+        rtn_quantize_dequantize(w, 4, 64),
+    )
+
+
+def test_salient_channels_are_protected_at_equal_bit_budget() -> None:
+    """The whole point: error on high-activation channels must fall.
+
+    This is the property the C5 arm rests on. If it did not hold, the observed
+    reduction in direction rotation would have some other cause.
+    """
+    w = _weight(rows=64, cols=256, seed=5)
+    scale = _scale()
+    salient = torch.arange(0, 256, 32)          # the channels boosted in _scale
+
+    def channel_mse(out: object) -> object:
+        return (out.float() - w.float()).pow(2).mean(dim=0)
+
+    plain = channel_mse(rtn_quantize_dequantize(w, 3, 64))
+    aware = channel_mse(salience_scaled_quantize_dequantize(w, 3, 64, scale, alpha=0.5))
+    assert float(aware[salient].mean()) < float(plain[salient].mean())
+
+
+def test_protection_is_paid_for_in_total_error() -> None:
+    """Salience-awareness is a reallocation, not a free lunch.
+
+    Measured on the real ladder: 1.5-2.0x more total weight perturbation buying
+    22-26% less rotation of the behavioural direction. The sign of that trade is
+    pinned here so a future change cannot silently turn it into a strict
+    improvement, which would mean the scaling is no longer doing what it claims.
+    """
+    w = _weight(rows=64, cols=256, seed=5)
+    plain = float((rtn_quantize_dequantize(w, 3, 64).float() - w.float()).pow(2).mean())
+    aware = float(
+        (salience_scaled_quantize_dequantize(w, 3, 64, _scale(), alpha=0.5).float()
+         - w.float()).pow(2).mean()
+    )
+    assert aware > plain
+
+
+def test_flat_activation_profile_is_nearly_a_no_op() -> None:
+    """With no salience to exploit, the transform should barely move anything."""
+    w = _weight()
+    flat = torch.ones(256)
+    aware = salience_scaled_quantize_dequantize(w, 5, 64, flat, alpha=0.5)
+    plain = rtn_quantize_dequantize(w, 5, 64)
+    assert torch.allclose(aware.float(), plain.float(), atol=1e-2)
+
+
+def test_protection_has_an_interior_optimum_in_alpha() -> None:
+    """Protection is NOT monotone in alpha, and that is why alpha is searched.
+
+    Measured here: salient-channel MSE goes 0.00637 (alpha=0) -> 0.00541 (0.25)
+    -> 0.00247 (0.5) -> 0.00391 (1.0). Past some point the boosted channels
+    dominate their group's min/max, so the shared affine range stretches to cover
+    them and every channel in the group -- including the salient ones -- loses
+    resolution. Cranking alpha to 1 is therefore worse than 0.5.
+
+    This is exactly why AWQ grid-searches the exponent instead of maximising it,
+    and it justifies 0.5 as the default the C5 arm runs at. A future change that
+    made this monotone would mean the scaling had stopped interacting with the
+    group range, i.e. it was no longer doing what it claims.
+    """
+    w = _weight(rows=64, cols=256, seed=5)
+    scale = _scale()
+    salient = torch.arange(0, 256, 32)
+
+    def salient_mse(alpha: float) -> float:
+        out = salience_scaled_quantize_dequantize(w, 3, 64, scale, alpha=alpha)
+        return float((out.float() - w.float()).pow(2).mean(dim=0)[salient].mean())
+
+    errors = {alpha: salient_mse(alpha) for alpha in (0.0, 0.25, 0.5, 1.0)}
+    assert errors[0.5] < errors[0.0], "alpha=0.5 must beat the unprotected control"
+    assert errors[0.5] < errors[0.25], "protection must still be improving at 0.5"
+    assert errors[1.0] > errors[0.5], "over-scaling must degrade protection"
+
+
+def test_salience_preserves_shape_dtype_and_finiteness() -> None:
+    w = _weight()
+    out = salience_scaled_quantize_dequantize(w, 2, 64, _scale(), alpha=0.5)
+    assert out.shape == w.shape and out.dtype == w.dtype
+    assert torch.isfinite(out.float()).all()
+
+
+def test_salience_survives_zero_activation_channels() -> None:
+    """A dead channel must not produce a division by zero or a NaN weight."""
+    w = _weight()
+    scale = _scale()
+    scale[:8] = 0.0
+    out = salience_scaled_quantize_dequantize(w, 4, 64, scale, alpha=0.5)
+    assert torch.isfinite(out.float()).all()
 
 
 # ---------------------------------------------------------------------------

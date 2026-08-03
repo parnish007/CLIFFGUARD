@@ -42,6 +42,14 @@ dev = [
 [tool.ruff]
 line-length = 100
 
+[tool.ruff.lint.per-file-ignores]
+# Notebook cells are not modules. A setup cell must clone the repo and extend
+# sys.path BEFORE it can import anything from it, so E402 is unavoidable there,
+# and grouped imports (E401) are the normal idiom for a cell that just gets the
+# environment ready. Everything else -- undefined names, unused imports, shadowed
+# builtins -- stays enforced, because those are real bugs in a notebook too.
+"*.ipynb" = ["E401", "E402"]
+
 [tool.mypy]
 strict = true
 

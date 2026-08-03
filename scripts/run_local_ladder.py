@@ -629,6 +629,12 @@ def margins(matrix: FloatArray, direction: FloatArray) -> FloatArray:
 def main() -> int:  # noqa: C901 - a linear experiment script, split would obscure it
     global MODEL_ID, GGUF_REPO, GGUF_STEM
 
+    # A run takes twenty minutes and is usually watched through a redirect or a
+    # notebook pipe, where Python block-buffers stdout at 8 KB. Without this the
+    # stage results sit invisible in the buffer until the process exits, and a
+    # stalled run is indistinguishable from a slow one.
+    sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]
+
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--model", default=MODEL_ID, help="HF checkpoint for every scheme")
     ap.add_argument("--gguf-repo", default=None, help="matched GGUF ladder repo (--ladder-kind gguf)")
