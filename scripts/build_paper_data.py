@@ -21,7 +21,7 @@ from pathlib import Path
 import sys
 from typing import Any
 
-from scipy.stats import beta, binomtest
+from scipy.stats import beta
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -111,7 +111,6 @@ def collect_sector(runs: Path) -> dict[str, Any]:
         label = MODEL_LABELS.get(manifest["model_id"], manifest["model_id"])
         data = json.loads(f.read_text(encoding="utf-8"))
         n = int(manifest["n_problems"])
-        base = int(data["FP16"]["n_correct"])
         rows = []
         for scheme, v in data.items():
             k = int(v["n_correct"])
@@ -121,9 +120,15 @@ def collect_sector(runs: Path) -> dict[str, Any]:
                 "accuracy": v["accuracy"], "n_correct": k,
                 "ci_low": low, "ci_high": high,
                 "degenerate": v["degenerate_rate"],
-                "p_vs_fp16": (None if scheme == "FP16"
-                              else float(binomtest(k, n, base / n).pvalue)),
             })
+            # No p-value is emitted here. This file previously carried an exact
+            # binomial test of each rung against the observed FP16 accuracy, as
+            # though that were a known population rate; the questions are the
+            # same at every rung, so the comparison is paired and that test was
+            # invalid. Significance for the capability arm comes from
+            # scripts/review_reanalysis.py, which runs exact McNemar on
+            # question-level transitions with a Holm correction. Leaving the old
+            # number here would let it be quoted again by accident.
         rows.sort(key=lambda r: -r["bits"])
         out[label] = {"model_id": manifest["model_id"], "n": n,
                       "fp16_accuracy": data["FP16"]["accuracy"],

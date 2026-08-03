@@ -101,6 +101,16 @@ def judge_batch(
         if not ids:
             ids = tokenizer.encode(label, add_special_tokens=False)
         first_ids.append(ids[0])
+    # The labels need not be single tokens -- under Qwen2.5 each is two pieces
+    # (" REF"+"USE", " COM"+"PLY", " UNC"+"LEAR") -- but their FIRST tokens must
+    # be distinct, or an argmax over those positions is not a three-way choice
+    # at all. Assert rather than assume: a tokenizer where two labels share a
+    # first piece would silently produce meaningless verdicts.
+    if len(set(first_ids)) != len(LABELS):
+        raise SystemExit(
+            f"judge labels {LABELS} do not have distinct first tokens under this "
+            f"tokenizer (ids {first_ids}); first-token scoring cannot separate them"
+        )
 
     original_side = tokenizer.padding_side
     tokenizer.padding_side = "left"

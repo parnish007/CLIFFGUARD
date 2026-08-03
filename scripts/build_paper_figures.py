@@ -79,40 +79,45 @@ def rung_axis(ax: Any, rows: list[dict[str, Any]]) -> list[int]:
     return positions
 
 
-def fig_artifact(data: dict[str, Any], out: Path) -> None:
-    """The headline: judged harmful compliance against the phrase-list estimate."""
-    models = [m for m in ("Qwen2.5-3B", "Phi-3.5-mini") if m in data["behavioural"]]
-    fig, axes = plt.subplots(1, len(models), figsize=(TEXT_WIDTH_IN, 2.75),
+def fig_artifact(review: dict[str, Any], out: Path) -> None:
+    """Gate and grader crossed.
+
+    Three curves rather than two, because the estimate depends on both factors
+    and they dominate in different regimes: at coherent rungs the two gates
+    coincide and the whole gap is the grader, while at the collapsed rungs the
+    gate is the entire story.
+    """
+    models = list(review["gate_by_grader"])
+    fig, axes = plt.subplots(1, len(models), figsize=(TEXT_WIDTH_IN, 2.9),
                              sharey=True, constrained_layout=True)
     axes = list(axes) if len(models) > 1 else [axes]
 
     for ax, model in zip(axes, models):
-        rows = [r for r in data["behavioural"][model]["rows"] if r["scheme"] != "FP16"]
-        rows.sort(key=lambda r: -r["bits"])
+        rows = review["gate_by_grader"][model]
         x = rung_axis(ax, rows)
-
-        # Shade rungs where the model has stopped producing language: a
-        # compliance rate there is meaningless in either direction.
         for i, r in enumerate(rows):
-            if r["degenerate"] > 0.5:
+            if r["degenerate_composite"] > 0.5:
                 ax.axvspan(i - 0.5, i + 0.5, color=DEGEN, alpha=0.18, zorder=0, lw=0)
 
-        ax.plot(x, [100 * (r.get("unsafe_marker") or 0.0) for r in rows],
+        ax.plot(x, [100 * r["marker_nll"] for r in rows],
                 color=MARKER, marker="s", ls="--", lw=1.7, ms=5,
-                label="refusal phrase list", zorder=3)
-        ax.plot(x, [100 * r["unsafe_judge"] for r in rows],
+                label="phrase list, NLL gate", zorder=3)
+        ax.plot(x, [100 * r["marker_composite"] for r in rows],
+                color="#E8590C", marker="v", ls="-.", lw=1.5, ms=4.5,
+                label="phrase list, composite gate", zorder=3)
+        ax.plot(x, [100 * r["judge_composite"] for r in rows],
                 color=JUDGE, marker="o", ls="-", lw=1.9, ms=5,
-                label="7B judge", zorder=4)
+                label="judge, composite gate", zorder=4)
         ax.set_title(model)
         ax.set_ylim(-1.5, 43)
         ax.yaxis.set_major_formatter(PercentFormatter(decimals=0))
 
-    axes[0].set_ylabel("harmful compliance")
+    axes[0].set_ylabel(r"refusal $\to$ compliance")
     axes[0].legend(loc="upper left", frameon=False)
-    axes[0].text(0.035, 0.52, "shaded rungs:\nmodel is degenerate",
+    axes[0].text(0.035, 0.40, "shaded rungs:\nmodel is degenerate",
                  transform=axes[0].transAxes, ha="left", va="center",
                  fontsize=7.5, color="#495057")
-    fig.suptitle("The safety cliff appears only under phrase-list scoring",
+    fig.suptitle("The cliff needs both a weak gate and a weak grader",
                  fontsize=10.5)
     save(fig, out, "fig_artifact")
 
@@ -142,23 +147,35 @@ def fig_capability(data: dict[str, Any], out: Path) -> None:
     save(fig, out, "fig_capability")
 
 
-def fig_probe(data: dict[str, Any], out: Path) -> None:
-    """Frozen-probe retention along the ladder."""
-    fig, ax = plt.subplots(figsize=(TEXT_WIDTH_IN * 0.66, 2.9),
+def fig_probe(review: dict[str, Any], out: Path) -> None:
+    """Frozen-probe retention along the ladder, with a band over fit/score splits.
+
+    The band is the 2.5--97.5 percentile of retention across replicates. Without
+    it the collapse at the lowest rungs looks far more precisely located than
+    the data supports.
+    """
+    fig, ax = plt.subplots(figsize=(TEXT_WIDTH_IN * 0.70, 3.0),
                            constrained_layout=True)
     reference: list[dict[str, Any]] = []
-    for model, block in data["transfer"].items():
+    for model, block in review["probe"].items():
         colour, marker, dash = MODEL_STYLE.get(model, ("#333333", "o", "-"))
-        rows = sorted(block["rows"], key=lambda r: -r["bits"])
+        rows = [r for r in block["rows"] if r["scheme"] != "FP16"]
+        rows.sort(key=lambda r: -r["bits"])
         reference = reference or rows
-        ax.plot(range(len(rows)), [100 * r["retained"] for r in rows],
-                color=colour, marker=marker, ls=dash, lw=1.6, ms=4.5, label=model)
+        x = range(len(rows))
+        ax.plot(x, [100 * r["retained_mean"] for r in rows], color=colour,
+                marker=marker, ls=dash, lw=1.6, ms=4.5, label=model)
+        ax.fill_between(x, [100 * r["retained_ci_low"] for r in rows],
+                        [100 * r["retained_ci_high"] for r in rows],
+                        color=colour, alpha=0.14, lw=0)
     ax.axhline(100, color="#ADB5BD", lw=0.8, ls=":", zorder=0)
+    ax.axhline(0, color="#ADB5BD", lw=0.8, zorder=0)
     rung_axis(ax, reference)
     ax.set_ylabel("frozen-probe $d'$ retained")
     ax.yaxis.set_major_formatter(PercentFormatter(decimals=0))
     ax.legend(loc="lower left", frameon=False)
-    ax.set_title("The probe tracks fluency, not safety")
+    ax.set_title("The probe is flat where behaviour drifts,\n"
+                 "and collapses only once the model does")
     save(fig, out, "fig_probe")
 
 
@@ -221,7 +238,7 @@ def fig_marker_sensitivity(data: dict[str, Any], out: Path) -> None:
     ax.set_xticklabels([s.split("_")[1][:-1] for s in schemes])
     ax.set_xlim(-0.4, len(schemes) - 0.6)
     ax.set_xlabel("code bits")
-    ax.set_ylabel("apparent harmful compliance")
+    ax.set_ylabel(r"apparent refusal $\to$ compliance")
     ax.yaxis.set_major_formatter(PercentFormatter(decimals=0))
     ax.legend(frameon=False, title="marker list", title_fontsize=8,
               loc="upper left")
@@ -229,53 +246,68 @@ def fig_marker_sensitivity(data: dict[str, Any], out: Path) -> None:
     save(fig, out, "fig_marker_sensitivity")
 
 
-def fig_refusal_law(data: dict[str, Any], out: Path) -> None:
-    """Refusal rate against bit-width in the coherent regime, with fits.
+def fig_refusal_law(review: dict[str, Any], out: Path) -> None:
+    """Refusal rate against bit-width, with the fit drawn over exactly the rungs
+    it was fitted to.
 
-    The regression is restricted to rungs where fewer than 10% of completions are
-    degenerate. Beyond that boundary a "refusal rate" is not a measurement of
-    refusal, and including those points would fit a line through the collapse.
+    An earlier version plotted a regression that included the FP16 point while
+    the text quoted a coefficient fitted without it, so the figure and the
+    number disagreed. The fit is now drawn only across the coherent quantized
+    band, and the full-precision point is shown separately with the gap to the
+    top rung annotated -- that gap being near zero is itself the finding, since
+    it is what makes a single line through the whole range wrong.
     """
-    from scipy import stats
-
-    fig, ax = plt.subplots(figsize=(TEXT_WIDTH_IN * 0.66, 2.9),
+    fig, ax = plt.subplots(figsize=(TEXT_WIDTH_IN * 0.70, 3.0),
                            constrained_layout=True)
-    for model, block in data["behavioural"].items():
+    for model, block in review["drift"].items():
+        if model.startswith("_"):
+            continue
         colour, marker, dash = MODEL_STYLE.get(model, ("#333333", "o", "-"))
-        coherent = [r for r in block["rows"] if r["degenerate"] < 0.10]
-        coherent.sort(key=lambda r: r["bits"])
-        x = [r["bits"] for r in coherent]
-        y = [100 * r["refusal"] for r in coherent]
+        x, y = block["band_bits"], block["band_refusal_pct"]
         ax.plot(x, y, color=colour, marker=marker, ls="none", ms=5, label=model)
-        if len(x) >= 3:
-            fit = stats.linregress(x, y)
-            grid = [min(x), max(x)]
-            ax.plot(grid, [fit.intercept + fit.slope * g for g in grid],
-                    color=colour, ls=dash, lw=1.3, alpha=0.85)
+        ax.plot([16.0], [block["fp16_refusal_pct"]], color=colour,
+                marker=marker, ls="none", ms=5, mfc="white", mew=1.3)
+        slope = -block["kappa"]
+        ax.plot([min(x), max(x)],
+                [block["intercept"] + slope * g for g in (min(x), max(x))],
+                color=colour, ls=dash, lw=1.4, alpha=0.9)
+        # The band's line, continued back to full precision, where it misses.
+        ax.plot([max(x), 16.0],
+                [block["intercept"] + slope * g for g in (max(x), 16.0)],
+                color=colour, ls=":", lw=1.0, alpha=0.5)
+
+    ax.set_xscale("log", base=2)
+    ax.set_xticks([2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 16.0])
+    ax.set_xticklabels(["2.5", "3.5", "4.5", "5.5", "6.5", "7.5", "8.5", "FP16"])
+    ax.minorticks_off()
     ax.set_xlabel("stored bits / parameter")
     ax.set_ylabel("refusal rate")
     ax.invert_xaxis()
     ax.yaxis.set_major_formatter(PercentFormatter(decimals=0))
-    ax.legend(loc="upper left", frameon=False)
-    ax.set_title("Refusal rises as precision falls, while output stays coherent")
+    ax.legend(loc="lower left", frameon=False)
+    ax.set_title("Refusal drifts upward inside the coherent band;\n"
+                 "the band's slope does not reach full precision (dotted)")
     save(fig, out, "fig_refusal_law")
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--data", type=Path, default=Path("docs/paper/data.json"))
+    ap.add_argument("--review", type=Path,
+                    default=Path("docs/paper/review_stats.json"))
     ap.add_argument("--out", type=Path, default=Path("docs/paper/figures"))
     args = ap.parse_args()
 
     data = json.loads(args.data.read_text(encoding="utf-8"))
+    review = json.loads(args.review.read_text(encoding="utf-8"))
     args.out.mkdir(parents=True, exist_ok=True)
     print("figures:")
-    fig_artifact(data, args.out)
+    fig_artifact(review, args.out)
     fig_capability(data, args.out)
-    fig_probe(data, args.out)
+    fig_probe(review, args.out)
     fig_degeneracy(data, args.out)
     fig_marker_sensitivity(data, args.out)
-    fig_refusal_law(data, args.out)
+    fig_refusal_law(review, args.out)
     return 0
 
 

@@ -1,4 +1,7 @@
-"""Emit LaTeX table bodies from docs/paper/data.json.
+"""Emit LaTeX table bodies from the consolidated measurement files.
+
+Inferential tables read docs/paper/review_stats.json; descriptive ones read
+docs/paper/data.json.
 
 Tables are generated for the same reason figures are: a number typed into a
 manuscript is a number that can silently disagree with the run that produced it.
@@ -24,61 +27,32 @@ def bits_label(bits: float) -> str:
     return "FP16" if bits >= 16 else f"{bits:.1f}"
 
 
-def table_artifact(data: dict[str, Any]) -> str:
-    """Judged vs phrase-list harmful compliance, both models side by side."""
-    models = [m for m in ("Qwen2.5-3B", "Phi-3.5-mini") if m in data["behavioural"]]
-    ref = [r for r in data["behavioural"][models[0]]["rows"] if r["scheme"] != "FP16"]
-    ref.sort(key=lambda r: -r["bits"])
+def table_artifact(review: dict[str, Any]) -> str:
+    """Gate and grader crossed, so their contributions are separable.
 
+    An earlier version of this table set a composite-gated judge beside an
+    NLL-gated phrase list and attributed the whole difference to the grader.
+    Crossing the two factors shows they dominate in different regimes, which is
+    a stronger result than the confounded version.
+    """
     lines = [
-        r"\begin{tabular}{l" + "rrc" * len(models) + "}",
+        r"\begin{tabular}{llrrrr}",
         r"\toprule",
-        " & " + " & ".join(
-            rf"\multicolumn{{3}}{{c}}{{{m}}}" for m in models) + r" \\",
-        "".join(rf"\cmidrule(lr){{{2 + 3 * i}-{4 + 3 * i}}}"
-                for i in range(len(models))),
-        "bits/param & " + " & ".join(
-            r"judge & markers & degen." for _ in models) + r" \\",
+        r"& & \multicolumn{2}{c}{phrase list} & judge & \\",
+        r"\cmidrule(lr){3-4}\cmidrule(lr){5-5}",
+        r"model & bits & NLL gate & composite & composite & degen.\ (\%) \\",
         r"\midrule",
     ]
-    for row in ref:
-        cells = []
-        for model in models:
-            match = next(r for r in data["behavioural"][model]["rows"]
-                         if r["scheme"] == row["scheme"])
-            flag = r"\ddag" if match["degenerate"] > 0.5 else ""
-            cells += [pct(match["unsafe_judge"]), pct(match.get("unsafe_marker")), flag]
-        lines.append(f"{bits_label(row['bits'])} & " + " & ".join(cells) + r" \\")
-    lines += [r"\bottomrule", r"\end{tabular}"]
-    return "\n".join(lines)
-
-
-def table_capability(data: dict[str, Any]) -> str:
-    """GSM8K accuracy with exact intervals and p-values."""
-    models = list(data["sector"])
-    ref = sorted(data["sector"][models[0]]["rows"], key=lambda r: -r["bits"])
-    lines = [
-        r"\begin{tabular}{l" + "rl" * len(models) + "}",
-        r"\toprule",
-        " & " + " & ".join(rf"\multicolumn{{2}}{{c}}{{{m}}}" for m in models) + r" \\",
-        "".join(rf"\cmidrule(lr){{{2 + 2 * i}-{3 + 2 * i}}}" for i in range(len(models))),
-        "bits/param & " + " & ".join(r"acc.\ (\%) & 95\% CI" for _ in models) + r" \\",
-        r"\midrule",
-    ]
-    for row in ref:
-        cells = []
-        for model in models:
-            match = next((r for r in data["sector"][model]["rows"]
-                          if abs(r["bits"] - row["bits"]) < 1e-6), None)
-            if match is None:
-                cells += ["--", "--"]
-                continue
-            star = ""
-            if match["p_vs_fp16"] is not None and match["p_vs_fp16"] < 0.05:
-                star = r"$^{*}$"
-            cells += [f"{100 * match['accuracy']:.1f}{star}",
-                      f"[{100 * match['ci_low']:.1f}, {100 * match['ci_high']:.1f}]"]
-        lines.append(f"{bits_label(row['bits'])} & " + " & ".join(cells) + r" \\")
+    for i, (model, rows) in enumerate(review["gate_by_grader"].items()):
+        if i:
+            lines.append(r"\addlinespace")
+        for j, r in enumerate(rows):
+            name = model if j == 0 else ""
+            lines.append(
+                f"{name} & {r['bits']:.1f} & {100 * r['marker_nll']:.1f} & "
+                f"{100 * r['marker_composite']:.1f} & "
+                f"{100 * r['judge_composite']:.1f} & "
+                f"{100 * r['degenerate_composite']:.1f} " + r"\\")
     lines += [r"\bottomrule", r"\end{tabular}"]
     return "\n".join(lines)
 
@@ -106,29 +80,111 @@ def table_markers(data: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def table_probe(data: dict[str, Any]) -> str:
-    """Frozen-probe retention against judged harmful compliance."""
-    models = [m for m in data["transfer"] if m in data["behavioural"]]
-    ref = sorted(data["transfer"][models[0]]["rows"], key=lambda r: -r["bits"])
+def fmt_p(p: float) -> str:
+    """p-values below the resolution of three decimals are reported as such
+    rather than rounded to a misleading 0.000."""
+    return r"$<$0.001" if p < 0.001 else f"{p:.3f}"
+
+
+def table_transitions(review: dict[str, Any]) -> str:
+    """Paired refusal-decision transitions, in long format.
+
+    Long rather than side-by-side because each rung now needs six numbers, and
+    a wide layout at two models would run into the margin.
+    """
     lines = [
-        r"\begin{tabular}{l" + "rr" * len(models) + "}",
+        r"\begin{tabular}{llrrrrrr}",
+        r"\toprule",
+        r"model & bits & $\to$comply & $\to$refuse & gradable & rate (\%) "
+        r"& 95\% upper & $p_{\text{Holm}}$ \\",
+        r"\midrule",
+    ]
+    for i, (model, block) in enumerate(review["transitions"].items()):
+        if i:
+            lines.append(r"\addlinespace")
+        rows = sorted(block["rows"], key=lambda r: -r["bits"])
+        for j, r in enumerate(rows):
+            name = model if j == 0 else ""
+            lines.append(
+                f"{name} & {r['bits']:.1f} & {r['to_compliance']} & "
+                f"{r['to_refusal']} & {r['n_gradable']} & "
+                f"{100 * r['rate_itt']:.1f} & {100 * r['upper95_itt']:.1f} & "
+                f"{fmt_p(r['mcnemar_p_holm'])} " + r"\\")
+    lines += [r"\bottomrule", r"\end{tabular}"]
+    return "\n".join(lines)
+
+
+def table_capability_paired(review: dict[str, Any]) -> str:
+    """GSM8K with exact McNemar on question-level transitions."""
+    lines = [
+        r"\begin{tabular}{llrrrr}",
+        r"\toprule",
+        r"model & bits & acc.\ (\%) & lost & gained & $p_{\text{Holm}}$ \\",
+        r"\midrule",
+    ]
+    models = [(m, b) for m, b in review["gsm8k"].items() if not m.startswith("_")]
+    for i, (model, block) in enumerate(models):
+        if i:
+            lines.append(r"\addlinespace")
+        lines.append(
+            f"{model} & FP16 & {100 * block['fp16_accuracy']:.1f} & -- & -- & -- "
+            + r"\\")
+        for r in block["rows"]:
+            lines.append(
+                f" & {r['bits']:.1f} & {100 * r['accuracy']:.1f} & {r['lost']} & "
+                f"{r['gained']} & {fmt_p(r['mcnemar_p_holm'])} " + r"\\")
+    lines += [r"\bottomrule", r"\end{tabular}"]
+    return "\n".join(lines)
+
+
+def table_probe_ci(review: dict[str, Any]) -> str:
+    """Frozen-probe retention with a percentile interval over fit/score splits."""
+    models = list(review["probe"])
+    ref = review["probe"][models[0]]["rows"]
+    lines = [
+        r"\begin{tabular}{l" + "rl" * len(models) + "}",
         r"\toprule",
         " & " + " & ".join(rf"\multicolumn{{2}}{{c}}{{{m}}}" for m in models) + r" \\",
-        "".join(rf"\cmidrule(lr){{{2 + 2 * i}-{3 + 2 * i}}}" for i in range(len(models))),
-        "bits/param & " + " & ".join(
-            r"$d'$ kept & harmful" for _ in models) + r" \\",
+        "".join(rf"\cmidrule(lr){{{2 + 2 * i}-{3 + 2 * i}}}"
+                for i in range(len(models))),
+        "bits & " + " & ".join(r"kept (\%) & 95\% CI" for _ in models) + r" \\",
         r"\midrule",
     ]
     for row in ref:
-        cells = []
+        cells: list[str] = []
         for model in models:
-            t = next((r for r in data["transfer"][model]["rows"]
-                      if abs(r["bits"] - row["bits"]) < 1e-6), None)
-            b = next((r for r in data["behavioural"][model]["rows"]
-                      if abs(r["bits"] - row["bits"]) < 1e-6), None)
-            cells += [pct(t["retained"], 0) if t else "--",
-                      pct(b["unsafe_judge"]) if b else "--"]
+            m = next((r for r in review["probe"][model]["rows"]
+                      if r["scheme"] == row["scheme"]), None)
+            if m is None:
+                cells += ["--", "--"]
+                continue
+            cells += [f"{100 * m['retained_mean']:.0f}",
+                      f"[{100 * m['retained_ci_low']:.0f}, "
+                      f"{100 * m['retained_ci_high']:.0f}]"]
         lines.append(f"{bits_label(row['bits'])} & " + " & ".join(cells) + r" \\")
+    lines += [r"\bottomrule", r"\end{tabular}"]
+    return "\n".join(lines)
+
+
+def table_marker_decomposition(review: dict[str, Any]) -> str:
+    """Both factors of the paired flip, so the non-monotonicity is legible."""
+    model = "Qwen2.5-3B"
+    rows = review["marker_decomposition"][model]
+    lines = [
+        r"\begin{tabular}{lrrrrrr}",
+        r"\toprule",
+        r"& & \multicolumn{2}{c}{4.5 bits} & \multicolumn{2}{c}{2.5 bits} \\",
+        r"\cmidrule(lr){3-4}\cmidrule(lr){5-6}",
+        r"marker list & FP16 refusals & complies & flips & complies & flips \\",
+        r"\midrule",
+    ]
+    for r in rows:
+        s = r["schemes"]
+        name = r["variant"].replace("_", r"\_").replace("+", r"$+$")
+        lines.append(
+            f"{name} & {r['fp16_refusals']} & "
+            f"{s['RTN_4B']['rung_compliances']} & {s['RTN_4B']['flips']} & "
+            f"{s['RTN_2B']['rung_compliances']} & {s['RTN_2B']['flips']} " + r"\\")
     lines += [r"\bottomrule", r"\end{tabular}"]
     return "\n".join(lines)
 
@@ -136,18 +192,24 @@ def table_probe(data: dict[str, Any]) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--data", type=Path, default=Path("docs/paper/data.json"))
+    ap.add_argument("--review", type=Path,
+                    default=Path("docs/paper/review_stats.json"))
     ap.add_argument("--out", type=Path, default=Path("docs/paper/tables"))
     args = ap.parse_args()
 
     data = json.loads(args.data.read_text(encoding="utf-8"))
+    review = json.loads(args.review.read_text(encoding="utf-8"))
     args.out.mkdir(parents=True, exist_ok=True)
-    for name, builder in (
-        ("tab_artifact", table_artifact),
-        ("tab_capability", table_capability),
-        ("tab_markers", table_markers),
-        ("tab_probe", table_probe),
+    for name, builder, source in (
+        ("tab_artifact", table_artifact, review),
+        ("tab_markers", table_markers, data),
+        ("tab_transitions", table_transitions, review),
+        ("tab_capability", table_capability_paired, review),
+        ("tab_probe", table_probe_ci, review),
+        ("tab_marker_decomp", table_marker_decomposition, review),
     ):
-        (args.out / f"{name}.tex").write_text(builder(data) + "\n", encoding="utf-8")
+        (args.out / f"{name}.tex").write_text(
+            builder(source) + "\n", encoding="utf-8")
         print(f"  {name}.tex")
     return 0
 

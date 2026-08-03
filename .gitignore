@@ -111,3 +111,37 @@ docs/paper/*.fls
 docs/paper/*.log
 docs/paper/*.out
 docs/paper/*.toc
+
+# Private documents: the proposal and its build are the author's, not part of
+# the paper release. These have twice been swept in by a broad `git add`.
+docs/paper/*proposal*
+docs/paper/*Proposal*
+docs/paper/proposal.tex
+
+# Superseded drafts and their figures. The released paper is
+# docs/paper/cliff_artifact.tex; anything that was an earlier route to it is
+# kept locally and not published.
+docs/paper/main.tex
+docs/paper/figures/generate_figures.py
+docs/paper/figures/fig_decoupling.*
+docs/paper/figures/fig_metrics.*
+docs/paper/figures/fig_normalized.*
+docs/paper/figures/fig_pipeline.*
+docs/paper/figures/fig_scheme_progression.*
+docs/paper/figures/fig_thresholds.*
+
+# Superseded planning and theory documents. These describe the earlier
+# defense-system and rate-distortion direction, whose headline claims did not
+# survive measurement. Kept locally for provenance; not part of the release.
+docs/theorems.md
+docs/math.md
+docs/pivot_plan_2026-08.md
+docs/preregistration.md
+docs/cliffguard_complete_guide.md
+docs/what_is_it.md
+docs/architecture.md
+docs/engineering_reference.md
+docs/theory_panel_2026-08.md
+docs/corrections_2026-08-03.md
+docs/results_colab.md
+verified_citations.md

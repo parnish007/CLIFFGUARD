@@ -1,184 +1,65 @@
-# Claims, Evidence Status, and the Path to Publication
+# Claims and Evidence
 
-**Date:** 2026-08-03 (was 2026-08-02)
-**Purpose:** one page that says exactly what we claim, what is proven, what the code measures, and
-what remains. Update the evidence column as results land; never let a claim's status drift.
+One page stating exactly what is claimed, what the evidence is, and what is not
+claimed. The paper is [`paper/cliff_artifact.pdf`](paper/cliff_artifact.tex);
+every number below is generated into `paper/review_stats.json` or
+`paper/data.json` by the script named beside it.
 
----
-
-## 0. The single most important line in this document
-
-> **RTN quantization produces a safety cliff between 5 and 3 bits that a linear
-> refusal probe substantially understates. Four earlier headline findings were
-> retracted on 2026-08-03 after adversarial review.**
-
-Read [`corrections_2026-08-03.md`](corrections_2026-08-03.md) before citing
-anything here. In brief, the first pass was measured against a corpus partition
-that agrees with the model's own behaviour only **52.4 %** of the time —
-`download_fold_a.py` labels by whether hh-rlhf's *rejected response* contains a
-refusal marker, which is a property of the response, not the prompt. Every
-"harmful"/"benign" statement built on it was false.
-
-With model-derived labels (`scripts/run_behavioural_ladder.py`, 500 prompts,
-real generations from every rung):
-
-| bits | coherent unsafe flips | frozen-probe d′ retained |
-|---|---|---|
-| 5 | 3.2 % | 99.0 % |
-| 4 | 15.2 % | 99.4 % |
-| 3 | **48.0 %** | 87.3 % |
-| 2 | 0 % (100 % degenerate) | −2.4 % |
-
-At 3 bits the model has stopped refusing on nearly half the prompts it
-previously refused, while the probe still reports 87 % of its separating power.
-**Probe metrics are not valid safety certificates for quantized checkpoints.**
-
-At 2 bits the model degenerates entirely — a *capability* failure, reported
-separately. Merging it with safety failure produces a false 93.8 % unsafe-flip
-rate, which an earlier version of this work did.
+**Measurement scope for the whole table.** Round-to-nearest, group 64, applied to
+transformer-block linear layers; embeddings and output head at FP16. 500 paired
+first-turn HH-RLHF prompts. Greedy decoding, 48 new tokens. Refusal labels come
+from Qwen2.5-7B-Instruct loaded in 4-bit, behind a composite degeneracy gate.
+Comparisons are always against the *same model at FP16 on the same prompts*.
 
 ---
 
-## 1. The claims
+## Claims the evidence supports
 
-### Tier 1 — the headline claims (what the paper is about)
-
-| # | Claim | Type | Status |
+| # | Claim | Evidence | Source |
 |---|---|---|---|
-| **C1** | Quantization degrades behaviour by **inflating variance** on the behavioural subspace. | Mechanism | **Consistent, not established.** The frozen FP16 readout decays 100 % → 99.4 % → 87.3 % → −2.4 % across 8/4/3/2 bits, which Theorem 1 permits. The earlier "rotation and degradation are decoupled" claim was withdrawn: it compared a refit probe against a refit probe. |
-| **C2** | Discriminability follows `d'(q) = d'₀(1+η_q)^(−1/2)`, with η measurable from weights and benign activations. | Predictive law | **Not refuted; imprecisely calibrated.** F5's η(weights)/η(d′) ratio spans **9.2×** under model-derived labels, down from the 374× reported against the bad partition. η remains an `eta_proxy` over 14 `down_proj` matrices, not total perturbation. |
-| **C3** | The cliff is a **threshold-crossing artifact**; `d'(b)` is smooth. | Shape claim | **Untested.** `b*` is undefined because the operating-point model does not apply to a generative refusal decision. The behavioural cliff between 5 and 3 bits is real but is not shown to be a threshold artifact. |
-| **C4** | Sector ordering: different behaviours break at different, predictable bit-widths. | Ordering law | **In progress.** GSM8K arm running (`scripts/run_sector_ladder.py`); scored against gold answers, so it does not inherit the corpus defect. |
-| **C5** | Isotropy is a property of the quantizer. | Conjecture | **Premise false; effect measured but reinterpreted.** RTN is not isotropic. At identical bit budget, salience-aware quantization rotates the direction 22–26 % less while injecting more total projected error. The `irrecoverable_fraction` evidence is **withdrawn** — it is identically cos²(θ/2). |
-| **A3** | `η(b) = η₄ · 4^(4−b)`. | Assumption | **NOT rejected.** The earlier rejection was an artifact: the quantizer uses `levels = 2^b − 1`, so fitting the *theoretical* sequence gives 4.3429 against a measured 4.3552. The number is the implementation's arithmetic. |
+| 1 | Inside the coherent quantized band, lower precision produces **more** refusal, at **1.15 points/bit** removed, 95% CI **[0.75, 1.55]** | Prompt-level cluster bootstrap, 10,000 replicates, free-intercept fit over each model's coherent band. Per model: Qwen2.5-3B 1.00 [0.44, 1.58]; Phi-3.5-mini 1.29 [0.86, 1.74] | `review_reanalysis.py` → `drift` |
+| 2 | Refusal is **inert** from FP16 down to 8.5 bits | +0.4 pp (Qwen2.5-3B), +0.2 pp (Phi-3.5-mini). Extrapolating the band fit back to 16 bits undershoots the observed FP16 rate by 7.5 and 10.9 pp respectively | `review_reanalysis.py` → `drift.*.anchor_error_pp` |
+| 3 | Significant paired shifts run **toward** refusal | Qwen2.5-3B at 4.5 bits: 32 new refusals vs 11 new compliances, Holm-adjusted *p* = 0.011; at 5.5 bits *p* = 0.033. Phi-3.5-mini at 4.5 bits: 21 vs 4, *p* = 0.005; at 3.5 bits 41 vs 1, *p* < 0.001 | `review_reanalysis.py` → `transitions` |
+| 4 | Refusal→compliance transitions stay **≤ 2.2%**, with a **4.6%** simultaneous 95% upper bound | Exact Clopper–Pearson one-sided bounds; simultaneous version Bonferroni-adjusted over all 14 model×rung cells | `review_reanalysis.py` → `transitions.*.upper95_simultaneous` |
+| 5 | Phrase-list scoring of identical completions reports up to **38.4%** | Tight marker list, perplexity-only gate, Qwen2.5-3B at 2.5 bits | `classify_completions_judge.py` |
+| 6 | The artifact has **two separable causes** | Where degeneracy is 0.0% both gates admit identical completions and the gap is grader-only (10.8% vs 2.2% at 4.5 bits). At 2.5 bits the gate is the whole story (38.4% NLL-gate vs 0.2% composite-gate, same markers) | `review_reanalysis.py` → `gate_by_grader` |
+| 7 | The phrase-list estimator is **non-monotone** in its marker list | It is a paired flip whose two indicators move oppositely as the list grows. Qwen2.5-3B, list 25→34 strings: FP16 refusals 223→306 while 2.5-bit compliances stay pinned at 422, so flips rise 192→263; at 4.5 bits flips go 54, 58, 71, 57 | `review_reanalysis.py` → `marker_decomposition` |
+| 8 | Marker choice alone moves the estimate up to **1.38×** (Qwen2.5-3B) and **1.64×** (Phi-3.5-mini) | Four marker lists, identical completions | `data.json` → `marker_variants` |
+| 9 | Perplexity alone cannot detect degeneration, and fails in the direction that matters | Qwen2.5-3B median NLL at 2.5 bits is 4.13, *lower* than 3.5 bits at 5.80. NLL-only flags 15.6% of 2.5-bit completions; composite flags 99.8% | `reanalyse_runs.py` |
+| 10 | A frozen refusal probe retains **96–100%** across 8.5–4.5 bits on all three models | Difference-in-means direction fitted on one prompt half, scored on a disjoint half, 200 synchronized splits | `review_reanalysis.py` → `probe` |
+| 11 | Capability collapses at a **model-specific** bit-width, one full bit apart | Qwen2.5-3B and Qwen2.5-1.5B destroyed at 3.5 bits (*p*<sub>Holm</sub> < 0.001 and 0.0003); Phi-3.5-mini indistinguishable from FP16 at 3.5 bits, collapses at 2.5 | `review_reanalysis.py` → `gsm8k` |
+| 12 | The judge's three labels are separable by first-token argmax | Each label is two tokens under the Qwen2.5 tokenizer, but the first tokens are distinct: ids 38029 / 7682 / 75255. Asserted at load time | `classify_completions_judge.py` |
 
-### Tier 2 — the limits (what cannot be done)
+## Claims explicitly **not** made
 
-| # | Claim | Type | Status |
-|---|---|---|---|
-| **C6** | Threshold recalibration **cannot** restore lost discriminability. | Proved (i) | **Proved for a single threshold** (moving it slides along the ROC). The "99 % of damage is orthogonal" corroboration is **withdrawn**: that statistic is identically cos²(θ/2), and it decomposes two aggregate unit directions rather than per-example score noise, so it says nothing about recoverability. Note also that d′ is invariant only under a *common positive affine* rescaling, not under arbitrary monotone maps — that is an AUC property, and the module docstring claiming otherwise has been corrected. |
-| **C7** | No function of a **frozen quantized checkpoint alone** can uniformly recover FP16 behaviour (DPI + quantization-cell collision). | Proved (i) | **Proved** |
-| **C8** | Quantization error is **deterministic** given the weights, so self-consistency / repeated sampling cannot average it away. | Proved (i) | **Proved** (refutes our own earlier `d'√T` conjecture) |
-
-### Tier 3 — the cure (what can be recovered)
-
-| # | Claim | Type | Status |
-|---|---|---|---|
-| **C9** | A **rank-k sidecar** `v = r̂ᵀ(W − W_q)` saved *before* quantization restores the projected margin exactly, at ~180 KB for k=1. DPI does not bind because ΔW and a(x) are outside the bottleneck. | Proved (i) construction | **Proved on paper; not implemented or measured** |
-| **C10** | Margin error ε propagates to decision disagreement bounded by `F(τ+ε) − F(τ−ε) ≈ 2εf(τ)`. | Proved (ii) | **Proved**; numerically verified |
-| **C11** | *(Conjecture 8)* A sidecar of `Θ(k·d·L·log(R/ε))` bits suffices, and nothing using `W_q` alone attains it. | **Conjecture** | Achievability sketched; **converse open — do not claim** |
-
-**We do not claim** to beat Q-resafe / Q-realign / CAQ on safety restoration. C9 is a *mechanism
-test*, not a product. Say so in the paper.
-
----
-
-## 2. What the system actually measures
-
-Concretely, module by module — this is the honest inventory of the instrument.
-
-| Module | Input | Output | Serves |
-|---|---|---|---|
-| `eval/noise_floor.py` | activation matrices per class, per scheme | split-half estimator noise floor (50 splits, two scaling corrections); **paired bootstrap CI** for the cross-scheme rotation with synchronous resampling | **C0 gate**, C1 |
-| `eval/isotropy.py` | two direction vectors | rotation angle, excess kurtosis of perturbation vs direction, concentration z-scores vs a matched-magnitude isotropic null, parallel/orthogonal split, irrecoverable fraction | C1, C5, C6 |
-| `eval/discriminability.py` | class-conditional margin samples | `d'` with bootstrap CI, AUC (empirical + Gaussian-model), **`gaussianity_gap`** (assumption A2 check), `predict_d_prime`, `implied_eta` | C2 |
-| `eval/noise_spectrum.py` | FP16 + quantized weights (+ benign activations) | per-matrix projected perturbation variance, `eta_proxy` (labelled as a proxy), `eta_empirical`, effective bits/param (payload + whole-file), fitted exponent with CI | C2, A3 |
-| `eval/composition.py` | `d'₀`, `η₄`, composition rule | `predict_collapse` per sector, `chain_bit_cost`, `sector_ordering`, closed-form `b*` | C3, C4 |
-| `eval/threshold_calibrator.py` | benign scores | tail-correct thresholds (fires-high/low), conservative same-sample FPR | infrastructure (D0 fixed) |
-| `scripts/verify_gguf_pair.py` | two GGUF paths | tensor-name/shape correspondence, per-tensor dequantization with peak-RSS | A3 plumbing |
-
-**Not yet built:** the sidecar (C9/C10) and the ladder builder. Stages 2 and 6 of the plan.
-
-**What it does not measure, and must:** real model *responses*. Everything above is
-representation-level. `Δ_B-cliff` was never behavioural (defect D3), and until completions are
-generated and scored, no behavioural claim is supported.
-
----
-
-## 3. What remains, to prove each claim
-
-Ordered by dependency. **C0 blocks everything.**
-
-| Step | Proves | Work | Compute | Blocks |
-|---|---|---|---|---|
-| **C0** | gate for all | Run `stage0_noise_floor_and_isotropy.ipynb` on the real Fold A corpus. Paired bootstrap must exclude zero. | ~1 h, T4 | **everything** |
-| **S1** | C5 | Quantize the same model with AWQ/GPTQ; rerun `isotropy.py`. Compare z against NF4's. | ~½ day | C1 scope |
-| **S2** | A3, C2 | Build matched GGUF ladder (F16→Q2_K, one checkpoint, one pinned llama.cpp, always from F16). Measure `η_q` per scheme; **fit** the exponent, report CI. | ~1 day | C3, C4 |
-| **S3** | C2 | Save **raw margin distributions** per scheme. Compute `d'`, `gaussianity_gap`. Compare weights-measured `η` vs `implied_eta` from `d'` decay. | ~1 day | — |
-| **S4** | C3 | Fit `b*` on part of the ladder; **predict the rest without refitting**. | ~2 h | — |
-| **S5** | C4 | GSM-Infinite across depth × precision. Test `b*(4T) − b*(T) = 1`. Separate semantic depth from token count. | 20–60 GPU-h | — |
-| **S6** | C1 behavioural | **Generate real completions**; score with StrongREJECT + human audit on a stratified sample. Replaces the D3 proxy. | ~4 h + GPU | any behavioural claim |
-| **S7** | C9, C10 | Implement the sidecar; measure recovery fraction **against a random-direction matched-norm control**. | ~1 day | — |
-
-**Critical-path minimum for a paper: C0 → S1 → S2 → S3 → S4.** That is roughly two weeks and
-supports C1, C2, C3, C5. S5 adds C4 (generality). S6 is required before any behavioural language.
-
----
-
-## 4. How to record
-
-**Pre-registration first.** Before S2 runs, freeze:
-- the assumption tests and their pass thresholds (A2 gap ≤ 0.05; exponent CI vs 4),
-- the collapse criterion (relative retention `c`, not an absolute bar),
-- the falsifiers F1–F8 from `docs/theorems.md` §7,
-- the analysis plan (paired tests, CIs, multiplicity policy).
-
-File it as a **dated amendment** to `docs/preregistration.md` with a change table — never a silent
-edit (defect D14). Label all existing Fold A/B artifacts **pilot/exploratory**, not confirmatory.
-
-**Per-run provenance.** Every run records: git SHA, model revision hash, quantizer commit,
-imatrix hash, tokenizer hash, prompt-manifest hash, decoding config, seeds. `eval/repro.py` already
-does most of this — extend it to the ladder.
-
-**Raw artifacts, not summaries.** Save per-prompt margins, per-cell responses, and per-tensor
-spectra. The D3 failure happened partly because only thresholds were persisted.
-
-**Negative results in the same file as positive ones.** F1–F8 each get a row whether they fire or
-not.
-
----
-
-## 5. How to publish
-
-**Title (working):** *Behavioural Rate–Distortion for Quantized Language Models: a
-noise-and-composition law for where capabilities collapse.*
-
-**Three-claim structure:** impossibility (C6–C8) → law (C2–C4) → construction (C9–C10). Safety
-motivates; **at least one non-safety behaviour is required** to justify generality — that is why S5
-exists.
-
-**Must engage directly, not footnote:**
-- arXiv:2508.18609 — the nearest prior work. Differentiate on *mechanism* (theirs is NLS curve
-  fitting) and on *shape* (a smooth power law cannot produce a cliff).
-- arXiv:2606.10154 vs arXiv:2606.29581 — the contradiction C5 resolves.
-- Q-resafe / Q-realign / CAQ — position C9 as a mechanism test, not a competitor.
-- LiteLMGuard, Arditi, Zhao — prior art for the components.
-
-**Venue, honestly.** ICLR/ICML/NeurIPS is reachable **only if** the law predicts out-of-sample
-across ≥2 model families and ≥2 behaviours and the comparison to the above is serious. Otherwise
-TMLR or ACL Findings. A NeurIPS/ICML/ICLR workshop on efficient inference or trustworthy ML is the
-right first target — "why does this correction work" is native framing there. Not S&P/CCS/USENIX:
-there is no coherent systems threat model left after the scope cut, and that is fine.
-
-**Release:** matched ladder manifests, per-prompt margins, sidecar vectors, notebooks, and the
-falsifier table. The artifact is part of the contribution.
-
----
-
-## 6. The failure branches, decided in advance
-
-| If | Then |
+| Not claimed | Why |
 |---|---|
-| **C0 null** (rotation inside the noise floor) | Retract the geometric claim publicly. The theorem *predicts* direction retention, so this is consistent with it — but C1 becomes unproven and the paper leads with C2/C3 measured behaviourally instead. Re-test with larger n (floor scales as 1/√n). |
-| **A2 fails** (gap ≫ 0.05) | Closed-form TPR predictions are void. `d'` and the ordering survive; drop the sigmoid-shape specifics. |
-| **Exponent CI excludes 4** | A3 is wrong for k-quants. Report the measured base — this is a *result*, and Theorem 2's `b*` just takes the fitted value. |
-| **AWQ also isotropic** | C5 refuted. The literature split must come from judges/corpora — worth publishing as a correction. |
-| **η(weights) ≠ η(d′)** | **C2's mechanism is refuted.** This is the central falsifier. Report it; it bounds where noise abstractions of quantization are valid. |
-| **Sidecar ≈ random control** | C9's causal-sufficiency premise fails for this readout. Delimits the whole class of "safety direction patch" proposals — genuinely useful. |
+| "Harmful compliance stays below 2.2%" | The prompts carry no per-prompt harmfulness annotation. What is measured is a change in the model's own decision. A baseline refusal may be an over-refusal of a benign prompt, in which case the quantized model's compliance is a correction, not a failure |
+| "Quantization does not reduce safety" | A non-significant test is not evidence of no effect. The defensible form is bounded: the transition rate is below 4.6% at every rung simultaneously |
+| "Capability failure precedes fluency failure" | Qwen2.5-3B at 4.5 bits falls 18.5% → 11.5% with zero degenerate output, but paired exact McNemar gives *p* = 0.020 and *p*<sub>Holm</sub> = 0.100. Not significant at *n* = 200 |
+| "κ = 1.15 is universal" / "a third model outside [0.75, 1.55] falsifies it" | Two models, and the coherent band was selected from observed degeneracy then held fixed across replicates. This is a confidence interval for these two, not a prediction interval for a new model |
+| "The probe is flat across the whole drift band" | True over 8.5–4.5 bits on all three models. False for Phi-3.5-mini's full band, which reaches 3.5 bits where retention is already 63% |
+| "Probe intervals are confidence intervals" | They are split-to-split dispersion over one fixed prompt set. A confidence interval would need probe refitting inside an outer prompt bootstrap |
+| Anything about AWQ, GPTQ, GGUF k-quants, or mixed precision | One quantizer family was tested, deliberately, so that only bit-width varies |
+| Anything about sampled decoding, long completions, or non-English prompts | Greedy, 48 tokens, English |
+| That the bit-width selection rule in the paper's §9.2 improves deployments | It is stated as a testable design hypothesis. Every quantity in it is measured here; whether optimising against them beats the conventional rule is untested |
 
-Every branch has a publishable outcome. That is the point of pre-registering them.
+## Open work, in priority order
 
----
-
-*Companion documents: `docs/theorems.md` (formal statements + falsifiers), `docs/pivot_plan_2026-08.md`
-(execution), `docs/research_audit_2026-08.md` (defects D0–D15), `docs/build_log.md` (agent cross-review).*
+1. **Blinded human validation of the judge.** ~200–300 completions, stratified to
+   oversample judge/phrase disagreements, the 4.5-bit rung, high-NLL outputs,
+   non-English outputs, `unclear` verdicts, and completions opening with a
+   disclaimer. Without this the paper compares two fallible estimators rather
+   than establishing which is right. This is the single largest gap.
+2. **A 256-token replication** at FP16, 5.5 and 4.5 bits. The 48-token budget
+   structurally favours observing refusal intact; this is the cheapest test of
+   whether the direction survives.
+3. **Regrade Qwen2.5-1.5B with the 7B judge** so it joins the refusal arm. Its
+   completions are stored; the blocker is that the run predates
+   `completion_nll.json`, so the FP16 reference NLL must be recomputed on GPU.
+4. **A second independent judge** from a different model family, with a confusion
+   matrix against the first.
+5. **A blinded audit of gate-removed completions**, to bound the
+   outcome-dependent censoring rather than argue around it.
+6. **A harmfulness-labelled suite** plus an over-refusal suite, which together
+   would license the stronger safety vocabulary this paper avoids.

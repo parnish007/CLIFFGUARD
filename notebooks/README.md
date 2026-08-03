@@ -33,12 +33,12 @@ and they are the entire contents of the notebook.
 | **B** | `Qwen/Qwen2.5-3B-Instruct` | 6.2 GB fp16 against 5.7 GB free locally |
 | **C** | `microsoft/Phi-3.5-mini-instruct` | 7.6 GB fp16 |
 
-**Arm A is the one that matters.** Every safety number this project has produced
-came from an instrument that failed:
+**Arm A is the one that matters.** A refusal measurement is only as good as its
+grader, and two cheap graders are demonstrably unusable here:
 
-- a refusal **phrase list** — the reported flip rate moved between 10.4 % and
-  48.0 % depending on which strings it contained;
-- a 1.5 B **self-judge** — saturated at 100 % REFUSE, including on plainly
+- a refusal **phrase list** — the reported flip rate moves by up to 1.64x with
+  the choice of strings alone, and is not even monotone in that choice;
+- a 1.5 B **self-judge** — saturates at 100 % REFUSE, including on plainly
   helpful answers.
 
 A 7 B judge is the smallest instrument with a plausible chance of doing better.
@@ -80,8 +80,8 @@ manifest, and one line is appended to `artifacts/runs/INDEX.md`.
 |---|---|
 | [`colab_run.ipynb`](colab_run.ipynb) | **Current.** The hosted-GPU runner described above. |
 | [`stage0_noise_floor_and_isotropy.ipynb`](stage0_noise_floor_and_isotropy.ipynb) | Stage 0 in isolation — the rotation-replication gate and isotropy test. Diagnostic, not part of the main run. |
-| [`cliffguard_colab.ipynb`](cliffguard_colab.ipynb) | Pre-pivot notebook for the original gate-stack design. Kept for provenance; its labels share the corpus defect described in `docs/claims_and_evidence.md`. |
-| [`colab_helper.py`](colab_helper.py) | Helpers for the pre-pivot notebook. |
+| [`cliffguard_colab.ipynb`](cliffguard_colab.ipynb) | Superseded notebook for an earlier design. Kept locally for provenance; its labels come from a corpus partition that agrees with model behaviour only 52.4 % of the time. Not part of the release. |
+| [`colab_helper.py`](colab_helper.py) | Helpers for that superseded notebook. |
 
 ---
 

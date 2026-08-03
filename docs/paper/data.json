@@ -314,70 +314,63 @@
           "bits": 16.0,
           "accuracy": 0.235,
           "n_correct": 47,
-          "ci_low": 0.17807073460068765,
-          "ci_high": 0.29996187264724905,
-          "degenerate": 0.0,
-          "p_vs_fp16": null
+          "ci_low": 0.1780707346006876,
+          "ci_high": 0.2999618726472491,
+          "degenerate": 0.0
         },
         {
           "scheme": "RTN_8B",
           "bits": 8.5,
           "accuracy": 0.235,
           "n_correct": 47,
-          "ci_low": 0.17807073460068765,
-          "ci_high": 0.29996187264724905,
-          "degenerate": 0.0,
-          "p_vs_fp16": 1.0
+          "ci_low": 0.1780707346006876,
+          "ci_high": 0.2999618726472491,
+          "degenerate": 0.0
         },
         {
           "scheme": "RTN_7B",
           "bits": 7.5,
           "accuracy": 0.23,
           "n_correct": 46,
-          "ci_low": 0.1735808628015912,
-          "ci_high": 0.2946063945659807,
-          "degenerate": 0.0,
-          "p_vs_fp16": 0.9335943827932196
+          "ci_low": 0.17358086280159127,
+          "ci_high": 0.2946063945659808,
+          "degenerate": 0.0
         },
         {
           "scheme": "RTN_6B",
           "bits": 6.5,
           "accuracy": 0.24,
           "n_correct": 48,
-          "ci_low": 0.18257190389247274,
-          "ci_high": 0.3053062856471394,
-          "degenerate": 0.0,
-          "p_vs_fp16": 0.8676199708929768
+          "ci_low": 0.1825719038924728,
+          "ci_high": 0.3053062856471396,
+          "degenerate": 0.0
         },
         {
           "scheme": "RTN_5B",
           "bits": 5.5,
           "accuracy": 0.285,
           "n_correct": 57,
-          "ci_low": 0.22355439801068505,
+          "ci_low": 0.223554398010685,
           "ci_high": 0.3529426997515398,
-          "degenerate": 0.0,
-          "p_vs_fp16": 0.09587529627911007
+          "degenerate": 0.0
         },
         {
           "scheme": "RTN_4B",
           "bits": 4.5,
           "accuracy": 0.25,
           "n_correct": 50,
-          "ci_low": 0.19160716962258748,
+          "ci_low": 0.19160716962258753,
           "ci_high": 0.3159628333298691,
-          "degenerate": 0.0,
-          "p_vs_fp16": 0.6170479758630081
+          "degenerate": 0.0
         },
         {
           "scheme": "RTN_3B",
           "bits": 3.5,
           "accuracy": 0.09,
           "n_correct": 18,
-          "ci_low": 0.054214254456096365,
+          "ci_low": 0.05421425445609637,
           "ci_high": 0.13850820847382211,
-          "degenerate": 0.0,
-          "p_vs_fp16": 1.5754227032227007e-07
+          "degenerate": 0.0
         },
         {
           "scheme": "RTN_2B",
@@ -386,8 +379,7 @@
           "n_correct": 0,
           "ci_low": 0.0,
           "ci_high": 0.018275340355136237,
-          "degenerate": 1.0,
-          "p_vs_fp16": 8.682322034821773e-24
+          "degenerate": 1.0
         }
       ],
       "run": "20260803-150456_281e256_sector-ladder-gsm8k"
@@ -402,40 +394,36 @@
           "bits": 16.0,
           "accuracy": 0.185,
           "n_correct": 37,
-          "ci_low": 0.13372866017976165,
+          "ci_low": 0.1337286601797617,
           "ci_high": 0.2458634624486785,
-          "degenerate": 0.0,
-          "p_vs_fp16": null
+          "degenerate": 0.0
         },
         {
           "scheme": "RTN_8B",
           "bits": 8.5,
           "accuracy": 0.195,
           "n_correct": 39,
-          "ci_low": 0.1424918747790589,
-          "ci_high": 0.2567856875265592,
-          "degenerate": 0.0,
-          "p_vs_fp16": 0.7156724023511811
+          "ci_low": 0.14249187477905884,
+          "ci_high": 0.25678568752655917,
+          "degenerate": 0.0
         },
         {
           "scheme": "RTN_7B",
           "bits": 7.5,
           "accuracy": 0.185,
           "n_correct": 37,
-          "ci_low": 0.13372866017976165,
+          "ci_low": 0.1337286601797617,
           "ci_high": 0.2458634624486785,
-          "degenerate": 0.0,
-          "p_vs_fp16": 1.0
+          "degenerate": 0.0
         },
         {
           "scheme": "RTN_6B",
           "bits": 6.5,
           "accuracy": 0.175,
           "n_correct": 35,
-          "ci_low": 0.12502441077371187,
+          "ci_low": 0.1250244107737119,
           "ci_high": 0.23488397063020913,
-          "degenerate": 0.0,
-          "p_vs_fp16": 0.7849127755427248
+          "degenerate": 0.0
         },
         {
           "scheme": "RTN_5B",
@@ -444,18 +432,16 @@
           "n_correct": 36,
           "ci_low": 0.12936892834839725,
           "ci_high": 0.24038109688400744,
-          "degenerate": 0.0,
-          "p_vs_fp16": 0.9275211645497009
+          "degenerate": 0.0
         },
         {
           "scheme": "RTN_4B",
           "bits": 4.5,
           "accuracy": 0.115,
           "n_correct": 23,
-          "ci_low": 0.07431337369229704,
+          "ci_low": 0.07431337369229708,
           "ci_high": 0.1675469444822539,
-          "degenerate": 0.0,
-          "p_vs_fp16": 0.010443608069154502
+          "degenerate": 0.0
         },
         {
           "scheme": "RTN_3B",
@@ -464,8 +450,7 @@
           "n_correct": 0,
           "ci_low": 0.0,
           "ci_high": 0.018275340355136237,
-          "degenerate": 0.48,
-          "p_vs_fp16": 2.3303324805020865e-18
+          "degenerate": 0.48
         },
         {
           "scheme": "RTN_2B",
@@ -474,8 +459,7 @@
           "n_correct": 1,
           "ci_low": 0.00012658102786701836,
           "ci_high": 0.027541898457205637,
-          "degenerate": 0.32,
-          "p_vs_fp16": 1.1005491797353075e-16
+          "degenerate": 0.32
         }
       ],
       "run": "20260803-171823_0d3f097_colab-gsm8k-qwen3b"
@@ -490,30 +474,27 @@
           "bits": 16.0,
           "accuracy": 0.265,
           "n_correct": 53,
-          "ci_low": 0.2052390913859231,
-          "ci_high": 0.3318700922086181,
-          "degenerate": 0.0,
-          "p_vs_fp16": null
+          "ci_low": 0.20523909138592306,
+          "ci_high": 0.331870092208618,
+          "degenerate": 0.0
         },
         {
           "scheme": "RTN_8B",
           "bits": 8.5,
           "accuracy": 0.25,
           "n_correct": 50,
-          "ci_low": 0.19160716962258748,
+          "ci_low": 0.19160716962258753,
           "ci_high": 0.3159628333298691,
-          "degenerate": 0.0,
-          "p_vs_fp16": 0.6889000701019239
+          "degenerate": 0.0
         },
         {
           "scheme": "RTN_7B",
           "bits": 7.5,
           "accuracy": 0.28,
           "n_correct": 56,
-          "ci_low": 0.2189611556700331,
+          "ci_low": 0.21896115567003305,
           "ci_high": 0.3476887372046082,
-          "degenerate": 0.0,
-          "p_vs_fp16": 0.6310485311927556
+          "degenerate": 0.0
         },
         {
           "scheme": "RTN_6B",
@@ -522,38 +503,34 @@
           "n_correct": 54,
           "ci_low": 0.20980333746614532,
           "ci_high": 0.3371525906873306,
-          "degenerate": 0.0,
-          "p_vs_fp16": 0.8728136000136028
+          "degenerate": 0.0
         },
         {
           "scheme": "RTN_5B",
           "bits": 5.5,
           "accuracy": 0.25,
           "n_correct": 50,
-          "ci_low": 0.19160716962258748,
+          "ci_low": 0.19160716962258753,
           "ci_high": 0.3159628333298691,
-          "degenerate": 0.0,
-          "p_vs_fp16": 0.6889000701019239
+          "degenerate": 0.0
         },
         {
           "scheme": "RTN_4B",
           "bits": 4.5,
           "accuracy": 0.265,
           "n_correct": 53,
-          "ci_low": 0.2052390913859231,
-          "ci_high": 0.3318700922086181,
-          "degenerate": 0.0,
-          "p_vs_fp16": 1.0
+          "ci_low": 0.20523909138592306,
+          "ci_high": 0.331870092208618,
+          "degenerate": 0.0
         },
         {
           "scheme": "RTN_3B",
           "bits": 3.5,
           "accuracy": 0.25,
           "n_correct": 50,
-          "ci_low": 0.19160716962258748,
+          "ci_low": 0.19160716962258753,
           "ci_high": 0.3159628333298691,
-          "degenerate": 0.015,
-          "p_vs_fp16": 0.6889000701019239
+          "degenerate": 0.015
         },
         {
           "scheme": "RTN_2B",
@@ -562,8 +539,7 @@
           "n_correct": 0,
           "ci_low": 0.0,
           "ci_high": 0.018275340355136237,
-          "degenerate": 0.975,
-          "p_vs_fp16": 2.5305362855291533e-27
+          "degenerate": 0.975
         }
       ],
       "run": "20260803-181927_0d3f097_colab-gsm8k-phi35"
