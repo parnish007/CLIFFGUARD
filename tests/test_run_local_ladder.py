@@ -347,3 +347,40 @@ def test_numpy_roundtrip_matches_torch_reference() -> None:
             codes = np.clip(np.round((block - lo) / scale), 0, 15)
             reference[row, start : start + 32] = codes * scale + lo
     assert np.allclose(out, reference, atol=1e-3)
+
+
+# ---------------------------------------------------------------------------
+# tail padding — found by adversarial review, docs/codex_review_2026-08-03.md
+# ---------------------------------------------------------------------------
+
+
+def test_padded_tail_group_is_quantized_on_its_own_range() -> None:
+    """Zero padding must not widen the final group's min/max.
+
+    When in_features is not a multiple of `group`, the last group is zero-padded
+    to full width. If those zeros enter the min/max, a tail whose real values do
+    not straddle zero gets a range stretched down to 0, coarsening the step for
+    every real weight in it. Measured before the fix on a tail with true range
+    [5, 6]: mean absolute error 0.0999 padded versus 0.0156 on its own range, a
+    6.4x inflation applied silently to the last group of every matrix.
+    """
+    w = torch.full((1, 96), 5.0, dtype=torch.float16)
+    w[0, 64:] = torch.linspace(5.0, 6.0, 32)
+
+    padded_tail = rtn_quantize_dequantize(w, bits=4, group=64)[0, 64:]
+    own_range = rtn_quantize_dequantize(w[:, 64:].clone(), bits=4, group=32)[0]
+
+    padded_err = float((padded_tail.float() - w[0, 64:].float()).abs().mean())
+    clean_err = float((own_range.float() - w[0, 64:].float()).abs().mean())
+    assert padded_err == pytest.approx(clean_err, abs=1e-6), (
+        f"tail error {padded_err:.6f} does not match unpadded {clean_err:.6f}; "
+        "padding is leaking into the group range"
+    )
+
+
+def test_padded_tail_reconstruction_stays_in_the_tail_range() -> None:
+    """A tail far from zero must not be dragged toward it by the padding."""
+    w = torch.full((2, 80), 3.0, dtype=torch.float16)
+    w[:, 64:] = 7.0
+    out = rtn_quantize_dequantize(w, bits=3, group=64)
+    assert float(out[:, 64:].float().min()) >= 6.9

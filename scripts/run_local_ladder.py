@@ -160,8 +160,21 @@ def rtn_quantize_dequantize(weight: Any, bits: int, group: int) -> Any:
         work = torch.nn.functional.pad(work, (0, pad))
     grouped = work.reshape(out_features, -1, group)
 
-    lo = grouped.amin(dim=-1, keepdim=True)
-    hi = grouped.amax(dim=-1, keepdim=True)
+    # The padded positions must NOT participate in the group's min/max. Zero
+    # padding widens the final group's range whenever the real values do not
+    # straddle zero, which coarsens the step for every real weight in that group.
+    # Measured on a tail whose true range was [5, 6]: mean absolute error 0.0156
+    # when quantized on its own range, 0.0999 when zero-padded into a full group
+    # -- a 6.4x inflation applied silently to the last group of every matrix.
+    if pad:
+        valid = torch.ones_like(work, dtype=torch.bool)
+        valid[:, in_features:] = False
+        valid_groups = valid.reshape(out_features, -1, group)
+        lo = torch.where(valid_groups, grouped, torch.inf).amin(dim=-1, keepdim=True)
+        hi = torch.where(valid_groups, grouped, -torch.inf).amax(dim=-1, keepdim=True)
+    else:
+        lo = grouped.amin(dim=-1, keepdim=True)
+        hi = grouped.amax(dim=-1, keepdim=True)
     levels = float(2**bits - 1)
     # Degenerate (constant) groups get scale 1 so that q rounds to 0 and the
     # group reconstructs exactly as `lo`, rather than dividing by zero.
@@ -993,8 +1006,19 @@ def main() -> int:  # noqa: C901 - a linear experiment script, split would obscu
     if len(usable) >= 4:
         split = len(usable) // 2
         train, test = usable[:split], usable[split:]
-        base = eta_fit.exponent if eta_fit is not None else 4.0
-        base_source = "fitted" if eta_fit is not None else "assumed 4.0 (no fit available)"
+
+        # BOTH parameters must come from the training rungs only. An earlier
+        # version took `base` from `eta_fit`, which is fitted over every rung
+        # including the held-out half, so the "out-of-sample" prediction was
+        # conditioned on the answers it was predicting.
+        train_measurements = {s: eta_measurements[s] for s, _ in train}
+        if len(train_measurements) >= 3:
+            train_fit = fit_eta_vs_bits_report(train_measurements)
+            base = train_fit.exponent
+            base_source = f"fitted on TRAIN rungs only ({len(train_measurements)} points)"
+        else:
+            base = 4.0
+            base_source = "assumed 4.0 (fewer than 3 training rungs)"
         eta_4 = float(np.median([eta_measurements[s].eta * (base ** (b - 4.0)) for s, b in train]))
         print(f"train (high precision): {[s for s, _ in train]}")
         print(f"test  (low precision) : {[s for s, _ in test]}")
