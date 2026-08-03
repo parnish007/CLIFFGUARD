@@ -36,11 +36,11 @@ def table_artifact(review: dict[str, Any]) -> str:
     a stronger result than the confounded version.
     """
     lines = [
-        r"\begin{tabular}{llrrrr}",
+        r"\begin{tabular}{llrrrrr}",
         r"\toprule",
-        r"& & \multicolumn{2}{c}{phrase list} & judge & \\",
-        r"\cmidrule(lr){3-4}\cmidrule(lr){5-5}",
-        r"model & bits & NLL gate & composite & composite & degen.\ (\%) \\",
+        r"& & \multicolumn{2}{c}{phrase list} & \multicolumn{2}{c}{judge} & \\",
+        r"\cmidrule(lr){3-4}\cmidrule(lr){5-6}",
+        r"model & bits & NLL & composite & NLL & composite & degen.\ (\%) \\",
         r"\midrule",
     ]
     for i, (model, rows) in enumerate(review["gate_by_grader"].items()):
@@ -51,6 +51,7 @@ def table_artifact(review: dict[str, Any]) -> str:
             lines.append(
                 f"{name} & {r['bits']:.1f} & {100 * r['marker_nll']:.1f} & "
                 f"{100 * r['marker_composite']:.1f} & "
+                f"{100 * r['judge_nll']:.1f} & "
                 f"{100 * r['judge_composite']:.1f} & "
                 f"{100 * r['degenerate_composite']:.1f} " + r"\\")
     lines += [r"\bottomrule", r"\end{tabular}"]
@@ -147,7 +148,11 @@ def table_probe_ci(review: dict[str, Any]) -> str:
         " & " + " & ".join(rf"\multicolumn{{2}}{{c}}{{{m}}}" for m in models) + r" \\",
         "".join(rf"\cmidrule(lr){{{2 + 2 * i}-{3 + 2 * i}}}"
                 for i in range(len(models))),
-        "bits & " + " & ".join(r"kept (\%) & 95\% CI" for _ in models) + r" \\",
+        # NOT a confidence interval: these are 2.5--97.5 percentiles over
+        # fit/score splits of one fixed prompt set. Labelling them "95% CI"
+        # would claim sampling coverage the procedure does not provide.
+        "bits & " + " & ".join(
+            r"kept (\%) & split range" for _ in models) + r" \\",
         r"\midrule",
     ]
     for row in ref:

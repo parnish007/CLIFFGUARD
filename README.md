@@ -27,9 +27,9 @@ per rung, graded by a 7B judge behind a degeneracy gate:
 | | result |
 |---|---|
 | **Refusal drift** | Lower precision produces **more** refusal: **1.15 points per bit removed**, 95% CI [0.75, 1.55] |
-| **Refusal→compliance** | Never above **2.2%**; simultaneous 95% upper bound **4.6%** across all 14 model×rung cells |
+| **Refusal→compliance** | Never above **2.2%**; simultaneous 95% upper bound **4.62%** across all 14 model×rung cells |
 | **Phrase-list scoring** | Reports up to **38.4%** on the same completions, and is **non-monotone** in the marker list |
-| **Frozen refusal probe** | Retains **96–100%** across 8.5–4.5 bits, the whole band where behaviour drifts |
+| **Frozen refusal probe** | Retains **96–100%** across 8.5–4.5 bits, where the significant refusal shifts on both models occur |
 | **Capability** | Collapses at a bit-width differing by a **full bit** between model families |
 
 Three regimes, not one cliff:
@@ -38,15 +38,15 @@ Three regimes, not one cliff:
 FP16 ─────── 8.5 bits        8.5 ────── 4.5/3.5 bits        below
     inert                        drift                     collapse
 +0.2 to +0.4 pp             ~1.15 pp per bit          output degenerates,
-   no change                  refusal rises           no rate is meaningful
+  observed shift               refusal rises           no rate is meaningful
 ```
 
 The headline artifact needs **two** failures, and they dominate in different
 places. Where output is coherent, the perplexity-only and composite gates admit
 identical completions and the whole gap is the **grader** — 10.8% vs 2.2% at 4.5
-bits on Qwen2.5-3B. Where output has collapsed, the **gate** is the entire story
-— 38.4% under a perplexity-only gate vs 0.2% under the composite gate, same
-marker list, same completions.
+bits on Qwen2.5-3B. Where output has collapsed, the **gate** dominates — 38.4%
+under a perplexity-only gate vs 0.2% under the composite gate, same marker list,
+same completions, which is 99.5% of that gap.
 
 ## The protocol
 
@@ -75,12 +75,15 @@ flags 99.8%.
 Why step 5 is not optional: the phrase-list estimator is a paired flip,
 `1[FP16 has a marker] AND 1[rung has none]`. Enlarging the marker list pushes
 those two indicators in **opposite** directions, so the product is not monotone
-in the list and its error cannot be bounded by being more inclusive.
+in the list. Enlarging a marker list therefore carries no structural guarantee of
+moving the estimate toward any target.
 
 ## Reproducing the paper
 
-Every number, table and figure is generated from the stored run directories.
-Nothing is transcribed by hand.
+`data.json`, `review_stats.json`, every table and every figure are generated
+from the stored run directories. Numbers quoted in the paper's prose are typed,
+so `scripts/check_paper_numbers.py` re-derives the load-bearing ones from
+`review_stats.json` and fails if the manuscript disagrees.
 
 ```bash
 python scripts/build_paper_data.py                       # runs -> data.json
@@ -128,6 +131,7 @@ answer, in file order.
 | `scripts/run_sector_ladder.py` | GSM8K capability arm |
 | `scripts/analyse_probe_transfer.py` | Frozen vs refit probe |
 | `scripts/build_paper_*.py` | Data, figure and table generation |
+| `scripts/check_paper_numbers.py` | Asserts the paper's prose numbers match the measurements |
 | `notebooks/colab_run.ipynb` | Hands-off hosted-GPU runner |
 | `cliffguard/` | Library package (quantizers, discriminability, degeneracy) |
 | `tests/` | pytest suite |
@@ -135,7 +139,7 @@ answer, in file order.
 
 ## Status
 
-![Tests](https://img.shields.io/badge/tests-1234_passing-brightgreen?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-1231_passing-brightgreen?style=flat-square)
 ![mypy](https://img.shields.io/badge/mypy-strict-brightgreen?style=flat-square)
 ![ruff](https://img.shields.io/badge/ruff-clean-orange?style=flat-square)
 ![Paper](https://img.shields.io/badge/paper-17pp,_zero_overfull-blue?style=flat-square)

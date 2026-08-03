@@ -35,7 +35,9 @@ def test_readme_states_the_transition_ceiling_with_its_bound() -> None:
     """A rate without its upper bound invites reading it as an equivalence."""
     text = README.read_text(encoding="utf-8")
     assert "2.2%" in text
-    assert "4.6%" in text, "the simultaneous upper bound must appear beside the rate"
+    assert "4.62%" in text, (
+        "the simultaneous upper bound must appear beside the rate, at the "
+        "precision the measurement supports (4.6194% rounds up, not down)")
 
 
 def test_readme_documents_all_six_protocol_steps() -> None:

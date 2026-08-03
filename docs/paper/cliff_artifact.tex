@@ -78,16 +78,17 @@ bootstrap); at 4.5 bits Qwen2.5-3B newly refuses 32 prompts it previously
 answered against 11 in the reverse direction (Holm-adjusted $p=0.011$) and
 Phi-3.5-mini 21 against 4 ($p=0.005$). Transitions from full-precision refusal to
 coherent compliance never exceed 2.2\%, and a simultaneous one-sided 95\% bound
-puts every rung below 4.6\%. Scoring the identical completions with a
+puts every rung at most 4.62\%. Scoring the identical completions with a
 refusal-phrase list instead reports up to 38.4\%, and still differs fivefold at a
 rung where no completion is flagged as degenerate. We prove the phrase-list
 estimator is structurally \emph{non-monotone} in its marker list --- its two
-paired factors move in opposite directions as the list grows --- so its error
-cannot be bounded by being more inclusive, and we separate the remaining gap into
-a gate effect and a grader effect that dominate at different rungs. Two failures
-are invisible to safety-oriented instrumentation: a frozen refusal probe retains
-96--100\% of its full-precision discriminability across 8.5--4.5 bits, the entire
-range over which the refusal decision shifts significantly, and arithmetic
+paired factors move in opposite directions as the list grows --- so enlarging the
+list carries no structural guarantee of moving the estimate toward any target,
+and we separate the remaining gap into a gate effect and a grader effect that
+dominate at different rungs. Two failures are invisible to safety-oriented
+instrumentation: a frozen refusal probe retains 96--100\% of its full-precision
+discriminability across 8.5--4.5 bits, which spans the significant refusal shifts
+on both models, and arithmetic
 accuracy degrades at a threshold differing by a full bit between model families.
 Every refusal result is a label assigned by a model judge to a greedy 48-token
 completion against each model's own full-precision baseline: a behavioural
@@ -119,19 +120,20 @@ that no safety-oriented instrument in our battery detected.
   \item Inside the band where output stays coherent, lower precision produces
         \emph{more} refusal, at $1.15$ points per bit removed, 95\% CI
         $[0.75, 1.55]$ (\S\ref{sec:law}). The relationship is not linear across
-        the whole ladder: from FP16 down to 8.5 bits there is no drift at all.
+        the whole ladder: from FP16 down to 8.5 bits refusal moves by $+0.4$ and
+        $+0.2$ points.
   \item Refusal-to-compliance transitions stay at or below 2.2\% at every rung
         on both models; a simultaneous 95\% upper bound over all 14
-        model~$\times$~rung cells is 4.6\% (\S\ref{sec:refusal}).
+        model~$\times$~rung cells is 4.62\% (\S\ref{sec:refusal}).
   \item Phrase-list scoring of the same completions reports up to 38.4\%. The
         error separates into a gate effect and a grader effect that dominate at
         different rungs, and the estimate is \emph{non-monotone} in the phrase
-        list, so it cannot be bounded by being more inclusive
-        (\S\ref{sec:artifact}).
+        list, so enlarging that list carries no structural guarantee of
+        improving it (\S\ref{sec:artifact}).
   \item Arithmetic capability collapses at a model-specific bit-width, one full
         bit apart across families (\S\ref{sec:capability}).
-  \item A frozen refusal probe holds 96--100\% over 8.5--4.5 bits, the whole
-        range where the refusal decision shifts, and collapses only below 4 bits
+  \item A frozen refusal probe holds 96--100\% over 8.5--4.5 bits, which spans
+        both models' significant refusal shifts, and collapses only below 4 bits
         where the model is already broken (\S\ref{sec:probe}).
 \end{enumerate}
 \end{keybox}
@@ -407,11 +409,11 @@ not evidence that transitions are absent, so we report a one-sided exact upper
 bound on the transition rate instead of inferring equivalence from a large
 $p$-value. The per-row bounds in Table~\ref{tab:transitions} are pointwise, and a
 claim quantified over \emph{every} rung needs simultaneous coverage: with
-Bonferroni over all 14 model $\times$ rung cells, no cell exceeds \textbf{4.6\%}.
+Bonferroni over all 14 model $\times$ rung cells, no cell exceeds \textbf{4.62\%}.
 The defensible statement is therefore bounded, not null: \emph{whatever the true
-refusal-to-compliance transition rate is on these models and prompts, it is below
-4.6\% at every rung simultaneously} --- not that it is zero, and not that the
-quantized model is equivalent to the baseline.
+refusal-to-compliance transition rate is on these models and prompts, it is at
+most 4.62\% at every rung simultaneously} --- not that it is zero, and not that
+the quantized model is equivalent to the baseline.
 
 \paragraph{What the McNemar tests condition on.} Restricting to gradable pairs is
 a complete-case analysis, and at low precision the inclusion event is itself
@@ -435,7 +437,9 @@ data separate into three regimes:
 
 \begin{enumerate}[leftmargin=1.4em]
   \item \textbf{Inert}, FP16 down to 8.5 bits: refusal moves by $+0.4$ points on
-        Qwen2.5-3B and $+0.2$ on Phi-3.5-mini. Nothing happens.
+        Qwen2.5-3B and $+0.2$ on Phi-3.5-mini. These are observed changes; we
+        run no equivalence test, so the label names a regime rather than
+        asserting a null.
   \item \textbf{Drift}, 8.5 bits down to the coherence boundary: refusal rises
         approximately linearly in bits removed.
   \item \textbf{Collapse}: output degenerates and no refusal rate is meaningful.
@@ -515,11 +519,11 @@ sign --- precise enough to be measured again and disagreed with.
 \begin{table}[htbp]
   \centering\tabfont
   \input{tables/tab_artifact}
-  \caption{Gate and grader crossed on identical completions. The two phrase-list
-  columns use the same marker list and differ only in the degeneracy gate; the
-  judge column uses the composite gate. Wherever degeneracy is 0.0\% the two
-  gates coincide exactly and the phrase-list/judge difference is attributable to
-  the grader alone.}
+  \caption{Gate and grader fully crossed on identical completions: both graders
+  under both gates. Wherever degeneracy is 0.0\% the two gates admit exactly the
+  same completions --- the NLL and composite columns are identical for both
+  graders --- so the phrase-list/judge difference there is attributable to the
+  grader alone. Only at 3.5 bits and below does the gate contribute.}
   \label{tab:artifact}
 \end{table}
 
@@ -533,9 +537,10 @@ separate. They do not act in the same place.
 --- 4.5 bits and above on both models, degeneracy 0.0\% --- the two gates admit
 exactly the same completions, so the entire gap is the \emph{grader}: at 4.5 bits
 on Qwen2.5-3B the phrase list reports 10.8\% against the judge's 2.2\%, a factor
-of 4.9. Where output has collapsed, the \emph{gate} is the whole story: at 2.5
-bits the phrase list reports 38.4\% under a perplexity-only gate and 0.2\% under
-the composite gate, on the same completions and with the same marker list. The
+of 4.9. Where output has collapsed, the \emph{gate} dominates: at 2.5 bits the
+phrase list reports 38.4\% under a perplexity-only gate and 0.2\% under the
+composite gate, on the same completions and with the same marker list --- 99.5\%
+of the gap, with the small remainder still attributable to the grader. The
 headline cliff needs both a weak gate and a weak grader; fixing either one alone
 removes most of it.
 \end{keybox}
@@ -639,8 +644,10 @@ and benchmark fixed, it still moves by a full bit across model families. We say
 nothing about how it would move if those were varied too. Qwen2.5-3B
 is destroyed at 3.5 bits (0.0\% accuracy, 37 questions lost, $p_{\text{Holm}} <
 0.001$) and Qwen2.5-1.5B at the same rung (9.0\%, 40 lost,
-$p_{\text{Holm}}=0.0003$), while Phi-3.5-mini is statistically indistinguishable
-from full precision at 3.5 bits and collapses only at 2.5.
+$p_{\text{Holm}}=0.0003$), while Phi-3.5-mini shows no statistically significant
+paired difference at 3.5 bits and collapses only at 2.5. We say no significant
+difference was detected rather than that the rungs are equivalent, for the same
+reason given in \S\ref{sec:refusal}.
 
 \begin{caveatbox}
 \textbf{A tempting claim this design cannot support.} Qwen2.5-3B's 4.5-bit rung
@@ -684,9 +691,10 @@ the probe inside an outer bootstrap over prompts, which we have not done.
   \centering\tabfont
   \input{tables/tab_probe}
   \caption{Frozen-probe $d'$ retention as a percentage of the full-precision
-  value, with percentile intervals over 200 fit/score splits. Intervals can
-  exceed 100\% where a quantized rung separates the classes marginally better
-  than FP16 on a given split.}
+  value. \emph{split range} is the 2.5--97.5 percentile over 200 fit/score
+  splits of one fixed prompt set --- a dispersion measure, not a confidence
+  interval. Ranges can exceed 100\% where a quantized rung separates the classes
+  marginally better than FP16 on a given split.}
   \label{tab:probe}
 \end{table}
 
@@ -701,10 +709,11 @@ the probe inside an outer bootstrap over prompts, which we have not done.
 \end{figure}
 
 From 8.5 through 4.5 bits retention stays between 96\% and 100\% on all three
-models. That range covers every rung at which Table~\ref{tab:transitions} records
-a significant shift in the refusal decision, and it covers Qwen2.5-3B's 4.5-bit
-arithmetic drop. Over that span the probe moves by at most four points while the
-refusal rate moves by four points and GSM8K accuracy by seven.
+models. That range covers both models' significant refusal shifts at 4.5 bits and
+Qwen2.5-3B's at 5.5, and it covers Qwen2.5-3B's 4.5-bit arithmetic drop. Over
+that span the probe moves by 4.0 points while the refusal rate moves by four and
+GSM8K accuracy by seven. It does \emph{not} cover Phi-3.5-mini's significant
+3.5-bit shift, where retention has already fallen to 63\%.
 
 \begin{caveatbox}
 \textbf{Two qualifications on the word ``flat''.} First, retention is not
@@ -720,7 +729,8 @@ the probe collapses along with the model (Qwen2.5-3B to 34\%).
 \begin{keybox}
 \textbf{The probe tracks the degeneration regime, not the behavioural one.} Over
 8.5--4.5 bits it is near-flat while the refusal decision drifts significantly and
-arithmetic falls by a third in point estimate; it drops sharply only below 4
+arithmetic falls by seven points, 38\% of its baseline; it drops sharply only
+below 4
 bits, in the regime our detector calls degenerate --- where the output is already
 visibly broken and no monitor is needed to notice a problem. This is the
 limitation \citet{belinkov2022probing} describes: a linearly decodable label is
@@ -784,8 +794,8 @@ candidate checkpoint; what is untested is whether it selects better deployments
 than Equation~\ref{eq:conventional} in practice.
 
 Two of our results bear on \emph{which} signals such a rule may use. The frozen
-probe retains 96--100\% of its discriminability across the entire band where the
-refusal decision drifts, and the phrase list moves in the opposite direction from
+probe retains 96--100\% of its discriminability across 8.5--4.5 bits, where the
+refusal decision is already drifting, and the phrase list moves opposite to
 the judge. So refusal-direction retention and phrase-based refusal rates are both
 poor candidates for the constraint set, however convenient they are to compute.
 That is a negative result about proxies, and it is the part of this section the
@@ -874,9 +884,11 @@ verbatim for every rung, so any grader can be re-applied without regenerating
 text; the degeneracy correction of \S\ref{sec:degeneracy}, the paired GSM8K
 re-analysis of \S\ref{sec:capability} and the probe intervals of
 \S\ref{sec:probe} were all applied retrospectively to stored artifacts at no
-additional generation cost. Every number in this paper is emitted from the stored
-run directories by the analysis scripts rather than transcribed, including every
-table and figure. The quantizer, the judge template, the four marker lists, the
+additional generation cost. Every table and figure, and the consolidated data
+files behind them, are emitted from the stored run directories by the analysis
+scripts rather than transcribed. Numbers quoted in the prose are typed, so a
+checker re-derives the load-bearing ones from those files and fails if the
+manuscript disagrees; it runs beside the test suite. The quantizer, the judge template, the four marker lists, the
 degeneracy thresholds and the prompt selection are all in the released code.
 
 The GSM8K questions are not redistributed here. To make the capability arm
