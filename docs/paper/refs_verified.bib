@@ -1,0 +1,261 @@
+% Every entry below was checked against its arXiv abstract page or is a
+% canonical reference whose bibliographic data is not in question. Titles,
+% author lists and identifiers are transcribed from the source, not recalled.
+%
+% Venues are given only where confirmed. Where a paper is known to exist on
+% arXiv but the published venue was not verified, it is cited as an arXiv
+% preprint rather than guessing a conference.
+
+% ── Quantization and compression ─────────────────────────────────────────────
+
+@inproceedings{frantar2023gptq,
+  title     = {{GPTQ}: Accurate Post-Training Quantization for Generative
+               Pre-trained Transformers},
+  author    = {Frantar, Elias and Ashkboos, Saleh and Hoefler, Torsten and
+               Alistarh, Dan},
+  booktitle = {International Conference on Learning Representations},
+  year      = {2023}
+}
+
+@inproceedings{lin2024awq,
+  title     = {{AWQ}: Activation-aware Weight Quantization for On-Device {LLM}
+               Compression and Acceleration},
+  author    = {Lin, Ji and Tang, Jiaming and Tang, Haotian and Yang, Shang and
+               Dang, Xingyu and Gan, Chuang and Han, Song},
+  booktitle = {Proceedings of Machine Learning and Systems},
+  year      = {2024}
+}
+
+@inproceedings{dettmers2023qlora,
+  title     = {{QLoRA}: Efficient Finetuning of Quantized {LLM}s},
+  author    = {Dettmers, Tim and Pagnoni, Artidoro and Holtzman, Ari and
+               Zettlemoyer, Luke},
+  booktitle = {Advances in Neural Information Processing Systems},
+  year      = {2023}
+}
+
+@article{gray1998quantization,
+  title   = {Quantization},
+  author  = {Gray, Robert M. and Neuhoff, David L.},
+  journal = {IEEE Transactions on Information Theory},
+  volume  = {44},
+  number  = {6},
+  pages   = {2325--2383},
+  year    = {1998}
+}
+
+% ── Quantization and safety: the literature under test ───────────────────────
+
+@inproceedings{hong2024trust,
+  title     = {Decoding Compressed Trust: Scrutinizing the Trustworthiness of
+               Efficient {LLM}s Under Compression},
+  author    = {Hong, Junyuan and Duan, Jinhao and Zhang, Chenhui and Li, Zhangheng
+               and Xie, Chulin and Lieberman, Kelsey and Diffenderfer, James and
+               Bartoldson, Brian and Jaiswal, Ajay and Xu, Kaidi and
+               Kailkhura, Bhavya and Hendrycks, Dan and Song, Dawn and
+               Wang, Zhangyang and Li, Bo},
+  booktitle = {International Conference on Machine Learning},
+  year      = {2024},
+  note      = {arXiv:2403.15447}
+}
+
+@article{egashira2024exploiting,
+  title   = {Exploiting {LLM} Quantization},
+  author  = {Egashira, Kazuki and Vero, Mark and Staab, Robin and He, Jingxuan
+             and Vechev, Martin},
+  journal = {arXiv preprint arXiv:2405.18137},
+  year    = {2024}
+}
+
+@inproceedings{egashira2025gguf,
+  title     = {Mind the Gap: A Practical Attack on {GGUF} Quantization},
+  author    = {Egashira, Kazuki and Staab, Robin and Vero, Mark and He, Jingxuan
+               and Vechev, Martin},
+  booktitle = {International Conference on Machine Learning},
+  year      = {2025},
+  note      = {arXiv:2505.23786}
+}
+
+@article{wee2025safety,
+  title   = {Safety-Preserving {PTQ} via Contrastive Alignment Loss},
+  author  = {Wee, Sunghyun and Kim, Suyoung and Kim, Hyeonjin and
+             Hwang, Kyomin and Kwak, Nojun},
+  journal = {arXiv preprint arXiv:2511.07842},
+  year    = {2025}
+}
+
+% ── Refusal representations ──────────────────────────────────────────────────
+
+@inproceedings{arditi2024refusal,
+  title     = {Refusal in Language Models Is Mediated by a Single Direction},
+  author    = {Arditi, Andy and Obeso, Oscar and Syed, Aaquib and Paleka, Daniel
+               and Panickssery, Nina and Gurnee, Wes and Nanda, Neel},
+  booktitle = {Advances in Neural Information Processing Systems},
+  year      = {2024},
+  note      = {arXiv:2406.11717}
+}
+
+@article{zhao2025harmfulness,
+  title   = {{LLM}s Encode Harmfulness and Refusal Separately},
+  author  = {Zhao, Jiachen and Huang, Jing and Wu, Zhengxuan and Bau, David and
+             Shi, Weiyan},
+  journal = {arXiv preprint arXiv:2507.11878},
+  year    = {2025}
+}
+
+@inproceedings{alain2017probing,
+  title     = {Understanding Intermediate Layers Using Linear Classifier Probes},
+  author    = {Alain, Guillaume and Bengio, Yoshua},
+  booktitle = {International Conference on Learning Representations, Workshop
+               Track},
+  year      = {2017}
+}
+
+@article{belinkov2022probing,
+  title   = {Probing Classifiers: Promises, Shortcomings, and Advances},
+  author  = {Belinkov, Yonatan},
+  journal = {Computational Linguistics},
+  volume  = {48},
+  number  = {1},
+  pages   = {207--219},
+  year    = {2022}
+}
+
+% ── Safety evaluation and grading ────────────────────────────────────────────
+
+@article{souly2024strongreject,
+  title   = {A {StrongREJECT} for Empty Jailbreaks},
+  author  = {Souly, Alexandra and Lu, Qingyuan and Bowen, Dillon and Trinh, Tu
+             and Hsieh, Elvis and Pandey, Sana and Abbeel, Pieter and
+             Svegliato, Justin and Emmons, Scott and Watkins, Olivia and
+             Toyer, Sam},
+  journal = {arXiv preprint arXiv:2402.10260},
+  year    = {2024}
+}
+
+@article{mazeika2024harmbench,
+  title   = {{HarmBench}: A Standardized Evaluation Framework for Automated Red
+             Teaming and Robust Refusal},
+  author  = {Mazeika, Mantas and Phan, Long and Yin, Xuwang and Zou, Andy and
+             Wang, Zifan and Mu, Norman and Sakhaee, Elham and Li, Nathaniel and
+             Basart, Steven and Li, Bo and Forsyth, David and Hendrycks, Dan},
+  journal = {arXiv preprint arXiv:2402.04249},
+  year    = {2024}
+}
+
+@article{inan2023llamaguard,
+  title   = {Llama Guard: {LLM}-based Input-Output Safeguard for Human-{AI}
+             Conversations},
+  author  = {Inan, Hakan and Upasani, Kartikeya and Chi, Jianfeng and
+             Rungta, Rashi and Iyer, Krithika and Mao, Yuning and
+             Tontchev, Michael and Hu, Qing and Fuller, Brian and
+             Testuggine, Davide and Khabsa, Madian},
+  journal = {arXiv preprint arXiv:2312.06674},
+  year    = {2023}
+}
+
+@article{ghosh2024aegis,
+  title   = {{AEGIS}: Online Adaptive {AI} Content Safety Moderation with
+             Ensemble of {LLM} Experts},
+  author  = {Ghosh, Shaona and Varshney, Prasoon and Galinkin, Erick and
+             Parisien, Christopher},
+  journal = {arXiv preprint arXiv:2404.05993},
+  year    = {2024}
+}
+
+@inproceedings{zheng2023judging,
+  title     = {Judging {LLM}-as-a-Judge with {MT}-Bench and Chatbot Arena},
+  author    = {Zheng, Lianmin and Chiang, Wei-Lin and Sheng, Ying and
+               Zhuang, Siyuan and Wu, Zhanghao and Zhuang, Yonghao and Lin, Zi
+               and Li, Zhuohan and Li, Dacheng and Xing, Eric P. and Zhang, Hao
+               and Gonzalez, Joseph E. and Stoica, Ion},
+  booktitle = {Advances in Neural Information Processing Systems},
+  year      = {2023}
+}
+
+% ── Models, data, and text degeneration ──────────────────────────────────────
+
+@article{bai2022hh,
+  title   = {Training a Helpful and Harmless Assistant with Reinforcement
+             Learning from Human Feedback},
+  author  = {Bai, Yuntao and Jones, Andy and Ndousse, Kamal and Askell, Amanda
+             and Chen, Anna and DasSarma, Nova and Drain, Dawn and
+             Fort, Stanislav and Ganguli, Deep and Henighan, Tom and others},
+  journal = {arXiv preprint arXiv:2204.05862},
+  year    = {2022}
+}
+
+@article{ouyang2022instruct,
+  title   = {Training Language Models to Follow Instructions with Human Feedback},
+  author  = {Ouyang, Long and Wu, Jeffrey and Jiang, Xu and Almeida, Diogo and
+             Wainwright, Carroll and Mishkin, Pamela and Zhang, Chong and
+             Agarwal, Sandhini and Slama, Katarina and Ray, Alex and others},
+  journal = {Advances in Neural Information Processing Systems},
+  volume  = {35},
+  year    = {2022}
+}
+
+@article{cobbe2021gsm8k,
+  title   = {Training Verifiers to Solve Math Word Problems},
+  author  = {Cobbe, Karl and Kosaraju, Vineet and Bavarian, Mohammad and
+             Chen, Mark and Jun, Heewoo and Kaiser, Lukasz and Plappert, Matthias
+             and Tworek, Jerry and Hilton, Jacob and Nakano, Reiichiro and
+             Hesse, Christopher and Schulman, John},
+  journal = {arXiv preprint arXiv:2110.14168},
+  year    = {2021}
+}
+
+@inproceedings{holtzman2020degeneration,
+  title     = {The Curious Case of Neural Text Degeneration},
+  author    = {Holtzman, Ari and Buys, Jan and Du, Li and Forbes, Maxwell and
+               Choi, Yejin},
+  booktitle = {International Conference on Learning Representations},
+  year      = {2020}
+}
+
+@article{qwen2024report,
+  title   = {Qwen2.5 Technical Report},
+  author  = {{Qwen Team}},
+  journal = {arXiv preprint arXiv:2412.15115},
+  year    = {2024}
+}
+
+@article{abdin2024phi3,
+  title   = {Phi-3 Technical Report: A Highly Capable Language Model Locally on
+             Your Phone},
+  author  = {Abdin, Marah and Aneja, Jyoti and Awadalla, Hany and
+             Awadallah, Ahmed and Awan, Ammar Ahmad and Bach, Nguyen and others},
+  journal = {arXiv preprint arXiv:2404.14219},
+  year    = {2024}
+}
+
+% ── Statistics ───────────────────────────────────────────────────────────────
+
+@article{clopper1934use,
+  title   = {The Use of Confidence or Fiducial Limits Illustrated in the Case of
+             the Binomial},
+  author  = {Clopper, C. J. and Pearson, E. S.},
+  journal = {Biometrika},
+  volume  = {26},
+  number  = {4},
+  pages   = {404--413},
+  year    = {1934}
+}
+
+@article{mcnemar1947note,
+  title   = {Note on the Sampling Error of the Difference between Correlated
+             Proportions or Percentages},
+  author  = {McNemar, Quinn},
+  journal = {Psychometrika},
+  volume  = {12},
+  number  = {2},
+  pages   = {153--157},
+  year    = {1947}
+}
+
+@book{green1966signal,
+  title     = {Signal Detection Theory and Psychophysics},
+  author    = {Green, David M. and Swets, John A.},
+  publisher = {Wiley},
+  year      = {1966}
+}

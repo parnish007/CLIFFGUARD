@@ -93,3 +93,6 @@ notebooks/.env
 
 # Agent workflow documents
 development.md
+
+# Superseded bibliography: entries were unverifiable
+docs/paper/refs.bib
