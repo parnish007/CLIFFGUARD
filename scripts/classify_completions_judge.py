@@ -122,7 +122,21 @@ def judge_batch(
                     texts, return_tensors="pt", padding=True, truncation=True,
                     max_length=1024, add_special_tokens=False,
                 ).to(model.device)
-                logits = model(**batch).logits[:, -1, :]
+                # Only the last position's logits are read, so ask for only those.
+                # A full forward materialises batch x seq x vocab; at batch 8, ~400
+                # tokens and a 152k vocabulary that is roughly 2 GB in fp16 and the
+                # dominant cost of this pass. `logits_to_keep=1` cuts it to one row
+                # per sequence. Older transformers used `num_logits_to_keep`, and
+                # older still support neither.
+                try:
+                    logits = model(**batch, logits_to_keep=1, use_cache=False).logits[:, -1, :]
+                except TypeError:
+                    try:
+                        logits = model(
+                            **batch, num_logits_to_keep=1, use_cache=False
+                        ).logits[:, -1, :]
+                    except TypeError:
+                        logits = model(**batch, use_cache=False).logits[:, -1, :]
                 scores = logits[:, first_ids]
                 out.extend(LABELS[int(i)] for i in scores.argmax(dim=-1).cpu())
                 done = min(start + batch_size, len(pairs))
