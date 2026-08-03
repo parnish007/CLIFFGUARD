@@ -209,6 +209,59 @@ and treats it as the *information*, which does not decay at all. Those are diffe
 
 ---
 
+## 6c Claim C5, as a controlled experiment
+
+Run: `artifacts/runs/*_local-ladder-salience-qwen1.5b`
+Command: `--salience-alpha 0.5 --salience-calib 64` — AWQ-style activation-aware per-input-channel
+scaling applied before RTN, inverse folded back out.
+
+**Why this and not a published AWQ build.** Setting our RTN against `Qwen2.5-1.5B-Instruct-AWQ`
+would confound salience-awareness with that build's group size, calibration set, kernel, and
+release. Here the checkpoint, group size, bit budget, corpus, prompt order, seed, and code path are
+all identical to §2–§5. The *only* difference is whether the quantizer protects high-activation
+input channels. The calibration uses 64 **benign** prompts — no harmful prompts, no labels.
+
+| bits | RTN rotation | salience-aware rotation | change | RTN η | salience η | η ratio |
+|---|---|---|---|---|---|---|
+| 8 | 1.77° | 1.38° | **−21.9 %** | 8.87e−5 | 1.62e−4 | 1.82× |
+| 7 | 3.88° | 2.87° | **−26.2 %** | 3.58e−4 | 6.26e−4 | 1.75× |
+| 6 | 7.55° | 5.85° | **−22.5 %** | 1.46e−3 | 2.86e−3 | 1.95× |
+| 5 | 14.81° | 11.46° | **−22.6 %** | 6.04e−3 | 1.11e−2 | 1.84× |
+| 4 | 31.95° | 24.46° | **−23.4 %** | 2.56e−2 | 4.44e−2 | 1.73× |
+| 3 | 55.02° | 46.10° | −16.2 % | 1.19e−1 | 1.86e−1 | 1.56× |
+| 2 | 88.69° | 88.11° | −0.7 % | 6.54e−1 | 9.89e−1 | 1.51× |
+
+**The two columns move in opposite directions.** Salience-aware quantization injects **1.5–2.0×
+more total weight perturbation** and yet rotates the behavioural direction **22–26 % less**, and
+that reduction is near-constant across four rungs of the ordinal axis. It spends more error overall
+in order to steer error away from the direction that matters.
+
+That is precisely the anisotropy C5 is about, now demonstrated as a controlled contrast rather than
+inferred from a literature disagreement.
+
+The effect **vanishes at 2 bits** (−0.7 %). Both quantizers saturate near orthogonality, so there
+is no headroom left to protect. Salience-awareness buys rotation resistance in the regime where
+rotation is still small — not in the regime where it has already been lost.
+
+Both ladders obey the same decay law with overlapping intervals:
+
+```
+RTN               base 4.3552   95 % CI [4.1136, 4.6110]   R² = 0.9989
+salience-aware    base 4.2154   95 % CI [4.0291, 4.4103]   R² = 0.9993
+```
+
+**C5 needs restating.** Its original form — "RTN/NF4/GGUF isotropic → cliff; AWQ/GPTQ anisotropic →
+no cliff" — has a false premise: the concentration null is rejected for plain RTN at 7 of 8 rungs
+(§3), so RTN is *not* isotropic either. The real distinction is not isotropic versus anisotropic
+but **where the anisotropy points**. Both quantizers concentrate their damage; only the
+salience-aware one concentrates it away from the behavioural direction.
+
+Held-out d′ is flat for the salience ladder too (0.4129 → 0.4117 at 2 bits), which is consistent
+with §5 and §6b: less rotation, same discriminability, because discriminability was never tracking
+rotation in the first place.
+
+---
+
 ## 7 What this does and does not establish
 
 **Established.**
