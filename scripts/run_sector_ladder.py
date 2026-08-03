@@ -240,10 +240,15 @@ def main() -> int:  # noqa: C901 - linear experiment script
             "degenerate_rate": float(degenerate.mean()),
             "median_nll": float(np.median(finite)) if finite.size else float("inf"),
             "bits_per_param": bits,
-            "relative_to_fp16": accuracy / fp16_accuracy if fp16_accuracy else float("nan"),
+            # A zero FP16 baseline means the task is out of reach for this model at
+            # this token budget, not that the ladder did anything. Reported as such
+            # rather than as a nan ratio.
+            "relative_to_fp16": (accuracy / fp16_accuracy) if fp16_accuracy else None,
         }
+        relative = results[name]["relative_to_fp16"]
         print(f"{name:10s} {bits:6.2f} {accuracy:9.3f} {degenerate.mean():7.3f} "
-              f"{results[name]['median_nll']:7.2f} {results[name]['relative_to_fp16']:8.2f}")
+              f"{results[name]['median_nll']:7.2f} "
+              + (f"{relative:8.2f}" if relative is not None else "     n/a"))
 
     # Collapse point: first rung at or below half of FP16 accuracy, walking down.
     collapse_bits = None

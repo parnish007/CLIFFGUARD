@@ -362,21 +362,31 @@ def load_rtn_model(
     eta_weight_names: list[str],
     channel_scales: dict[str, Any] | None = None,
     alpha: float = 0.0,
-) -> tuple[Any, dict[str, Any]]:
+    direction: FloatArray | None = None,
+) -> tuple[Any, dict[str, float]]:
     """FP16 checkpoint with every block Linear replaced by its RTN reconstruction.
 
     With `alpha > 0` and `channel_scales` supplied, the reconstruction is
     salience-aware (AWQ-style) at the same bit budget -- the controlled contrast
     for claim C5.
 
-    Returns the model and, for the weights named in `eta_weight_names`, the
-    (fp16, quantized) numpy pair needed for the eta measurement. Only those few
-    matrices are retained: keeping all of them as float64 would cost several GB.
+    Returns the model and, when `direction` is supplied, one scalar per named
+    weight: the projected perturbation variance sigma^2 that eta is built from.
+
+    The scalar matters. An earlier version returned the (fp16, quantized) matrix
+    PAIR as float64 and held every pair until activation collection finished. For
+    a 3B checkpoint at mid-depth that is roughly 6-7 GB of host RAM on top of the
+    interpreter, tokenizer, model load, and downloads -- enough to have the kernel
+    killed on a standard hosted runtime even when GPU memory is fine. Each
+    variance is now computed while the two tensors are still in scope and only the
+    scalar survives.
     """
     import torch
 
+    from cliffguard.eval.noise_spectrum import projected_perturbation_variance
+
     model = load_fp16_model()
-    captured: dict[str, Any] = {}
+    sigma: dict[str, float] = {}
     wanted = set(eta_weight_names)
     with torch.no_grad():
         for name, module in target_linears(model):
@@ -389,13 +399,13 @@ def load_rtn_model(
                 )
             else:
                 quantized = rtn_quantize_dequantize(original, bits, group)
-            if weight_name in wanted:
-                captured[weight_name] = (
-                    original.detach().to(torch.float32).cpu().numpy().astype(np.float64),
-                    quantized.detach().to(torch.float32).cpu().numpy().astype(np.float64),
-                )
+            if weight_name in wanted and direction is not None:
+                fp = original.detach().to(torch.float32).cpu().numpy().astype(np.float64)
+                qz = quantized.detach().to(torch.float32).cpu().numpy().astype(np.float64)
+                sigma[weight_name] = projected_perturbation_variance(fp, qz, direction)
+                del fp, qz
             module.weight.data = quantized
-    return model, captured
+    return model, sigma
 
 
 # ---------------------------------------------------------------------------
@@ -488,6 +498,7 @@ def collect_rtn(
     channel_scales: dict[str, Any] | None = None,
     alpha: float = 0.0,
     scheme_prefix: str = "RTN",
+    direction: FloatArray | None = None,
 ) -> tuple[FloatArray, FloatArray, dict[str, float]]:
     """Activations plus per-matrix sigma^2 for one RTN rung, in one model load.
 
@@ -515,8 +526,6 @@ def collect_rtn(
     import torch
     from transformers import AutoTokenizer
 
-    from cliffguard.eval.noise_spectrum import projected_perturbation_variance
-
     tok = AutoTokenizer.from_pretrained(MODEL_ID)
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
@@ -524,18 +533,19 @@ def collect_rtn(
     started = time.time()
     salience = f", salience alpha={alpha}" if alpha > 0.0 else ""
     print(f"[{scheme}] loading + quantizing (group={group}{salience}) ...", flush=True)
-    model, captured = load_rtn_model(bits, group, eta_weight_names, channel_scales, alpha)
+    model, sigma = load_rtn_model(
+        bits, group, eta_weight_names, channel_scales, alpha, direction
+    )
     model.eval()
     print(
         f"[{scheme}] ready in {time.time() - started:.0f}s | "
         f"{torch.cuda.memory_allocated() / 1e9:.2f} GB allocated | "
-        f"captured {len(captured)}/{len(eta_weight_names)} eta matrices",
+        f"sigma^2 for {len(sigma)}/{len(eta_weight_names)} eta matrices",
         flush=True,
     )
+    if sigma:
+        sigma_path.write_text(json.dumps(sigma, indent=2), encoding="utf-8")
 
-    # sigma^2 needs the direction, which is not known yet on the first rung.
-    # It is computed after collection using the FP16 direction passed in via
-    # the module-level slot below, so capture is deferred to the caller.
     def encode(prompt: str) -> dict[str, Any]:
         out = tok.apply_chat_template(
             [{"role": "user", "content": prompt}], add_generation_prompt=True, return_tensors="pt"
@@ -564,17 +574,6 @@ def collect_rtn(
     del model
     gc.collect()
     torch.cuda.empty_cache()
-
-    # The direction used for sigma^2 must be the FP16 one, which the caller owns.
-    # It is stashed on the function object so the signature stays simple.
-    direction = getattr(collect_rtn, "direction", None)
-    sigma: dict[str, float] = {}
-    if direction is not None:
-        for name, (w_fp16, w_q) in captured.items():
-            sigma[name] = projected_perturbation_variance(w_fp16, w_q, direction)
-        sigma_path.write_text(json.dumps(sigma, indent=2), encoding="utf-8")
-    del captured
-    gc.collect()
 
     print(f"[{scheme}] done in {time.time() - started:.0f}s  shape={result['h'].shape}", flush=True)
     return result["h"], result["l"], sigma
@@ -653,7 +652,9 @@ def main() -> int:  # noqa: C901 - a linear experiment script, split would obscu
     ap.add_argument("--gguf-repo", default=None, help="matched GGUF ladder repo (--ladder-kind gguf)")
     ap.add_argument("--gguf-stem", default=None, help="filename stem inside --gguf-repo")
     ap.add_argument("--n", type=int, default=250, help="prompts per class (pre-registered MDE 250)")
-    ap.add_argument("--layer", type=int, default=14)
+    ap.add_argument("--layer", type=int, default=-1,
+                    help="residual-stream read point; -1 selects mid-depth from the model "
+                         "config, matching the 14/28 point used on the 1.5B model")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--splits", type=int, default=50)
     ap.add_argument("--alpha", type=float, default=0.05)
@@ -694,7 +695,27 @@ def main() -> int:  # noqa: C901 - a linear experiment script, split would obscu
     is_rtn = args.ladder_kind == "rtn"
     label = args.label or f"local-ladder-{args.ladder_kind}"
 
-    print(f"model: {MODEL_ID}")
+    # One layer rule for every runner. A literal index is not portable: 14 is
+    # mid-depth at 28 layers and near the output at 16, so the same number means
+    # a different measurement on a different checkpoint. Validated against the
+    # config BEFORE any weights are downloaded, because layer 0 breaks the eta
+    # writer-block range and an over-deep layer only fails after a model load.
+    from transformers import AutoConfig
+
+    config = AutoConfig.from_pretrained(MODEL_ID)
+    n_layers = int(getattr(config, "num_hidden_layers", None)
+                   or config.text_config.num_hidden_layers)
+    if args.layer < 0:
+        args.layer = n_layers // 2
+        print(f"layer: auto-selected {args.layer} (mid-depth of {n_layers})")
+    if not (1 <= args.layer <= n_layers):
+        raise SystemExit(
+            f"--layer {args.layer} is outside 1..{n_layers} for {MODEL_ID}. "
+            "hidden_states[k] is the output of block k-1, so layer 0 is the embedding "
+            "and has no writer blocks for the eta measurement."
+        )
+
+    print(f"model: {MODEL_ID}   layer {args.layer}/{n_layers}")
     print(f"GPU: {torch.cuda.get_device_name(0)} "
           f"({torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB)")
     harmful, benign = load_prompts(args.n)
@@ -737,8 +758,6 @@ def main() -> int:  # noqa: C901 - a linear experiment script, split would obscu
     )
     direction_fp16 = difference_in_means(acts[("FP16", "h")], acts[("FP16", "l")])
     r_fp16 = direction_fp16 / np.linalg.norm(direction_fp16)
-    # collect_rtn needs the FP16 direction to compute sigma^2 in the same pass.
-    collect_rtn.direction = r_fp16                              # type: ignore[attr-defined]
 
     schemes: list[str] = ["FP16"]
     if not args.skip_nf4:
@@ -773,7 +792,7 @@ def main() -> int:  # noqa: C901 - a linear experiment script, split would obscu
             scheme = f"{scheme_prefix}_{bits}B"
             h, low, sigma = collect_rtn(
                 bits, args.group, eta_names, harmful, benign, args.layer, args.cache,
-                channel_scales, args.salience_alpha, scheme_prefix,
+                channel_scales, args.salience_alpha, scheme_prefix, r_fp16,
             )
             acts[(scheme, "h")], acts[(scheme, "l")] = h, low
             sigma_by_scheme[scheme] = sigma

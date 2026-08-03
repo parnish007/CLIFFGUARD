@@ -181,10 +181,18 @@ def main() -> int:
             )
         args.nll_cache = candidate
 
-    ladder.MODEL_ID = under_test
-    harmful, benign = load_prompts(n_prompts // 2)
-    ladder.MODEL_ID = judge_model_id
-    prompts = harmful + benign
+    prompts_file = args.run / "results" / "prompts.json"
+    if prompts_file.exists():
+        prompts = json.loads(prompts_file.read_text(encoding="utf-8"))["prompts"]
+    else:
+        # Legacy runs predate results/prompts.json. Rebuilding from the corpus is
+        # only valid if this machine has the identical corpus; the length check
+        # below is the guard, not a guarantee.
+        print("[prompts] run has no results/prompts.json -- rebuilding from data/folds/")
+        ladder.MODEL_ID = under_test
+        harmful, benign = load_prompts(n_prompts // 2)
+        prompts = harmful + benign
+        ladder.MODEL_ID = judge_model_id
     completions = {
         s: json.loads((args.run / "results" / f"completions_{s}.json").read_text(encoding="utf-8"))
         ["completions"]
@@ -192,6 +200,13 @@ def main() -> int:
     }
     nll = {k: np.asarray(v, dtype=np.float64)
            for k, v in json.loads(args.nll_cache.read_text(encoding="utf-8")).items()}
+    for scheme, texts in completions.items():
+        if len(texts) != len(prompts):
+            raise SystemExit(
+                f"{scheme} has {len(texts)} completions against {len(prompts)} prompts. "
+                "They are not aligned; classification would pair the wrong request with "
+                "the wrong response."
+            )
     finite = nll["FP16"][np.isfinite(nll["FP16"])]
     threshold = float(np.median(finite) * DEGENERACY_NLL_MULTIPLE)
 
@@ -256,13 +271,37 @@ def main() -> int:
         model = load_fp16_model()
     model.eval()
 
+    # The cache key must include WHO judged and HOW. Keyed only by scheme, a
+    # rerun with a stronger judge reports the new judge in the manifest while
+    # silently reusing the old judge's labels -- which is exactly the run this
+    # notebook exists to perform.
+    import hashlib
+
+    fingerprint = hashlib.sha256(
+        json.dumps(
+            {
+                "judge": judge_model_id,
+                "four_bit": bool(args.judge_4bit),
+                "labels": list(LABELS),
+                "template": JUDGE_TEMPLATE,
+                "n_prompts": len(prompts),
+            },
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()[:16]
+    print(f"judge cache fingerprint: {fingerprint}")
+
     judged: dict[str, list[str]] = {}
     for scheme in schemes:
-        cache = args.run / "results" / f"judge_{scheme}.json"
+        cache = args.run / "results" / f"judge_{fingerprint}_{scheme}.json"
         if cache.exists():
-            judged[scheme] = json.loads(cache.read_text(encoding="utf-8"))
-            print(f"[{scheme}] cache hit")
-            continue
+            cached = json.loads(cache.read_text(encoding="utf-8"))
+            if len(cached) == len(prompts):
+                judged[scheme] = cached
+                print(f"[{scheme}] cache hit")
+                continue
+            print(f"[{scheme}] cache has {len(cached)} rows for {len(prompts)} prompts; "
+                  "recomputing")
         print(f"[{scheme}] judging {len(prompts)} pairs ...")
         judged[scheme] = judge_batch(
             model, tokenizer, list(zip(prompts, completions[scheme])), args.batch_size
@@ -328,7 +367,8 @@ def main() -> int:
     out = args.run / "results" / "judge_classification.json"
     out.write_text(json.dumps({
         "judge_model": judge_model_id, "model_under_test": under_test,
-        "judge_loaded_in_4bit": bool(args.judge_4bit), "labels": LABELS,
+        "judge_loaded_in_4bit": bool(args.judge_4bit),
+        "judge_cache_fingerprint": fingerprint, "labels": LABELS,
         "degeneracy_threshold": threshold,
         "marker_variant_sensitivity": sensitivity,
         "results": results,

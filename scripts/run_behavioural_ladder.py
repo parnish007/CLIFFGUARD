@@ -133,6 +133,7 @@ def generate_batched(
     max_new_tokens: int,
     batch_size: int,
     tag: str,
+    max_input_tokens: int = 1024,
 ) -> list[str]:
     """Greedy completions for every prompt, in batches, left-padded.
 
@@ -153,32 +154,52 @@ def generate_batched(
     completions: list[str] = []
     started = time.time()
 
+    def run_chunk(chunk: list[str], size: int) -> list[str]:
+        """Generate for one chunk, halving the batch on CUDA OOM down to one.
+
+        A fixed batch that fits a 1.5B model does not necessarily fit a 3.8B one
+        at the same sequence length, and an unrecovered OOM loses the whole run
+        rather than one step. Recovery costs nothing when memory is ample.
+        """
+        try:
+            texts = [
+                tokenizer.apply_chat_template(
+                    [{"role": "user", "content": p}],
+                    add_generation_prompt=True,
+                    tokenize=False,
+                )
+                for p in chunk
+            ]
+            batch = tokenizer(
+                texts, return_tensors="pt", padding=True, truncation=True,
+                max_length=max_input_tokens, add_special_tokens=False,
+            ).to(model.device)
+            out = model.generate(
+                **batch,
+                max_new_tokens=max_new_tokens,
+                do_sample=False,
+                pad_token_id=tokenizer.pad_token_id,
+            )
+            # Slice off the prompt: with left padding every row's completion
+            # begins at the same offset, namely the padded input width.
+            generated = out[:, batch["input_ids"].shape[1] :]
+            return list(tokenizer.batch_decode(generated, skip_special_tokens=True))
+        except torch.cuda.OutOfMemoryError:
+            if size == 1:
+                raise
+            torch.cuda.empty_cache()
+            half = max(1, size // 2)
+            print(f"   [{tag}] CUDA OOM at batch {size}, retrying at {half}", flush=True)
+            out_texts: list[str] = []
+            for i in range(0, len(chunk), half):
+                out_texts.extend(run_chunk(chunk[i : i + half], half))
+            return out_texts
+
     try:
         with torch.no_grad():
             for start in range(0, len(prompts), batch_size):
-                chunk = prompts[start : start + batch_size]
-                texts = [
-                    tokenizer.apply_chat_template(
-                        [{"role": "user", "content": p}],
-                        add_generation_prompt=True,
-                        tokenize=False,
-                    )
-                    for p in chunk
-                ]
-                batch = tokenizer(
-                    texts, return_tensors="pt", padding=True, add_special_tokens=False
-                ).to(model.device)
-                out = model.generate(
-                    **batch,
-                    max_new_tokens=max_new_tokens,
-                    do_sample=False,
-                    pad_token_id=tokenizer.pad_token_id,
-                )
-                # Slice off the prompt: with left padding every row's completion
-                # begins at the same offset, namely the padded input width.
-                generated = out[:, batch["input_ids"].shape[1] :]
                 completions.extend(
-                    tokenizer.batch_decode(generated, skip_special_tokens=True)
+                    run_chunk(prompts[start : start + batch_size], batch_size)
                 )
                 done = min(start + batch_size, len(prompts))
                 if done % (batch_size * 4) == 0 or done == len(prompts):
@@ -219,7 +240,10 @@ def score_nll(
                     [chunk[i] for i in idx], return_tensors="pt", padding=True,
                     truncation=True, max_length=256, add_special_tokens=True,
                 ).to(model.device)
-                logits = model(**batch).logits
+                # use_cache=False: this is a scoring pass, and the KV cache is
+                # pure overhead here -- for a 3.8B model at batch 16 it is enough
+                # to turn a comfortable run into an OOM.
+                logits = model(**batch, use_cache=False).logits
                 # Standard causal shift: predict token t+1 from position t.
                 shift_logits = logits[:, :-1, :]
                 shift_labels = batch["input_ids"][:, 1:]
@@ -307,7 +331,9 @@ def main() -> int:  # noqa: C901 - linear experiment script
         # of a 16-layer model.
         from transformers import AutoConfig
 
-        n_layers = int(AutoConfig.from_pretrained(args.model).num_hidden_layers)
+        config = AutoConfig.from_pretrained(args.model)
+        n_layers = int(getattr(config, "num_hidden_layers", None)
+                       or config.text_config.num_hidden_layers)
         args.layer = n_layers // 2
         print(f"layer: auto-selected {args.layer} (mid-depth of {n_layers})")
 
@@ -521,6 +547,12 @@ def main() -> int:  # noqa: C901 - linear experiment script
         run.save_array("activations", f"{name}", activations[name])
     # The judge script needs these; writing them into the run directory keeps it
     # self-contained instead of depending on a cache path from a previous session.
+    # The exact ordered prompts, so a run directory can be classified anywhere.
+    # Reconstructing them by re-reading data/folds/ makes the run depend on a
+    # corpus the recipient may not have, and on a downloader revision that could
+    # yield different text for the same requested count -- silently misaligning
+    # prompts against completions.
+    run.save_json("prompts", {"prompts": prompts, "source": source})
     run.save_json("completion_nll", {k: v.tolist() for k, v in nll.items()})
     run.save_json("behavioural_ladder", behavioural)
     run.save_json("dprime_model_labels", dprime)
