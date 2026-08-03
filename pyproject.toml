@@ -46,7 +46,7 @@ line-length = 100
 strict = true
 
 [[tool.mypy.overrides]]
-module = ["cliffguard.engines.*", "torch", "transformers", "bitsandbytes", "accelerate", "awq", "vllm", "llama_cpp", "scipy", "scipy.stats", "matplotlib", "matplotlib.*"]
+module = ["cliffguard.engines.*", "torch", "transformers", "bitsandbytes", "accelerate", "awq", "vllm", "llama_cpp", "gguf", "gguf.*", "huggingface_hub", "scipy", "scipy.stats", "matplotlib", "matplotlib.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
