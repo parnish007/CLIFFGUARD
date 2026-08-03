@@ -87,9 +87,9 @@ list carries no structural guarantee of moving the estimate toward any target,
 and we separate the remaining gap into a gate effect and a grader effect that
 dominate at different rungs. Two failures are invisible to safety-oriented
 instrumentation: a frozen refusal probe retains 96--100\% of its full-precision
-discriminability across 8.5--4.5 bits, which spans the significant refusal shifts
-on both models, and arithmetic
-accuracy degrades at a threshold differing by a full bit between model families.
+discriminability across 8.5--4.5 bits, spanning both models' significant 4.5-bit
+refusal shifts, and arithmetic accuracy degrades at a threshold differing by a
+full bit between model families.
 Every refusal result is a label assigned by a model judge to a greedy 48-token
 completion against each model's own full-precision baseline: a behavioural
 \emph{change} measure, not an absolute harmfulness rate. We close by stating, as
@@ -132,9 +132,10 @@ that no safety-oriented instrument in our battery detected.
         improving it (\S\ref{sec:artifact}).
   \item Arithmetic capability collapses at a model-specific bit-width, one full
         bit apart across families (\S\ref{sec:capability}).
-  \item A frozen refusal probe holds 96--100\% over 8.5--4.5 bits, which spans
-        both models' significant refusal shifts, and collapses only below 4 bits
-        where the model is already broken (\S\ref{sec:probe}).
+  \item A frozen refusal probe holds 96--100\% over 8.5--4.5 bits, spanning both
+        models' significant 4.5-bit refusal shifts. It falls to 63\% at
+        Phi-3.5-mini's significant 3.5-bit shift and collapses below 4 bits
+        (\S\ref{sec:probe}).
 \end{enumerate}
 \end{keybox}
 
@@ -159,8 +160,8 @@ conventional binary rule
   \text{contains a refusal phrase} \;\longrightarrow\;
   \{\text{refusal},\ \text{compliance}\}
 \]
-assigns incoherent output to \emph{compliance} by default, and incoherent output
-is the terminal state of every quantization ladder.
+assigns incoherent output to \emph{compliance} by default, and on each RTN ladder
+we tested the lowest rung is exactly that.
 
 \begin{enumerate}[leftmargin=1.6em]
   \item \textbf{Pair.} Generate completions for the same prompts from the
@@ -336,8 +337,10 @@ exactly what a genuine quantization-induced transition would look like, and it i
 also what the NLL criterion rejects. Two facts bound the damage. First, at every rung
 above 4 bits the gate removes nothing: degeneracy is 0.0\% for both models from
 8.5 through 4.5 bits, so the transition rates in Table~\ref{tab:transitions} over
-that range --- including every significant result we report --- are effectively
-ungated, and the two gates admit an identical set of completions there. Second,
+that range --- which carries the headline results at 4.5 bits and above --- are
+effectively ungated, and the two gates admit an identical set of completions
+there. Phi-3.5-mini's significant 3.5-bit shift falls outside it, at a rung where
+the gate removes 0.6\%. Second,
 where the gate does bind, we vary it rather than fix it:
 Table~\ref{tab:artifact} reports the same phrase list under both gates, which is
 how the gate's contribution is separated from the grader's in
@@ -419,9 +422,9 @@ the quantized model is equivalent to the baseline.
 a complete-case analysis, and at low precision the inclusion event is itself
 caused by quantization, so those rows do not estimate a population-level shift.
 This matters exactly where the gradable count is small and nowhere else. At 4.5
-bits and above, degeneracy is 0.0\% on both models and every one of the 500 pairs
-is gradable (498--500 for Phi-3.5-mini, the difference being \textsc{unclear}
-verdicts), so the conditioning is vacuous and the significant results quoted
+bits and above, degeneracy is 0.0\% on both models and 498--500 of the 500 pairs
+are gradable, the shortfall being \textsc{unclear} verdicts rather than
+degeneration, so the conditioning removes at most two pairs and the results quoted
 above are unaffected. At 3.5 bits Qwen2.5-3B retains 154 of 500 pairs and at 2.5
 bits exactly one; Phi-3.5-mini retains none at 2.5 bits. Those rows are reported
 as complete-case descriptions and we draw no population claim from them --- the
@@ -701,10 +704,11 @@ the probe inside an outer bootstrap over prompts, which we have not done.
 \begin{figure}[htbp]
   \centering
   \includegraphics[width=0.72\linewidth]{figures/fig_probe.pdf}
-  \caption{Frozen-probe retention along the ladder, with percentile bands over
-  fit/score splits. Retention is complete across the range in which the paired
-  refusal decision is measurably shifting, and falls only once the model has
-  degenerated.}
+  \caption{Frozen-probe retention along the ladder, with split-to-split bands.
+  Retention is near-flat at 96--100\% over 8.5--4.5 bits, which covers both
+  models' significant 4.5-bit refusal shifts. Phi-3.5-mini is the exception: its
+  significant 3.5-bit shift sits at 63\% retention, at a rung where composite
+  degeneration is only 0.6\%.}
   \label{fig:probe}
 \end{figure}
 

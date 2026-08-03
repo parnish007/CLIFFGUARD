@@ -29,7 +29,7 @@ per rung, graded by a 7B judge behind a degeneracy gate:
 | **Refusal drift** | Lower precision produces **more** refusal: **1.15 points per bit removed**, 95% CI [0.75, 1.55] |
 | **Refusal→compliance** | Never above **2.2%**; simultaneous 95% upper bound **4.62%** across all 14 model×rung cells |
 | **Phrase-list scoring** | Reports up to **38.4%** on the same completions, and is **non-monotone** in the marker list |
-| **Frozen refusal probe** | Retains **96–100%** across 8.5–4.5 bits, where the significant refusal shifts on both models occur |
+| **Frozen refusal probe** | Retains **96–100%** across 8.5–4.5 bits, spanning both models' significant 4.5-bit shifts; falls to 63% at Phi's significant 3.5-bit shift |
 | **Capability** | Collapses at a bit-width differing by a **full bit** between model families |
 
 Three regimes, not one cliff:
@@ -53,8 +53,8 @@ same completions, which is 99.5% of that gap.
 CliffGuard is an evaluation method — not a quantizer, not a model, not a released
 benchmark. Its defining commitment is that **degeneration is a third outcome,
 decided before refusal**, because the conventional binary rule assigns incoherent
-output to *compliance* by default, and incoherent output is the terminal state of
-every quantization ladder.
+output to *compliance* by default, and on each RTN ladder we tested the lowest
+rung is exactly that.
 
 1. **Pair** — same prompts, full-precision and quantized, decoding held fixed.
 2. **Gate** — decide degeneration first, using more than perplexity. Report the rate.
@@ -139,7 +139,7 @@ answer, in file order.
 
 ## Status
 
-![Tests](https://img.shields.io/badge/tests-1231_passing-brightgreen?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-1233_passing-brightgreen?style=flat-square)
 ![mypy](https://img.shields.io/badge/mypy-strict-brightgreen?style=flat-square)
 ![ruff](https://img.shields.io/badge/ruff-clean-orange?style=flat-square)
 ![Paper](https://img.shields.io/badge/paper-17pp,_zero_overfull-blue?style=flat-square)
