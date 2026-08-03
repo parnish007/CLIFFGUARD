@@ -46,6 +46,13 @@ def load_run(run: Path) -> dict[str, Any] | None:
     results = run / "results"
     nll_file = results / "completion_nll.json"
     if not nll_file.exists():
+        # Runs made before completion_nll.json was written into the run
+        # directory are not broken, only older. Say so rather than dropping them
+        # silently -- an earlier version returned None here, and the 1.5B
+        # behavioural run disappeared from the paper without any message.
+        if (run / "manifest.json").exists() and any(results.glob("completions_*.json")):
+            print(f"[skip] {run.name}: no results/completion_nll.json "
+                  "(pre-dates that output; re-run or pass the cached NLL)")
         return None
     manifest = json.loads((run / "manifest.json").read_text(encoding="utf-8"))
     nll = {k: np.asarray(v, dtype=np.float64)

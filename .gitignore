@@ -96,3 +96,6 @@ development.md
 
 # Superseded bibliography: entries were unverifiable
 docs/paper/refs.bib
+
+# Council/agent review output
+docs/council_review.md

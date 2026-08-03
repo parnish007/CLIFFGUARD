@@ -229,6 +229,38 @@ def fig_marker_sensitivity(data: dict[str, Any], out: Path) -> None:
     save(fig, out, "fig_marker_sensitivity")
 
 
+def fig_refusal_law(data: dict[str, Any], out: Path) -> None:
+    """Refusal rate against bit-width in the coherent regime, with fits.
+
+    The regression is restricted to rungs where fewer than 10% of completions are
+    degenerate. Beyond that boundary a "refusal rate" is not a measurement of
+    refusal, and including those points would fit a line through the collapse.
+    """
+    from scipy import stats
+
+    fig, ax = plt.subplots(figsize=(TEXT_WIDTH_IN * 0.66, 2.9),
+                           constrained_layout=True)
+    for model, block in data["behavioural"].items():
+        colour, marker, dash = MODEL_STYLE.get(model, ("#333333", "o", "-"))
+        coherent = [r for r in block["rows"] if r["degenerate"] < 0.10]
+        coherent.sort(key=lambda r: r["bits"])
+        x = [r["bits"] for r in coherent]
+        y = [100 * r["refusal"] for r in coherent]
+        ax.plot(x, y, color=colour, marker=marker, ls="none", ms=5, label=model)
+        if len(x) >= 3:
+            fit = stats.linregress(x, y)
+            grid = [min(x), max(x)]
+            ax.plot(grid, [fit.intercept + fit.slope * g for g in grid],
+                    color=colour, ls=dash, lw=1.3, alpha=0.85)
+    ax.set_xlabel("stored bits / parameter")
+    ax.set_ylabel("refusal rate")
+    ax.invert_xaxis()
+    ax.yaxis.set_major_formatter(PercentFormatter(decimals=0))
+    ax.legend(loc="upper left", frameon=False)
+    ax.set_title("Refusal rises as precision falls, while output stays coherent")
+    save(fig, out, "fig_refusal_law")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--data", type=Path, default=Path("docs/paper/data.json"))
@@ -243,6 +275,7 @@ def main() -> int:
     fig_probe(data, args.out)
     fig_degeneracy(data, args.out)
     fig_marker_sensitivity(data, args.out)
+    fig_refusal_law(data, args.out)
     return 0
 
 

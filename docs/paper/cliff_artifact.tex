@@ -39,8 +39,8 @@
   left=8pt, right=8pt, top=6pt, bottom=6pt, arc=2pt
 }
 
-\title{\bfseries Quantization Makes Small Language Models\\
-       More Refusing, Not Less}
+\title{\bfseries Refusal-Phrase Scoring Can Manufacture\\
+       a Quantization Safety Cliff}
 
 \author{%
   Trilochan Sharma\\
@@ -60,22 +60,24 @@
 \noindent
 We measure what post-training quantization does to refusal behaviour in
 instruction-tuned language models, using generated text rather than
-representation proxies or phrase matching. Across three models and a
-round-to-nearest ladder from 8 down to 2 bits per parameter, with 500 paired
-prompts per rung graded by a 7B judge behind a degeneracy gate, we find that
-harmful compliance never exceeds 2.2\% at any bit-width. Where the refusal
+representation proxies or phrase matching. On two models and a round-to-nearest
+ladder from 8 down to 2 bits per parameter, with 500 paired prompts per rung
+graded by a 7B judge behind a degeneracy gate, transitions from full-precision
+refusal to coherent compliance never exceed 2.2\% at any bit-width (95\% Wilson
+CI $[1.2, 3.9]$). Where the refusal
 decision does change significantly, it changes in the \emph{conservative}
 direction: at 4.5 bits Qwen2.5-3B newly refuses 32 prompts it previously
 answered while newly answering 11 it previously refused (McNemar $p=0.002$), and
 Phi-3.5-mini shows 21 against 4 ($p=0.001$). The asymmetry strengthens as
 precision falls. Scoring the identical completions with a conventional
-refusal-phrase list instead reports harmful compliance rising to 38.4\%; we show
-this arises because degraded text contains no refusal phrase and because degraded
-models refuse in wordings, and languages, that such lists do not cover. What
-quantization does destroy is capability, at a threshold that differs by a full
-bit across model families, and that destruction precedes the loss of fluency:
-Qwen2.5-3B loses 38\% of its GSM8K accuracy at a rung where no output is
-degenerate. Finally, a frozen linear refusal probe retains 96--100\% of its
+refusal-phrase list instead reports up to 38.4\%; at the coherent 4.5-bit rung
+the two estimators still differ by a factor of five (2.2\% against 10.8\%). The
+gap arises because degraded text contains no refusal phrase, and because degraded
+models refuse in wordings the list does not cover. What
+quantization does degrade is capability, measured on three models at a threshold
+differing by a full bit across families; significant capability loss arrives while output is
+still fully fluent, with Qwen2.5-3B down to 62\% of its GSM8K accuracy at a rung
+where no completion is degenerate. Finally, a frozen linear refusal probe retains 96--100\% of its
 full-precision discriminability throughout the range where behaviour is
 measurably changing, making it unsuitable as a safety signal.
 \end{abstract}
@@ -100,15 +102,20 @@ measurement would detect.
 \begin{keybox}
 \textbf{Findings.}
 \begin{enumerate}[leftmargin=1.4em]
-  \item Harmful compliance stays below 2.2\% at every bit-width on every model
-        tested; no rung shows a significant increase (\S\ref{sec:refusal}).
+  \item Refusal-to-compliance transitions stay below 2.2\% at every bit-width on
+        both models graded by the judge; no rung shows a significant increase
+        (\S\ref{sec:refusal}).
   \item The significant paired shifts are toward refusal, not away from it, and
-        grow as precision falls (\S\ref{sec:refusal}).
-  \item Phrase-list scoring of the same completions reports up to 38.4\% harmful
-        compliance. We identify the two mechanisms and show the estimate moves by
-        a factor of 4.6 with the choice of strings (\S\ref{sec:artifact}).
-  \item Capability collapses at a model-specific bit-width, a full rung before
-        fluency does (\S\ref{sec:capability}).
+        grow linearly as precision falls: a pooled $1.02$ refusal-rate points per
+        bit removed, 95\% CI $[0.76, 1.29]$ (\S\ref{sec:refusal},
+        \S\ref{sec:law}).
+  \item Phrase-list scoring of the same completions reports up to 38.4\%, and
+        still differs fivefold from the judge at a rung where output is fully
+        coherent. We identify the two mechanisms, and show the estimate moves by
+        up to $1.6\times$ with the choice of strings (\S\ref{sec:artifact}).
+  \item Capability collapses at a model-specific bit-width, and significant
+        partial loss appears while output is still fully fluent
+        (\S\ref{sec:capability}).
   \item A frozen refusal probe is flat across the entire range where behaviour
         changes (\S\ref{sec:probe}).
 \end{enumerate}
@@ -133,9 +140,9 @@ from string matching toward classifiers and judge models
 now ship their own graders \citep{mazeika2024harmbench}.
 \citet{souly2024strongreject} make the argument closest to ours in the jailbreak
 setting: success rates are inflated when a grader counts non-substantive output
-as compliance. We show the same failure mode dominates the quantization setting,
-where non-substantive output is not an occasional artifact but the terminal state
-of the ladder.
+as compliance. We find the same failure mode in the quantization setting, where
+non-substantive output is not an occasional artifact but the terminal state of
+the ladder.
 
 \paragraph{Refusal representations.} \citet{arditi2024refusal} establish that
 refusal is mediated by a single activation direction, using causal ablation.
@@ -177,6 +184,15 @@ own configuration.
 behavioural \emph{change} under quantization. We do not use corpus safety labels
 and make no claim about absolute safety; \S\ref{sec:limits} explains why that
 distinction is load-bearing.
+
+\paragraph{Which models appear in which arm.} Qwen2.5-1.5B contributes to the
+capability results only. Its completions were graded by a 1.5B judge, which
+returned \textsc{refuse} for 100\% of full-precision completions including
+plainly helpful ones; a grader with no discriminative power cannot support a
+refusal result, so that arm is reported for the two models graded by the 7B
+judge. The capability arm scores against gold arithmetic answers and needs no
+grader, so all three models appear there. We note this because the same
+saturation is a live risk for any small self-judging setup.
 
 \subsection{Degeneracy must be detected before refusal}
 \label{sec:degeneracy}
@@ -263,6 +279,44 @@ the effect the literature anticipates. We report it as the direction the evidenc
 actually supports, while noting that our prompt set is not an over-refusal
 benchmark and that quantifying the cost properly would need one.
 
+\subsection{The drift is linear in bit-width}
+\label{sec:law}
+
+Restricting to rungs where fewer than 10\% of completions are degenerate---beyond
+that boundary a ``refusal rate'' no longer measures refusal---the refusal rate is
+well described by a straight line in stored bits per parameter:
+\begin{equation}
+  R(b) \;=\; R_{16} \;+\; \kappa\,(b_{16} - b),
+  \label{eq:drift}
+\end{equation}
+where $R_{16}$ is the full-precision refusal rate, $b$ is stored bits per
+parameter, and $\kappa$ is a drift coefficient in refusal-rate points per bit
+removed.
+
+Fitting each model separately gives $\kappa = 1.00$ points/bit for Qwen2.5-3B
+($R^{2}=0.94$, 95\% CI $[0.55, 1.45]$) and $\kappa = 1.29$ for Phi-3.5-mini
+($R^{2}=0.66$, CI $[-0.00, 2.59]$). The two are not distinguishable
+($z = 0.60$, $p = 0.55$), and the inverse-variance pooled estimate is
+\begin{equation}
+  \hat{\kappa} \;=\; 1.02 \text{ points/bit}, \qquad 95\%\ \text{CI } [0.76,\,1.29].
+  \label{eq:kappa}
+\end{equation}
+
+The interval excludes zero, so the drift is real on these models, and its sign is
+positive: \emph{removing precision makes the model refuse more}. Two models is not
+enough to call $\kappa$ universal, and we do not. What
+Equation~\ref{eq:drift} provides is a falsifiable form: a third model either
+lands within this interval or it does not, and either outcome is informative.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.68\linewidth]{figures/fig_refusal_law.pdf}
+  \caption{Refusal rate against stored bits per parameter, restricted to rungs
+  where fewer than 10\% of completions are degenerate, with per-model fits of
+  Equation~\ref{eq:drift}.}
+  \label{fig:law}
+\end{figure}
+
 % ─────────────────────────────────────────────────────────────────────────────
 \section{Where the reported cliff comes from}
 \label{sec:artifact}
@@ -289,9 +343,11 @@ Two mechanisms account for the gap, and both inflate the phrase-list estimate.
 First, degenerate output contains no refusal phrase, so absence of a marker is
 read as compliance; the 38.4\% figure occurs at a rung where the model emits
 nothing but repetition. Second, and less obviously, \emph{degraded models refuse
-in a different register}. Inspecting 240 completions a marker list scored as
-compliance on a 1.5B model at 3 bits, 143 open with ``Sorry'' and 9 are in a
-non-Latin script, including a refusal to a self-harm request written in Chinese.
+in a different register}. In a supplementary 1.5B run not included in the reported data---its grader
+saturated, see \Sef{sec:limits}---240 completions a marker list scored as
+compliance included 143 opening with ``Sorry'' and 9 in a non-Latin script, among
+them a refusal to a self-harm request written in Chinese. We cite this as an
+illustration of the mechanism, not as evidence for its magnitude.
 
 The second mechanism survives any degeneracy filter and is difficult to escape by
 curating the list. Removing false positives at full precision---%
@@ -312,7 +368,8 @@ quantifies the resulting sensitivity.
   \centering
   \includegraphics[width=0.72\linewidth]{figures/fig_marker_sensitivity.pdf}
   \caption{The data of Table~\ref{tab:markers}. At the low-precision rungs the
-  estimate varies by a factor of 4.6 across reasonable choices of marker list.}
+  estimate varies by up to $1.6	imes$ across reasonable marker lists, and every
+  variant reports a rising cliff that the judge does not.}
   \label{fig:markers}
 \end{figure}
 
@@ -344,11 +401,16 @@ precision at 3.5 bits and collapses only at 2.5 ($p=3\times10^{-27}$). The
 threshold is a property of the model, not of the bit-width alone.
 
 \begin{keybox}
-\textbf{Capability failure precedes fluency failure by a full rung.} At
-Qwen2.5-3B's 4.5-bit rung, accuracy falls by 38\% relative to full precision while
-\emph{no} completion is degenerate: the model writes fluent, plausible arithmetic
-and reaches the wrong answer. Screening a quantized checkpoint for incoherent
-output would pass it.
+\textbf{Significant capability loss arrives while the model is still fully
+fluent.} At Qwen2.5-3B's 4.5-bit rung, accuracy falls to 62\% of its
+full-precision value ($p=0.010$) while \emph{no} completion is degenerate: the
+model writes fluent, plausible arithmetic and reaches the wrong answer.
+Screening a quantized checkpoint for incoherent output would pass it.
+
+We are careful about the stronger version of this claim. \emph{Total} collapse
+and the onset of degeneracy coincide at the same rung on both models (3.5 bits
+for Qwen2.5-3B, 2.5 for Phi-3.5-mini). What precedes fluency loss is a
+statistically significant partial loss, not the collapse itself.
 \end{keybox}
 
 % ─────────────────────────────────────────────────────────────────────────────
@@ -385,6 +447,12 @@ describes: a linearly decodable label is not thereby a behavioural one.
 We distinguish this from refitting the direction on each rung's own activations,
 which asks whether a \emph{new} probe can be trained rather than whether the
 original readout survives. Only the frozen variant is reported.
+
+One caveat applies to this section specifically. The probe's classes come from
+the full-precision model's marker-derived refusal decision, not from the 7B
+judge, so its labels and those of \Sef{sec:refusal} are not identical. The
+comparison should be read as two measurements of the same ladder rather than as
+two views of one label set.
 
 % ─────────────────────────────────────────────────────────────────────────────
 \section{Discussion}
