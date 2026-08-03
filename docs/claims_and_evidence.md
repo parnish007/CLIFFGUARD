@@ -1,6 +1,6 @@
 # Claims, Evidence Status, and the Path to Publication
 
-**Date:** 2026-08-02
+**Date:** 2026-08-03 (was 2026-08-02)
 **Purpose:** one page that says exactly what we claim, what is proven, what the code measures, and
 what remains. Update the evidence column as results land; never let a claim's status drift.
 
@@ -8,14 +8,29 @@ what remains. Update the evidence column as results land; never let a claim's st
 
 ## 0. The single most important line in this document
 
-> **We currently have zero validated empirical results.**
+> **The geometry behaves exactly as the theory predicts. The behaviour does not follow it.
+> Falsifier F5 has fired.**
 
-Stage 0 has not been run. The measured numbers we have (`Δ_cliff = 0.167`, 13.56° rotation,
-isotropy z ≈ 1.8, "99 % irrecoverable") all derive from a single pair of saved direction vectors
-whose estimator noise floor has never been established. Every one of them is **provisional** and may
-turn out to be sampling noise. Nothing here should be described as a finding until C0 resolves.
+A full 7-rung ladder now exists: `artifacts/runs/20260803-075641_dafdc44_local-ladder-rtn-qwen1.5b`,
+Qwen2.5-1.5B-Instruct, n=250/class, round-to-nearest at 8→2 bits. Full write-up in
+[`results_local_ladder.md`](results_local_ladder.md). In one paragraph:
 
-What we do have: a formalised theory, a falsification plan, and a tested instrument.
+The FP16→quantized rotation of the refusal direction **replicates at 8/8 rungs** (z = 15–26) and
+grows smoothly from 1.77° to 88.69°, roughly doubling per bit removed. Weight-space η follows
+`η₄·base^(4−b)` with **base = 4.355, 95 % CI [4.114, 4.611], R² = 0.9989** — the interval excludes
+4, so A3's assumed base is rejected while the law itself is confirmed with a sharper constant. And
+**held-out d′ does not move**: 0.4129 at FP16, 0.3914 at 2 bits, against a standard deviation of
+0.085 — no detectable degradation at a rung where η has grown 7400× and the direction has rotated
+88.7°. The η(weights)/η(d′ decay) ratio spans **374×** and falls monotonically.
+
+The prior version of this line read "we currently have zero validated empirical results." That is
+no longer true, and the replacement is not the result the theory wanted.
+
+**The load-bearing caveat.** `d′₀ = 0.41` is a *label ceiling*, not a model property: "refused"
+describes the hh-rlhf rejected response, not what this model does. The honest claim is therefore
+narrow — *within the range this probe can measure*, quantization-induced rotation does not reduce
+discriminability. It is **not** "quantization is safe". Deriving labels from the target model's own
+completions is the highest-value next step and is not yet built.
 
 ---
 
@@ -25,11 +40,12 @@ What we do have: a formalised theory, a falsification plan, and a tested instrum
 
 | # | Claim | Type | Status |
 |---|---|---|---|
-| **C1** | Quantization degrades behaviour by **inflating variance** on the behavioural subspace, not by rotating or selectively destroying it. | Mechanism | **Unproven** — gated on C0 |
-| **C2** | Discriminability follows `d'(q) = d'₀(1+η_q)^(−1/2)`, with **η measurable from weights + benign activations only** — no harmful prompts, no judge, no labels. | Predictive law | Derived; **not yet validated** |
-| **C3** | The apparent "cliff" is a **threshold-crossing artifact**, not a phase transition. `d'(b)` is smooth; the sigmoid makes it look sharp. Predicted collapse at `b* ≈ 2.94` bits. | Shape claim | Derived; **not yet tested** |
-| **C4** | Which sector collapses first is set by its **composition rule**: long chains and rare failures break before single-shot decisions. `b*(4T) − b*(T) → 1 bit`. | Ordering law | Derived; **not yet tested** |
-| **C5** | **Isotropy is a property of the quantizer, not of quantization.** RTN/NF4/GGUF isotropic → cliff; AWQ/GPTQ anisotropic → no cliff. This resolves the 2606.10154 vs 2606.29581 contradiction. | Conjecture | **Untested** — the cheapest decisive experiment |
+| **C1** | Quantization degrades behaviour by **inflating variance** on the behavioural subspace, not by rotating or selectively destroying it. | Mechanism | **Rotation half supported, degradation half refuted.** The rotation is real and systematic (8/8 replicate, z = 15–26, 1.77°→88.69°) but produces no measurable d′ loss. Rotation and degradation are **decoupled**. |
+| **C2** | Discriminability follows `d'(q) = d'₀(1+η_q)^(−1/2)`, with **η measurable from weights + benign activations only** — no harmful prompts, no judge, no labels. | Predictive law | **Mechanism REFUTED on Qwen2.5-1.5B (F5 fired).** η(weights) rises 7400× while η(d′) rises ~20×; their ratio spans 374× and falls monotonically. The weight→behaviour transfer is strongly compressive, not the identity the law assumes. |
+| **C3** | The apparent "cliff" is a **threshold-crossing artifact**, not a phase transition. `d'(b)` is smooth; the sigmoid makes it look sharp. Predicted collapse at `b* ≈ 2.94` bits. | Shape claim | **Untestable on this run.** `b*` is undefined because `d′₀ = 0.413 < z₀.₉₅ = 1.645`. Stage 4's "3/4 within 1 sd" is a flat prediction matching a flat measurement and carries almost no information. |
+| **C4** | Which sector collapses first is set by its **composition rule**: long chains and rare failures break before single-shot decisions. `b*(4T) − b*(T) → 1 bit`. | Ordering law | Derived; **not yet tested** — blocked behind C3 having a defined `b*`. |
+| **C5** | **Isotropy is a property of the quantizer, not of quantization.** RTN/NF4/GGUF isotropic → cliff; AWQ/GPTQ anisotropic → no cliff. This resolves the 2606.10154 vs 2606.29581 contradiction. | Conjecture | **Premise contradicted.** The concentration null is rejected for RTN at 7/8 rungs and for NF4 — these are *not* isotropic, which the conjecture assumed. Irrecoverable share falls 1.000→0.511 as bits drop. A controlled salience-aware arm (`--salience-alpha`, identical bit budget) is the remaining test. |
+| **A3** | `η(b) = η₄ · 4^(4−b)` — the noise-to-signal ratio quadruples per bit removed. | Assumption | **Confirmed in form, rejected in constant.** Measured base **4.355, 95 % CI [4.114, 4.611]**, R² = 0.9989, n = 7. The interval excludes 4. Theorem 2 should carry a measured base. Interval is model-conditional (rungs share weights, direction, activation sample). |
 
 ### Tier 2 — the limits (what cannot be done)
 

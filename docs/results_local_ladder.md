@@ -177,6 +177,38 @@ operating threshold the collapse bound is defined against, so there is no crossi
 
 ---
 
+## 6b Negative control — the flat curve is not a readout artifact
+
+The obvious objection to §5 is that the margin is norm-normalised,
+`m(x) = ⟨a(x), r̂⟩ / ‖a(x)‖`, so it would be *structurally* blind to the isotropic norm inflation
+Theorem 1 is built on. `scripts/analyse_margin_normalisation.py` recomputes held-out d′ from the
+same saved activations using the raw projection, no normalisation, same held-out protocol.
+
+| Scheme | d′ normalised | d′ raw | ‖a‖ / FP16 | mean proj / FP16 |
+|---|---|---|---|---|
+| FP16 | 0.4129 | 0.4071 | 1.0000 | 1.000 |
+| NF4 | 0.4080 | 0.4000 | 0.9725 | 2.641 |
+| RTN 8-bit | 0.4117 | 0.4058 | 0.9979 | 0.907 |
+| RTN 6-bit | 0.4157 | 0.4089 | 0.9997 | 2.678 |
+| RTN 4-bit | 0.3996 | 0.3926 | 0.9950 | 3.553 |
+| RTN 3-bit | 0.4821 | 0.4750 | 1.0111 | 2.317 |
+| RTN 2-bit | 0.3914 | 0.3909 | **1.8561** | **−3.872** |
+
+FP16 → 2-bit: normalised drop +0.25 sd, raw drop +0.19 sd. **Both flat. The normalisation is
+exonerated** and the refutation in §5 stands on its own.
+
+The last row is the more interesting one. At 2 bits the activation norm inflates by 1.86× and the
+mean projection onto the readout direction **goes negative** — the direction has reoriented past
+orthogonal — and d′ is still 0.39.
+
+**Separability survives a coordinate system that has effectively reversed.** The quantized model has
+not lost the harmful/benign distinction; it has moved where the distinction lives, and a
+difference-in-means direction refitted on the quantized model finds it again at full strength.
+Theorem 1 measures the *FP16 direction's continued validity*, which decays fast and predictably,
+and treats it as the *information*, which does not decay at all. Those are different quantities.
+
+---
+
 ## 7 What this does and does not establish
 
 **Established.**

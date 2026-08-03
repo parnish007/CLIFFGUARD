@@ -325,6 +325,101 @@ Every one of these is runnable on an RTX 3050 + Colab. **F1 gates all the others
 
 ---
 
+## 8. Verdicts from the first full ladder (2026-08-03)
+
+Run `artifacts/runs/20260803-075641_dafdc44_local-ladder-rtn-qwen1.5b` — Qwen2.5-1.5B-Instruct,
+layer 14, $n=250$/class, per-group asymmetric round-to-nearest at 8→2 bits, group 64.
+Full write-up: [`results_local_ladder.md`](results_local_ladder.md).
+
+| # | Verdict | Evidence |
+|---|---|---|
+| **F1** | **Does not fire.** A1 stands. | Rotation replicates at 8/8 rungs across disjoint prompt halves, $z=15$–$26$ against a chance SD of $1/\sqrt{1536}$ |
+| **F2** | **Does not fire.** A2 stands. | Every `gaussianity_gap` $\le 0.005$; the equal-variance Gaussian ROC model fits |
+| **F3** | **FIRES.** | Fitted base $\hat\beta = 4.355$, 95 % CI $[4.114,\,4.611]$, $R^2 = 0.9989$, $n=7$. The interval excludes 4 |
+| **F4** | Not yet decided. | RTN and NF4 are themselves **not** isotropic (null rejected at 7/8 rungs), which contradicts Theorem 3's premise before AWQ is even reached |
+| **F5** | **FIRES, decisively.** | $\eta(\text{weights})/\eta(d'\text{ decay})$ spans $374\times$ and falls monotonically from 64.7 to 0.173 |
+
+### What survives
+
+**Assumption A3 survives in form and dies in its constant.** $\eta$ is exponential in bit-width to
+three digits of $R^2$; the base is simply not 4. Everywhere Theorem 2 writes $4^{4-b}$ it should
+write $\hat\beta^{\,4-b}$ with $\hat\beta$ measured per (model, quantizer). The closed form
+
+$$b^{*} \;=\; 4 - \log_{\hat\beta}\!\left(\frac{(d'_0/z_{1-\alpha})^2 - 1}{\eta_4}\right)$$
+
+is unchanged in structure — `collapse_bits_threshold_closed_form` already takes `base` as an
+argument, so no code changes, only a discipline: **never pass the default.**
+
+The interval is **model-conditional**. The seven rungs share a checkpoint, a direction, and an
+activation sample, so the OLS residuals are not independent. "Excludes 4" is a diagnostic, not a
+pre-registered rejection; a defensible claim needs repeated estimates and a covariance-aware or
+synchronised block bootstrap.
+
+### What breaks
+
+**Theorem 1's mechanism does not hold on this model.** The theorem asserts that quantization
+inflates variance along the behavioural direction and that this inflation *is* the degradation:
+$d'(q) = d'_0(1+\eta_q)^{-1/2}$. Measured: $\eta$ grows by a factor of 7400 from 8 bits to 2 bits
+while held-out $d'$ moves from $0.4129$ to $0.3914$ — a fifth of one standard deviation.
+
+The failure is not a loose constant. Rearranging the theorem, the implied $\eta$ must satisfy
+$\eta_{\text{beh}} = (d'_0/d'_q)^2 - 1$. Comparing it rung by rung against the weight-space
+measurement gives a ratio that is not constant but **monotone decreasing across two orders of
+magnitude**. That shape is itself informative: the map from weight-space noise to margin-space
+noise is strongly **compressive**, and increasingly so as the perturbation grows.
+
+A compressive transfer is what one would expect if the readout renormalises away the inflation. The
+margin used here, $m(x) = \langle a(x), \hat r\rangle / \lVert a(x)\rVert$, is norm-normalised,
+which would make it *structurally* insensitive to exactly the isotropic inflation Theorem 1 is
+built on.
+
+**That explanation was tested and rejected.** `scripts/analyse_margin_normalisation.py` recomputes
+held-out $d'$ from the same saved activations using the raw projection
+$\langle a(x), \hat r\rangle$ with no normalisation. Both readouts are flat:
+
+| | FP16 | RTN 2-bit | drop |
+|---|---|---|---|
+| normalised $\langle a,\hat r\rangle/\lVert a\rVert$ | 0.4129 | 0.3914 | $+0.25\,\mathrm{sd}$ |
+| raw $\langle a,\hat r\rangle$ | 0.4071 | 0.3909 | $+0.19\,\mathrm{sd}$ |
+
+The normalisation is exonerated; $\eta$ fails to reach the behavioural readout by either route.
+
+The same table contains the more interesting number. At 2 bits the mean activation norm inflates by
+$1.86\times$ and the **mean projection onto the direction goes negative** — $-3.87\times$ its FP16
+value, i.e. the readout direction has reoriented past orthogonal — and $d'$ is *still* $0.39$.
+Separability survives a coordinate system that has effectively reversed.
+
+That reframes the result. The quantized model has not lost the harmful/benign distinction; it has
+**moved where the distinction lives**, and a difference-in-means direction refitted on the quantized
+model finds it again at full strength. Theorem 1 measures the FP16 direction's *continued validity*,
+which decays fast, and mistakes it for the *information*, which does not decay at all. The two are
+different quantities, and conflating them is the actual error.
+
+**Theorem 1 should therefore be restated with an explicit transfer function**
+
+$$d'(q) \;=\; \frac{d'_0}{\sqrt{1 + g(\eta_q)}}, \qquad g(0)=0,\; g'>0,$$
+
+where the original theorem is the special case $g = \mathrm{id}$. The data reject $g=\mathrm{id}$
+and constrain $g$ to be concave over the measured range. Measuring $g$ — not assuming it — is the
+next theorem, and it is a more interesting one than the assumed-identity version, because $g$ is
+where the model's own robustness lives.
+
+### The caveat that limits all of the above
+
+$d'_0 = 0.413$ is a **label ceiling**, not a property of the model. "Refused" labels the hh-rlhf
+*rejected response*, not this model's behaviour. Two consequences. First, $b^{*}$ is undefined
+because $d'_0 < z_{0.95} = 1.645$: the full-precision system is already below the operating
+threshold the collapse bound is stated against. Second, and more seriously, a probe with little
+discriminability to begin with has little to lose, so the flat $d'$ curve is consistent both with
+"quantization does not degrade this behaviour" and with "this probe cannot see the degradation."
+
+Separating those two is the single highest-value experiment remaining, and it needs labels derived
+from the target model's own completions. Until then, F5's verdict should be stated as *the
+mechanism is refuted for this readout*, not *for this behaviour*.
+
+---
+
 *Companion code: `eval/discriminability.py` (Thm 1, Cor 1.1), `eval/isotropy.py` (A1, Thm 3),
-`eval/noise_spectrum.py` (A3, η), `eval/noise_floor.py` (F1). Composition rules (Cor 1.2/1.3) and
-the sidecar (Thm 6–7) are not yet implemented — Stages 4–6 of `docs/pivot_plan_2026-08.md`.*
+`eval/noise_spectrum.py` (A3, η), `eval/noise_floor.py` (F1), `scripts/run_local_ladder.py`
+(the full F1–F5 ladder). Composition rules (Cor 1.2/1.3) and the sidecar (Thm 6–7) are not yet
+implemented — Stages 4–6 of `docs/pivot_plan_2026-08.md`.*
