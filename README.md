@@ -120,53 +120,58 @@ flowchart LR
 
 ## Quick Start
 
-> ### Finding — the safety cliff is a measurement artifact (2026-08-04)
+> ### Finding — refusal-phrase scoring can manufacture a quantization safety cliff
 >
-> Three instruction-tuned models (Qwen2.5-1.5B, Qwen2.5-3B, Phi-3.5-mini),
-> round-to-nearest from 8 down to 2 bits, real generations at every rung, graded
-> by a 7 B judge behind a degeneracy gate.
+> **Paper: [`docs/paper/cliff_artifact.pdf`](docs/paper/cliff_artifact.pdf)**
+> ([source](docs/paper/cliff_artifact.tex))
 >
-> **Coherent harmful compliance never exceeds 2.2 % at any bit-width on any
-> model.** The identical completions scored with a conventional refusal-phrase
-> list give apparent unsafe-flip rates up to **38.4 %**.
+> Two instruction-tuned models on a round-to-nearest ladder from 8 down to 2 bits,
+> 500 paired prompts per rung, generated completions graded by a 7B judge behind a
+> degeneracy gate. Transitions from full-precision refusal to coherent compliance
+> **never exceed 2.2%** at any bit-width (95% Wilson CI [1.2, 3.9]). The same
+> completions scored with a refusal-phrase list report up to **38.4%**, and still
+> differ fivefold from the judge at a rung where output is fully coherent.
 >
-> | bits/param | judge | phrase list |
-> |---|---|---|
-> | 4.5 | **2.2 %** | 10.8 % |
-> | 3.5 | 0.0 % | 15.4 % |
-> | 2.5 | 0.0 % | **38.4 %** |
+> **Where the refusal decision does shift significantly, it shifts toward
+> refusing more.** At 4.5 bits Qwen2.5-3B newly refuses 32 prompts it previously
+> answered against 11 the other way (McNemar *p* = 0.002); Phi-3.5-mini shows 21
+> against 4 (*p* = 0.001). In the regime where output stays coherent the drift is
+> linear in bit-width,
 >
-> The phrase list is counting two things as compliance: degenerate output that
-> contains no refusal phrase, and refusals worded outside the list — including
-> refusals in other languages.
+> ```
+> R(b) = R_16 + κ·(b_16 − b),    κ̂ = 1.02 refusal-rate points/bit
+>                                95% CI [0.76, 1.29]
+> ```
 >
-> **What quantization does break is capability, and the threshold is
-> model-specific.** GSM8K accuracy is statistically flat down to 5.5 bits/param
-> on Qwen2.5-3B and to 3.5 on Phi-3.5-mini, then collapses to zero. On Qwen-3B
-> the 4.5-bit rung loses 38 % of accuracy relative to full precision with **zero
-> degenerate output** — the model writes fluent, plausible arithmetic and gets it
-> wrong. Capability failure precedes fluency failure by a full rung, so a
-> deployment check that screens only for incoherent output passes a model that
-> has lost a third of its reasoning.
+> pooled across both models, whose individual slopes are indistinguishable
+> (*z* = 0.60, *p* = 0.55).
 >
-> A frozen linear refusal probe retains 96–100 % of its full-precision
-> discriminability across the whole range where behaviour is unchanged, and fails
-> only where the model has already degenerated. **It is a fluency detector
-> wearing a safety label.**
+> **What quantization does degrade is capability**, at a model-specific threshold:
+> GSM8K accuracy is flat to 5.5 bits/param on Qwen2.5-3B and to 3.5 on
+> Phi-3.5-mini, then collapses. Significant loss arrives while output is still
+> fully fluent — Qwen2.5-3B falls to 62% of baseline accuracy at 4.5 bits with
+> **zero** degenerate output.
 >
-> Full write-up, including four errors of ours that each produced a plausible and
-> false number:
-> **[`docs/paper/quantization_safety_cliff.md`](docs/paper/quantization_safety_cliff.md)**
+> A frozen linear refusal probe retains 96–100% of its full-precision
+> discriminability across the whole range where behaviour is measurably changing.
+>
+> #### Reproducing
 >
 > ```bash
 > python scripts/run_behavioural_ladder.py --model <hf-id> --n 250
 > python scripts/run_sector_ladder.py      --model <hf-id> --n 200
 > python scripts/classify_completions_judge.py <run-dir> >        --judge-model Qwen/Qwen2.5-7B-Instruct --judge-4bit
+> python scripts/reanalyse_runs.py artifacts/runs      # CPU-only re-grading
 > ```
 >
-> Raw completions are saved verbatim at every rung, so any classifier can be
-> re-applied without regenerating. **The completions are the data; the labels are
-> an opinion about them.**
+> Everything runs on a 6 GB GPU except the 7B judge and the 3B/3.8B models; those
+> use [`notebooks/colab_run.ipynb`](notebooks/colab_run.ipynb) (T4, ~2.5 h).
+> Raw completions are stored verbatim at every rung, so any grader can be
+> re-applied without regenerating text. **The completions are the data; the labels
+> are an opinion about them.**
+>
+> Every figure and table is generated from `docs/paper/data.json`, itself derived
+> from the run directories — no number in the paper is typed by hand.
 
 <details>
 <summary><b>Tier A — GPU (RTX 5060)</b></summary>

@@ -99,3 +99,15 @@ docs/paper/refs.bib
 
 # Council/agent review output
 docs/council_review.md
+
+# LaTeX build products. The .tex, .bib, generated figures and tables are
+# tracked; anything a compile regenerates is not. The compiled PDF is added
+# explicitly when a version is meant to be shared.
+docs/paper/*.aux
+docs/paper/*.bbl
+docs/paper/*.blg
+docs/paper/*.fdb_latexmk
+docs/paper/*.fls
+docs/paper/*.log
+docs/paper/*.out
+docs/paper/*.toc
