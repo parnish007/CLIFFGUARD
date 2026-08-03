@@ -122,12 +122,20 @@ def fig_artifact(review: dict[str, Any], out: Path) -> None:
     save(fig, out, "fig_artifact")
 
 
-def fig_capability(data: dict[str, Any], out: Path) -> None:
-    """GSM8K accuracy with exact binomial intervals, per model."""
+def fig_capability(review: dict[str, Any], out: Path) -> None:
+    """GSM8K accuracy with exact binomial intervals, per model.
+
+    Read from review_stats rather than data.json so the figure and
+    Table~\\ref{tab:capability} share a source. They did not: the table scores
+    correctness by answer extraction alone while data.json still carried the
+    run's degeneracy-gated counts, so Qwen2.5-1.5B at 2.5 bits was plotted as
+    0/200 beside a table saying 2/200.
+    """
     fig, ax = plt.subplots(figsize=(TEXT_WIDTH_IN * 0.66, 2.9),
                            constrained_layout=True)
     reference: list[dict[str, Any]] = []
-    for model, block in data["sector"].items():
+    blocks = {m: b for m, b in review["gsm8k"].items() if not m.startswith("_")}
+    for model, block in blocks.items():
         colour, marker, dash = MODEL_STYLE.get(model, ("#333333", "o", "-"))
         rows = sorted(block["rows"], key=lambda r: -r["bits"])
         reference = reference or rows
@@ -303,7 +311,7 @@ def main() -> int:
     args.out.mkdir(parents=True, exist_ok=True)
     print("figures:")
     fig_artifact(review, args.out)
-    fig_capability(data, args.out)
+    fig_capability(review, args.out)
     fig_probe(review, args.out)
     fig_degeneracy(data, args.out)
     fig_marker_sensitivity(data, args.out)

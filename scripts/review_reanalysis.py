@@ -57,7 +57,7 @@ from scipy.stats import beta, binomtest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.build_paper_data import MODEL_LABELS, bits_of
+from scripts.build_paper_data import MODEL_LABELS, bits_of, clopper_pearson
 from scripts.reanalyse_runs import analyse, load_run
 from scripts.run_behavioural_ladder import has_refusal_marker, is_degenerate
 from scripts.run_sector_ladder import extract_gold, is_correct
@@ -370,22 +370,31 @@ def gsm8k_paired(runs: Path, gsm8k_path: Path, n_items: int) -> dict[str, Any]:
             lost = int((base & ~cur).sum())     # FP16 right, rung wrong
             gained = int((~base & cur).sum())   # FP16 wrong, rung right
             p = exact_mcnemar(gained, lost)
+            low, high = clopper_pearson(int(cur.sum()), len(golds))
             rungs.append({
                 "scheme": scheme, "bits": stored[scheme]["bits_per_param"],
                 "n_correct": int(cur.sum()), "accuracy": float(cur.mean()),
+                "ci_low": low, "ci_high": high,
                 "lost": lost, "gained": gained, "discordant": lost + gained,
                 "mcnemar_p": p,
             })
             raw_p.append(p)
         for row, adj in zip(rungs, holm(raw_p)):
             row["mcnemar_p_holm"] = adj
+        out.setdefault("_all_cell_rows", []).extend(rungs)
         out[label] = {
             "n": len(golds),
             "fp16_correct": int(base.sum()),
             "fp16_accuracy": float(base.mean()),
+            "run": run_dir.name,
             "degeneracy_gate_delta": gate_delta,
             "rows": rungs,
         }
+    # Same stricter family as the refusal arm: one correction over every
+    # model x rung cell, not one per model.
+    flat = out.pop("_all_cell_rows", [])
+    for row, adjusted in zip(flat, holm([r["mcnemar_p"] for r in flat])):
+        row["mcnemar_p_holm_all_cells"] = adjusted
     return out
 
 
@@ -621,6 +630,13 @@ def main() -> int:
         transitions[model] = {"n_prompts": n, "rows": rows}
     payload["transitions"] = transitions
 
+    # Holm within model treats each model's ladder as its own family. A stricter
+    # reviewer would take all model x rung cells as one family, and the two
+    # answers differ, so we compute both rather than pick the flattering one.
+    flat = [(m, r) for m, block in transitions.items() for r in block["rows"]]
+    for (_, row), adjusted in zip(flat, holm([r["mcnemar_p"] for _, r in flat])):
+        row["mcnemar_p_holm_all_cells"] = adjusted
+
     # ---- gate x grader, fully crossed ------------------------------------
     # The manuscript previously compared a composite-gated judge against an
     # NLL-gated phrase list and called the difference a grader effect. That
@@ -691,24 +707,28 @@ def main() -> int:
     print("\n=== refusal -> compliance transitions ===")
     print(f"{'model':14s} {'bits':>5s} {'->comply':>9s} {'->refuse':>9s} "
           f"{'disc':>5s} {'gradable':>9s} {'rate%':>7s} {'up95%':>7s} "
-          f"{'p':>7s} {'p_holm':>7s}")
+          f"{'p':>7s} {'p_holm':>7s} {'p_all':>7s}")
     for model, block in transitions.items():
         for r in sorted(block["rows"], key=lambda r: -r["bits"]):
             print(f"{model:14s} {r['bits']:5.1f} {r['to_compliance']:9d} "
                   f"{r['to_refusal']:9d} {r['discordant']:5d} {r['n_gradable']:9d} "
                   f"{100 * r['rate_itt']:7.2f} {100 * r['upper95_itt']:7.2f} "
-                  f"{r['mcnemar_p']:7.3f} {r['mcnemar_p_holm']:7.3f}")
+                  f"{r['mcnemar_p']:7.3f} {r['mcnemar_p_holm']:7.3f} "
+                  f"{r['mcnemar_p_holm_all_cells']:7.3f}")
 
     print("\n=== GSM8K, exact McNemar on question-level transitions ===")
     print(f"{'model':14s} {'bits':>5s} {'acc%':>6s} {'lost':>5s} {'gained':>6s} "
-          f"{'p':>8s} {'p_holm':>8s}")
+          f"{'p':>8s} {'p_holm':>8s} {'p_all':>8s}")
     for model, block in payload["gsm8k"].items():
+        if model.startswith("_"):
+            continue
         print(f"{model} FP16 {100 * block['fp16_accuracy']:.1f}% "
               f"({block['fp16_correct']}/{block['n']})")
         for r in block["rows"]:
             print(f"{model:14s} {r['bits']:5.1f} {100 * r['accuracy']:6.1f} "
                   f"{r['lost']:5d} {r['gained']:6d} {r['mcnemar_p']:8.4f} "
-                  f"{r['mcnemar_p_holm']:8.4f}")
+                  f"{r['mcnemar_p_holm']:8.4f} "
+                  f"{r['mcnemar_p_holm_all_cells']:8.4f}")
 
     print("\n=== frozen-probe retention, fit/score split, percentile interval ===")
     for model, block in payload["probe"].items():

@@ -74,6 +74,10 @@ def _gate_row(stats: dict[str, Any], model: str, bits: float) -> dict[str, Any]:
     return next(r for r in stats["gate_by_grader"][model] if r["bits"] == bits)
 
 
+def _fmt(value: float, decimals: int = 3) -> str:
+    return f"{value:.{decimals}f}"
+
+
 def _relative_loss(stats: dict[str, Any]) -> str:
     """Percentage of its own baseline Qwen2.5-3B loses at 4.5 bits.
 
@@ -145,6 +149,15 @@ CHECKS: tuple[Check, ...] = (
     Check("Phi 4.5 Holm p",
           lambda s: f"{_row(s, 'Phi-3.5-mini', 4.5)['mcnemar_p_holm']:.3f}",
           lambda v: _rx(rf"Phi-3\.5-mini 21 against 4 \(\$p={v}\$\)")),
+    Check("Qwen 4.5 strict-family p",
+          lambda s: f"{_row(s, 'Qwen2.5-3B', 4.5)['mcnemar_p_holm_all_cells']:.3f}",
+          lambda v: _rx(rf"survive on both models \(\$p={v}\$ for Qwen2\.5-3B")),
+    Check("Phi 4.5 strict-family p",
+          lambda s: f"{_row(s, 'Phi-3.5-mini', 4.5)['mcnemar_p_holm_all_cells']:.3f}",
+          lambda v: _rx(rf"\$p={v}\$ for Phi-3\.5-mini")),
+    Check("Qwen 5.5 strict-family p",
+          lambda s: f"{_row(s, 'Qwen2.5-3B', 5.5)['mcnemar_p_holm_all_cells']:.3f}",
+          lambda v: _rx(rf"5\.5-bit result does not \(\$p={v}\$\)")),
     Check("Qwen 3.5 gradable pairs",
           lambda s: str(_row(s, "Qwen2.5-3B", 3.5)["n_gradable"]),
           lambda v: _rx(rf"Qwen2.5-3B retains {v} of 500 pairs")),
@@ -180,9 +193,12 @@ CHECKS: tuple[Check, ...] = (
     Check("GSM8K paired p",
           lambda s: f"{_gsm_row(s, 'Qwen2.5-3B', 4.5)['mcnemar_p']:.3f}",
           lambda v: _rx(rf"McNemar test gives \$p={v}\$")),
-    Check("GSM8K Holm p",
+    Check("GSM8K Holm p, per-model family",
           lambda s: f"{_gsm_row(s, 'Qwen2.5-3B', 4.5)['mcnemar_p_holm']:.3f}",
-          lambda v: _rx(rf"p_{{\\text{{Holm}}}}={v}\$")),
+          lambda v: _rx(rf"p_\{{7\}}={v}\$ within this model")),
+    Check("GSM8K Holm p, all cells",
+          lambda s: _fmt(_gsm_row(s, "Qwen2.5-3B", 4.5)["mcnemar_p_holm_all_cells"]),
+          lambda v: _rx(rf"p_\{{21\}}={v}\$ over every cell")),
     # ---- probe ------------------------------------------------------------
     Check("probe band floor",
           lambda s: f"{100 * min(r['retained_mean'] for b in s['probe'].values() for r in b['rows'] if 4.5 <= r['bits'] <= 8.5):.0f}",

@@ -49,7 +49,8 @@
           "upper95_simultaneous": 0.015515566741055593,
           "mcnemar_p": 0.625,
           "degenerate_rate": 0.0,
-          "mcnemar_p_holm": 1.0
+          "mcnemar_p_holm": 1.0,
+          "mcnemar_p_holm_all_cells": 1.0
         },
         {
           "scheme": "RTN_7B",
@@ -92,7 +93,8 @@
           "upper95_simultaneous": 0.03784139391296697,
           "mcnemar_p": 0.8145294189453125,
           "degenerate_rate": 0.0,
-          "mcnemar_p_holm": 1.0
+          "mcnemar_p_holm": 1.0,
+          "mcnemar_p_holm_all_cells": 1.0
         },
         {
           "scheme": "RTN_6B",
@@ -135,7 +137,8 @@
           "upper95_simultaneous": 0.029005427565411777,
           "mcnemar_p": 0.04138946533203125,
           "degenerate_rate": 0.0,
-          "mcnemar_p_holm": 0.165557861328125
+          "mcnemar_p_holm": 0.165557861328125,
+          "mcnemar_p_holm_all_cells": 0.37250518798828125
         },
         {
           "scheme": "RTN_5B",
@@ -178,7 +181,8 @@
           "upper95_simultaneous": 0.029005427565411777,
           "mcnemar_p": 0.006610751152038574,
           "degenerate_rate": 0.0,
-          "mcnemar_p_holm": 0.03305375576019287
+          "mcnemar_p_holm": 0.03305375576019287,
+          "mcnemar_p_holm_all_cells": 0.06610751152038574
         },
         {
           "scheme": "RTN_4B",
@@ -221,7 +225,8 @@
           "upper95_simultaneous": 0.046194076731426316,
           "mcnemar_p": 0.001913961001264397,
           "degenerate_rate": 0.0,
-          "mcnemar_p_holm": 0.011483766007586382
+          "mcnemar_p_holm": 0.011483766007586382,
+          "mcnemar_p_holm_all_cells": 0.021053571013908368
         },
         {
           "scheme": "RTN_3B",
@@ -264,7 +269,8 @@
           "upper95_simultaneous": 0.011206315373870408,
           "mcnemar_p": 1.862645149230957e-09,
           "degenerate_rate": 0.692,
-          "mcnemar_p_holm": 1.30385160446167e-08
+          "mcnemar_p_holm": 1.30385160446167e-08,
+          "mcnemar_p_holm_all_cells": 2.421438694000244e-08
         },
         {
           "scheme": "RTN_2B",
@@ -307,7 +313,8 @@
           "upper95_simultaneous": 0.011206315373870408,
           "mcnemar_p": 1.0,
           "degenerate_rate": 0.998,
-          "mcnemar_p_holm": 1.0
+          "mcnemar_p_holm": 1.0,
+          "mcnemar_p_holm_all_cells": 1.0
         }
       ]
     },
@@ -355,7 +362,8 @@
           "upper95_simultaneous": 0.022651688146686413,
           "mcnemar_p": 1.0,
           "degenerate_rate": 0.0,
-          "mcnemar_p_holm": 1.0
+          "mcnemar_p_holm": 1.0,
+          "mcnemar_p_holm_all_cells": 1.0
         },
         {
           "scheme": "RTN_7B",
@@ -398,7 +406,8 @@
           "upper95_simultaneous": 0.029005427565411777,
           "mcnemar_p": 0.7744140625,
           "degenerate_rate": 0.0,
-          "mcnemar_p_holm": 1.0
+          "mcnemar_p_holm": 1.0,
+          "mcnemar_p_holm_all_cells": 1.0
         },
         {
           "scheme": "RTN_6B",
@@ -441,7 +450,8 @@
           "upper95_simultaneous": 0.025892442719358245,
           "mcnemar_p": 0.75390625,
           "degenerate_rate": 0.0,
-          "mcnemar_p_holm": 1.0
+          "mcnemar_p_holm": 1.0,
+          "mcnemar_p_holm_all_cells": 1.0
         },
         {
           "scheme": "RTN_5B",
@@ -484,7 +494,8 @@
           "upper95_simultaneous": 0.0434502950540699,
           "mcnemar_p": 1.0,
           "degenerate_rate": 0.0,
-          "mcnemar_p_holm": 1.0
+          "mcnemar_p_holm": 1.0,
+          "mcnemar_p_holm_all_cells": 1.0
         },
         {
           "scheme": "RTN_4B",
@@ -527,7 +538,8 @@
           "upper95_simultaneous": 0.025892442719358245,
           "mcnemar_p": 0.0009105205535888672,
           "degenerate_rate": 0.0,
-          "mcnemar_p_holm": 0.005463123321533203
+          "mcnemar_p_holm": 0.005463123321533203,
+          "mcnemar_p_holm_all_cells": 0.010926246643066406
         },
         {
           "scheme": "RTN_3B",
@@ -570,7 +582,8 @@
           "upper95_simultaneous": 0.015515566741055593,
           "mcnemar_p": 1.9554136088117957e-11,
           "degenerate_rate": 0.006,
-          "mcnemar_p_holm": 1.368789526168257e-10
+          "mcnemar_p_holm": 1.368789526168257e-10,
+          "mcnemar_p_holm_all_cells": 2.737579052336514e-10
         },
         {
           "scheme": "RTN_2B",
@@ -613,7 +626,8 @@
           "upper95_simultaneous": 0.011206315373870408,
           "mcnemar_p": 1.0,
           "degenerate_rate": 1.0,
-          "mcnemar_p_holm": 1.0
+          "mcnemar_p_holm": 1.0,
+          "mcnemar_p_holm_all_cells": 1.0
         }
       ]
     }
@@ -1157,6 +1171,7 @@
       "n": 200,
       "fp16_correct": 47,
       "fp16_accuracy": 0.235,
+      "run": "20260803-150456_281e256_sector-ladder-gsm8k",
       "degeneracy_gate_delta": {
         "RTN_2B": 2
       },
@@ -1166,77 +1181,98 @@
           "bits": 8.5,
           "n_correct": 47,
           "accuracy": 0.235,
+          "ci_low": 0.1780707346006876,
+          "ci_high": 0.2999618726472491,
           "lost": 5,
           "gained": 5,
           "discordant": 10,
           "mcnemar_p": 1.0,
-          "mcnemar_p_holm": 1.0
+          "mcnemar_p_holm": 1.0,
+          "mcnemar_p_holm_all_cells": 1.0
         },
         {
           "scheme": "RTN_7B",
           "bits": 7.5,
           "n_correct": 46,
           "accuracy": 0.23,
+          "ci_low": 0.17358086280159127,
+          "ci_high": 0.2946063945659808,
           "lost": 13,
           "gained": 12,
           "discordant": 25,
           "mcnemar_p": 1.0,
-          "mcnemar_p_holm": 1.0
+          "mcnemar_p_holm": 1.0,
+          "mcnemar_p_holm_all_cells": 1.0
         },
         {
           "scheme": "RTN_6B",
           "bits": 6.5,
           "n_correct": 48,
           "accuracy": 0.24,
+          "ci_low": 0.1825719038924728,
+          "ci_high": 0.3053062856471396,
           "lost": 12,
           "gained": 13,
           "discordant": 25,
           "mcnemar_p": 1.0,
-          "mcnemar_p_holm": 1.0
+          "mcnemar_p_holm": 1.0,
+          "mcnemar_p_holm_all_cells": 1.0
         },
         {
           "scheme": "RTN_5B",
           "bits": 5.5,
           "n_correct": 57,
           "accuracy": 0.285,
+          "ci_low": 0.223554398010685,
+          "ci_high": 0.3529426997515398,
           "lost": 14,
           "gained": 24,
           "discordant": 38,
           "mcnemar_p": 0.14330665429588407,
-          "mcnemar_p_holm": 0.7165332714794204
+          "mcnemar_p_holm": 0.7165332714794204,
+          "mcnemar_p_holm_all_cells": 1.0
         },
         {
           "scheme": "RTN_4B",
           "bits": 4.5,
           "n_correct": 50,
           "accuracy": 0.25,
+          "ci_low": 0.19160716962258753,
+          "ci_high": 0.3159628333298691,
           "lost": 18,
           "gained": 21,
           "discordant": 39,
           "mcnemar_p": 0.7492586247608418,
-          "mcnemar_p_holm": 1.0
+          "mcnemar_p_holm": 1.0,
+          "mcnemar_p_holm_all_cells": 1.0
         },
         {
           "scheme": "RTN_3B",
           "bits": 3.5,
           "n_correct": 18,
           "accuracy": 0.09,
+          "ci_low": 0.05421425445609637,
+          "ci_high": 0.13850820847382211,
           "lost": 40,
           "gained": 11,
           "discordant": 51,
           "mcnemar_p": 5.703811637403078e-05,
-          "mcnemar_p_holm": 0.00034222869824418467
+          "mcnemar_p_holm": 0.00034222869824418467,
+          "mcnemar_p_holm_all_cells": 0.0009696479783585232
         },
         {
           "scheme": "RTN_2B",
           "bits": 2.5,
           "n_correct": 2,
           "accuracy": 0.01,
+          "ci_low": 0.001213349013736031,
+          "ci_high": 0.03565466839723975,
           "lost": 47,
           "gained": 2,
           "discordant": 49,
           "mcnemar_p": 4.355626970209414e-12,
-          "mcnemar_p_holm": 3.04893887914659e-11
+          "mcnemar_p_holm": 3.04893887914659e-11,
+          "mcnemar_p_holm_all_cells": 8.711253940418828e-11
         }
       ]
     },
@@ -1244,6 +1280,7 @@
       "n": 200,
       "fp16_correct": 37,
       "fp16_accuracy": 0.185,
+      "run": "20260803-171823_0d3f097_colab-gsm8k-qwen3b",
       "degeneracy_gate_delta": {},
       "rows": [
         {
@@ -1251,77 +1288,98 @@
           "bits": 8.5,
           "n_correct": 39,
           "accuracy": 0.195,
+          "ci_low": 0.14249187477905884,
+          "ci_high": 0.25678568752655917,
           "lost": 4,
           "gained": 6,
           "discordant": 10,
           "mcnemar_p": 0.75390625,
-          "mcnemar_p_holm": 1.0
+          "mcnemar_p_holm": 1.0,
+          "mcnemar_p_holm_all_cells": 1.0
         },
         {
           "scheme": "RTN_7B",
           "bits": 7.5,
           "n_correct": 37,
           "accuracy": 0.185,
+          "ci_low": 0.1337286601797617,
+          "ci_high": 0.2458634624486785,
           "lost": 6,
           "gained": 6,
           "discordant": 12,
           "mcnemar_p": 1.0,
-          "mcnemar_p_holm": 1.0
+          "mcnemar_p_holm": 1.0,
+          "mcnemar_p_holm_all_cells": 1.0
         },
         {
           "scheme": "RTN_6B",
           "bits": 6.5,
           "n_correct": 35,
           "accuracy": 0.175,
+          "ci_low": 0.1250244107737119,
+          "ci_high": 0.23488397063020913,
           "lost": 9,
           "gained": 7,
           "discordant": 16,
           "mcnemar_p": 0.803619384765625,
-          "mcnemar_p_holm": 1.0
+          "mcnemar_p_holm": 1.0,
+          "mcnemar_p_holm_all_cells": 1.0
         },
         {
           "scheme": "RTN_5B",
           "bits": 5.5,
           "n_correct": 36,
           "accuracy": 0.18,
+          "ci_low": 0.12936892834839725,
+          "ci_high": 0.24038109688400744,
           "lost": 13,
           "gained": 12,
           "discordant": 25,
           "mcnemar_p": 1.0,
-          "mcnemar_p_holm": 1.0
+          "mcnemar_p_holm": 1.0,
+          "mcnemar_p_holm_all_cells": 1.0
         },
         {
           "scheme": "RTN_4B",
           "bits": 4.5,
           "n_correct": 23,
           "accuracy": 0.115,
+          "ci_low": 0.07431337369229708,
+          "ci_high": 0.1675469444822539,
           "lost": 23,
           "gained": 9,
           "discordant": 32,
           "mcnemar_p": 0.020061607006937265,
-          "mcnemar_p_holm": 0.10030803503468633
+          "mcnemar_p_holm": 0.10030803503468633,
+          "mcnemar_p_holm_all_cells": 0.32098571211099625
         },
         {
           "scheme": "RTN_3B",
           "bits": 3.5,
           "n_correct": 0,
           "accuracy": 0.0,
+          "ci_low": 0.0,
+          "ci_high": 0.018275340355136237,
           "lost": 37,
           "gained": 0,
           "discordant": 37,
           "mcnemar_p": 1.4551915228366852e-11,
-          "mcnemar_p_holm": 1.0186340659856796e-10
+          "mcnemar_p_holm": 1.0186340659856796e-10,
+          "mcnemar_p_holm_all_cells": 2.764863893389702e-10
         },
         {
           "scheme": "RTN_2B",
           "bits": 2.5,
           "n_correct": 1,
           "accuracy": 0.005,
+          "ci_low": 0.00012658102786701836,
+          "ci_high": 0.027541898457205637,
           "lost": 37,
           "gained": 1,
           "discordant": 38,
           "mcnemar_p": 2.837623469531536e-10,
-          "mcnemar_p_holm": 1.7025740817189217e-09
+          "mcnemar_p_holm": 1.7025740817189217e-09,
+          "mcnemar_p_holm_all_cells": 5.107722245156765e-09
         }
       ]
     },
@@ -1329,6 +1387,7 @@
       "n": 200,
       "fp16_correct": 53,
       "fp16_accuracy": 0.265,
+      "run": "20260803-181927_0d3f097_colab-gsm8k-phi35",
       "degeneracy_gate_delta": {},
       "rows": [
         {
@@ -1336,77 +1395,98 @@
           "bits": 8.5,
           "n_correct": 50,
           "accuracy": 0.25,
+          "ci_low": 0.19160716962258753,
+          "ci_high": 0.3159628333298691,
           "lost": 6,
           "gained": 3,
           "discordant": 9,
           "mcnemar_p": 0.5078125,
-          "mcnemar_p_holm": 1.0
+          "mcnemar_p_holm": 1.0,
+          "mcnemar_p_holm_all_cells": 1.0
         },
         {
           "scheme": "RTN_7B",
           "bits": 7.5,
           "n_correct": 56,
           "accuracy": 0.28,
+          "ci_low": 0.21896115567003305,
+          "ci_high": 0.3476887372046082,
           "lost": 5,
           "gained": 8,
           "discordant": 13,
           "mcnemar_p": 0.5810546875,
-          "mcnemar_p_holm": 1.0
+          "mcnemar_p_holm": 1.0,
+          "mcnemar_p_holm_all_cells": 1.0
         },
         {
           "scheme": "RTN_6B",
           "bits": 6.5,
           "n_correct": 54,
           "accuracy": 0.27,
+          "ci_low": 0.20980333746614532,
+          "ci_high": 0.3371525906873306,
           "lost": 9,
           "gained": 10,
           "discordant": 19,
           "mcnemar_p": 1.0,
-          "mcnemar_p_holm": 1.0
+          "mcnemar_p_holm": 1.0,
+          "mcnemar_p_holm_all_cells": 1.0
         },
         {
           "scheme": "RTN_5B",
           "bits": 5.5,
           "n_correct": 50,
           "accuracy": 0.25,
+          "ci_low": 0.19160716962258753,
+          "ci_high": 0.3159628333298691,
           "lost": 14,
           "gained": 11,
           "discordant": 25,
           "mcnemar_p": 0.6900379657745361,
-          "mcnemar_p_holm": 1.0
+          "mcnemar_p_holm": 1.0,
+          "mcnemar_p_holm_all_cells": 1.0
         },
         {
           "scheme": "RTN_4B",
           "bits": 4.5,
           "n_correct": 53,
           "accuracy": 0.265,
+          "ci_low": 0.20523909138592306,
+          "ci_high": 0.331870092208618,
           "lost": 18,
           "gained": 18,
           "discordant": 36,
           "mcnemar_p": 1.0,
-          "mcnemar_p_holm": 1.0
+          "mcnemar_p_holm": 1.0,
+          "mcnemar_p_holm_all_cells": 1.0
         },
         {
           "scheme": "RTN_3B",
           "bits": 3.5,
           "n_correct": 50,
           "accuracy": 0.25,
+          "ci_low": 0.19160716962258753,
+          "ci_high": 0.3159628333298691,
           "lost": 27,
           "gained": 24,
           "discordant": 51,
           "mcnemar_p": 0.7797679305530743,
-          "mcnemar_p_holm": 1.0
+          "mcnemar_p_holm": 1.0,
+          "mcnemar_p_holm_all_cells": 1.0
         },
         {
           "scheme": "RTN_2B",
           "bits": 2.5,
           "n_correct": 0,
           "accuracy": 0.0,
+          "ci_low": 0.0,
+          "ci_high": 0.018275340355136237,
           "lost": 53,
           "gained": 0,
           "discordant": 53,
           "mcnemar_p": 2.220446049250313e-16,
-          "mcnemar_p_holm": 1.5543122344752192e-15
+          "mcnemar_p_holm": 1.5543122344752192e-15,
+          "mcnemar_p_holm_all_cells": 4.6629367034256575e-15
         }
       ]
     }

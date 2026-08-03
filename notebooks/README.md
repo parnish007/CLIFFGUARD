@@ -11,6 +11,14 @@
 
 Nothing else is required. No HuggingFace token, no editing, no manual paths.
 Every model and dataset it touches is public. Expect 60–90 minutes on a T4.
+
+> **This is a reduced replication, not the paper's configuration.** Its defaults
+> are 200 behavioural prompts, 150 GSM8K questions and five rungs
+> (8, 5, 4, 3, 2 code bits). The paper reports 500 prompts, 200 questions and
+> seven rungs (8–2). Raise `N_PROMPTS`, `N_GSM8K` and `BITS` in the config cell
+> to match the paper; that costs roughly 2.5 hours on a T4 rather than 60–90
+> minutes. The reduced defaults exist so a first run finishes inside one Colab
+> session, not because the paper's numbers came from them.
 Each stage checkpoints, so a disconnect costs at most one stage — reconnect and
 `Run all` again.
 

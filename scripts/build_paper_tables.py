@@ -70,7 +70,13 @@ def table_markers(data: dict[str, Any]) -> str:
     lines = [
         r"\begin{tabular}{l" + "r" * len(schemes) + "}",
         r"\toprule",
-        "marker list & " + " & ".join(s.split("_")[1][:-1] for s in schemes) + r" \\",
+        # These headers are CODE bits (8..2), one unit below the stored-bits
+        # axis (8.5..2.5) used everywhere else. Say so in the header rather
+        # than leaving a reader to assume the two axes match.
+        r"marker list & \multicolumn{" + str(len(schemes))
+        + r"}{c}{code bits} \\",
+        r"\cmidrule(lr){2-" + str(len(schemes) + 1) + r"}",
+        " & " + " & ".join(s.split("_")[1][:-1] for s in schemes) + r" \\",
         r"\midrule",
     ]
     for name, row in variants.items():
@@ -94,10 +100,13 @@ def table_transitions(review: dict[str, Any]) -> str:
     a wide layout at two models would run into the margin.
     """
     lines = [
-        r"\begin{tabular}{llrrrrrr}",
+        r"\begin{tabular}{llrrrrrrr}",
         r"\toprule",
+        # Both Holm families, because using the wider one for the simultaneous
+        # bound and the narrower one for the tests would take the friendliest
+        # number from each. $p_{14}$ is primary.
         r"model & bits & $\to$comply & $\to$refuse & gradable & rate (\%) "
-        r"& 95\% upper & $p_{\text{Holm}}$ \\",
+        r"& 95\% upper & $p_{14}$ & $p_{7}$ \\",
         r"\midrule",
     ]
     for i, (model, block) in enumerate(review["transitions"].items()):
@@ -110,6 +119,7 @@ def table_transitions(review: dict[str, Any]) -> str:
                 f"{name} & {r['bits']:.1f} & {r['to_compliance']} & "
                 f"{r['to_refusal']} & {r['n_gradable']} & "
                 f"{100 * r['rate_itt']:.1f} & {100 * r['upper95_itt']:.1f} & "
+                f"{fmt_p(r['mcnemar_p_holm_all_cells'])} & "
                 f"{fmt_p(r['mcnemar_p_holm'])} " + r"\\")
     lines += [r"\bottomrule", r"\end{tabular}"]
     return "\n".join(lines)
@@ -118,9 +128,9 @@ def table_transitions(review: dict[str, Any]) -> str:
 def table_capability_paired(review: dict[str, Any]) -> str:
     """GSM8K with exact McNemar on question-level transitions."""
     lines = [
-        r"\begin{tabular}{llrrrr}",
+        r"\begin{tabular}{llrrrrr}",
         r"\toprule",
-        r"model & bits & acc.\ (\%) & lost & gained & $p_{\text{Holm}}$ \\",
+        r"model & bits & acc.\ (\%) & lost & gained & $p_{21}$ & $p_{7}$ \\",
         r"\midrule",
     ]
     models = [(m, b) for m, b in review["gsm8k"].items() if not m.startswith("_")]
@@ -128,12 +138,13 @@ def table_capability_paired(review: dict[str, Any]) -> str:
         if i:
             lines.append(r"\addlinespace")
         lines.append(
-            f"{model} & FP16 & {100 * block['fp16_accuracy']:.1f} & -- & -- & -- "
+            f"{model} & FP16 & {100 * block['fp16_accuracy']:.1f} & -- & -- & -- & -- "
             + r"\\")
         for r in block["rows"]:
             lines.append(
                 f" & {r['bits']:.1f} & {100 * r['accuracy']:.1f} & {r['lost']} & "
-                f"{r['gained']} & {fmt_p(r['mcnemar_p_holm'])} " + r"\\")
+                f"{r['gained']} & {fmt_p(r['mcnemar_p_holm_all_cells'])} & "
+                f"{fmt_p(r['mcnemar_p_holm'])} " + r"\\")
     lines += [r"\bottomrule", r"\end{tabular}"]
     return "\n".join(lines)
 

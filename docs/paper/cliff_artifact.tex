@@ -270,8 +270,15 @@ k-quants behave.
 
 \paragraph{Models and prompts.} Qwen2.5-1.5B-Instruct and Qwen2.5-3B-Instruct
 \citep{qwen2024report}, and Phi-3.5-mini-instruct \citep{abdin2024phi3}. Prompts
-are 500 first-turn human utterances from Anthropic HH-RLHF
-\citep{bai2022hh}. Completions are greedy, 48 new tokens, left-padded batching.
+are 500 first-turn human utterances from Anthropic HH-RLHF \citep{bai2022hh},
+taken as the first 500 deduplicated rows in file order rather than by random
+draw. This is a fixed benchmark, not a probability sample from a defined
+population, and it matters for how the intervals should be read: the cluster
+bootstrap and the exact binomial bounds quantify variability under resampling
+\emph{these} prompts, which is the right uncertainty for asking whether the same
+procedure on a comparable prompt set would see the same sign. They are not
+warranted as inference to all HH-RLHF utterances, still less to prompts in
+general. Completions are greedy, 48 new tokens, left-padded batching.
 The residual stream, where used, is read at mid-depth resolved from each model's
 own configuration.
 
@@ -361,7 +368,13 @@ dependence on the judge staying on format when shown degraded input. Each label
 is two tokens under this tokenizer, but their \emph{first} tokens are distinct
 (\texttt{\char32REF}, \texttt{\char32COM}, \texttt{\char32UNC}; ids 38029, 7682,
 75255), so the three-way argmax is well defined; the runner asserts this at load
-time rather than assuming it. \textsc{unclear} is kept as its own category and
+time rather than assuming it. We are precise about what this scores: it is an
+argmax over the first token of each label, which is the branch the judge would
+take if it generated, and \emph{not} the total log-probability of the label
+sequence. The two coincide whenever the second token is near-determined given
+the first, which we expect here but did not measure. Summing log-probabilities
+over both tokens would remove the assumption at the cost of a second forward
+pass, and is the version we would run given the budget. \textsc{unclear} is kept as its own category and
 never merged into either decision; it accounts for at most 0.2\% of completions
 at any rung.
 Judge-model grading is standard \citep{zheng2023judging}; we report it alongside
@@ -390,8 +403,9 @@ set, $p$-values are Holm-adjusted within model.
   answered; $\to$refuse the reverse. \emph{gradable} is the number of pairs where
   both sides produced a gradable completion, out of 500. \emph{rate} is
   $\to$comply over all 500 prompts and \emph{95\% upper} its one-sided exact
-  upper bound. $p_{\text{Holm}}$ is the exact McNemar $p$-value adjusted across
-  the seven rungs of that model.}
+  upper bound. Both Holm corrections of the exact McNemar $p$-value are shown:
+  $p_{14}$ over every model $\times$ rung cell in the study, which is the
+  primary column, and $p_{7}$ within one model's ladder.}
   \label{tab:transitions}
 \end{table}
 
@@ -401,10 +415,23 @@ Two readings follow, and they are different claims.
 \textbf{The significant shifts run toward refusal.} At 4.5 bits Qwen2.5-3B newly
 refuses 32 prompts it previously answered against 11 in the opposite direction
 ($p_{\text{Holm}}=0.011$); Phi-3.5-mini shows 21 against 4
-($p_{\text{Holm}}=0.005$). Qwen2.5-3B is also significant at 5.5 bits
-($p_{\text{Holm}}=0.033$). These survive correction for seven comparisons per
-model. Quantization made these models \emph{more} refusing.
+($p_{\text{Holm}}=0.005$). Both survive correction over every model $\times$ rung
+cell in the study. Quantization made these models \emph{more} refusing.
 \end{keybox}
+
+\paragraph{Which family the correction runs over.} The $p$-values above correct
+across the seven rungs of one model. The simultaneous bound in the previous
+paragraph instead treats all 14 model $\times$ rung cells as one family, and
+using a wider family for the bound than for the tests would be a way of getting
+the most favourable number from each. We therefore also correct the tests over
+all 14 cells. The 4.5-bit results survive on both models ($p=0.021$ for
+Qwen2.5-3B, $p=0.011$ for Phi-3.5-mini), and so do the 3.5-bit results. The
+5.5-bit result does not ($p=0.066$). Holm is valid under arbitrary dependence, so
+there is no technical reason to split by model; the only defence for the narrower
+family would be a pre-declared decision to treat each ladder as its own
+experiment, which we did not make. We therefore report the 14-cell correction as
+primary, and the claim we carry forward is the 4.5-bit one, significant under
+either family. Table~\ref{tab:transitions} lists both columns.
 
 \noindent
 The reverse claim needs a different instrument. A non-significant McNemar test is
@@ -628,8 +655,10 @@ degeneracy detector's decisions.
   \input{tables/tab_capability}
   \caption{GSM8K accuracy with exact McNemar on question-level transitions.
   \emph{lost} counts questions FP16 answered correctly and the rung did not;
-  \emph{gained} the reverse. $p_{\text{Holm}}$ is adjusted across the seven rungs
-  of each model. $n=200$ questions.}
+  \emph{gained} the reverse. $p_{21}$ is Holm-adjusted over every model $\times$
+  rung cell, $p_{7}$ within one model. Correctness is answer extraction alone,
+  with no degeneracy gate, so this arm does not inherit the detector's
+  decisions. $n=200$ questions.}
   \label{tab:capability}
 \end{table}
 
@@ -645,9 +674,9 @@ degeneracy detector's decisions.
 The threshold is not a property of bit-width alone: holding quantizer, decoding
 and benchmark fixed, it still moves by a full bit across model families. We say
 nothing about how it would move if those were varied too. Qwen2.5-3B
-is destroyed at 3.5 bits (0.0\% accuracy, 37 questions lost, $p_{\text{Holm}} <
-0.001$) and Qwen2.5-1.5B at the same rung (9.0\%, 40 lost,
-$p_{\text{Holm}}=0.0003$), while Phi-3.5-mini shows no statistically significant
+is destroyed at 3.5 bits (0.0\% accuracy, 37 questions lost, $p_{21} < 0.001$)
+and Qwen2.5-1.5B at the same rung (9.0\%, 40 lost, $p_{21}=0.001$), while
+Phi-3.5-mini shows no statistically significant
 paired difference at 3.5 bits and collapses only at 2.5. We say no significant
 difference was detected rather than that the rungs are equivalent, for the same
 reason given in \S\ref{sec:refusal}.
@@ -661,7 +690,8 @@ report that as capability failure preceding fluency failure, and an unpaired
 binomial test against the FP16 rate would license it at $p=0.010$. That test is
 invalid here --- it treats an accuracy estimated on these same 200 questions as a
 known population rate. The paired exact McNemar test gives $p=0.020$, and after
-Holm correction across the seven rungs, $p_{\text{Holm}}=0.100$. We therefore do
+Holm correction, $p_{7}=0.100$ within this model's ladder and $p_{21}=0.321$
+over every cell in the study. We therefore do
 not claim the ordering. The point estimate and its direction are consistent with
 a threshold just below 4.5 bits, but with $n=200$ and a full-precision accuracy
 near 20\% this design lacks the power to resolve it, and a larger question set is
