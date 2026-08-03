@@ -34,7 +34,7 @@ from scipy.stats import norm
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from cliffguard.eval.discriminability import held_out_d_prime
+from cliffguard.eval.discriminability import d_prime, held_out_d_prime
 
 FloatArray = Any
 
@@ -60,7 +60,11 @@ def main() -> int:
 
     run = args.run or newest_ladder_run(Path("artifacts/runs"))
     manifest = json.loads((run / "manifest.json").read_text(encoding="utf-8"))
-    schemes = manifest["schemes"]
+    if "schemes" in manifest:
+        schemes = manifest["schemes"]
+    else:
+        found = sorted(p.stem for p in (run / "activations").glob("*.npy"))
+        schemes = ["FP16"] + [s for s in found if s != "FP16"]
     baseline = "FP16"
     print(f"run    : {run.name}")
     print(f"model  : {manifest.get('model_id')}   layer {manifest.get('layer')}   "
@@ -69,11 +73,29 @@ def main() -> int:
           f"{args.power:.0%} power, alpha={args.alpha}")
     print()
 
-    acts = {
-        (s, cls): np.load(run / "activations" / f"{s}_{'harmful' if cls == 'h' else 'benign'}.npy")
-        for s in schemes
-        for cls in ("h", "l")
-    }
+    # Prefer MODEL-DERIVED labels when the run has them. The hh-rlhf corpus
+    # partition was shown to agree with the model's own behaviour only 52.4% of
+    # the time, so a power analysis against it measures sensitivity to a random
+    # partition. See docs/corrections_2026-08-03.md.
+    labels_file = run / "results" / "labels.json"
+    if labels_file.exists():
+        refused = np.array(
+            json.loads(labels_file.read_text(encoding="utf-8"))["fp16_refused"], dtype=bool
+        )
+        print(f"labels : MODEL-DERIVED ({int(refused.sum())} refusal / "
+              f"{int((~refused).sum())} compliance)")
+        acts = {}
+        for s in schemes:
+            full = np.load(run / "activations" / f"{s}.npy")
+            acts[(s, "h")] = full[refused]
+            acts[(s, "l")] = full[~refused]
+    else:
+        print("labels : CORPUS (hh-rlhf response heuristic -- near-arbitrary; see corrections)")
+        acts = {
+            (s, c): np.load(run / "activations" / f"{s}_{'harmful' if c == 'h' else 'benign'}.npy")
+            for s in schemes
+            for c in ("h", "l")
+        }
     n_pos = acts[(baseline, "h")].shape[0]
     n_neg = acts[(baseline, "l")].shape[0]
 
@@ -85,23 +107,54 @@ def main() -> int:
     diffs: dict[str, list[float]] = {s: [] for s in schemes if s != baseline}
     point: dict[str, float] = {}
 
+    def paired_d_prime(scheme: str, fit_p: FloatArray, fit_n: FloatArray,
+                       score_p: FloatArray, score_n: FloatArray) -> float:
+        direction = (acts[(scheme, "h")][fit_p].mean(axis=0)
+                     - acts[(scheme, "l")][fit_n].mean(axis=0))
+        norm = float(np.linalg.norm(direction))
+        if norm == 0.0:
+            raise ValueError("zero-norm direction")
+        unit = direction / norm
+
+        def margin(rows: FloatArray) -> FloatArray:
+            return (rows @ unit) / np.linalg.norm(rows, axis=1)
+
+        return d_prime(
+            margin(acts[(scheme, "h")][score_p]),
+            margin(acts[(scheme, "l")][score_n]),
+            fires_high=True,
+        )
+
     for replicate in range(args.bootstrap):
-        # ONE resample, applied to every scheme: the schemes share prompts.
-        idx_pos = rng.integers(0, n_pos, n_pos)
-        idx_neg = rng.integers(0, n_neg, n_neg)
-        seed = int(rng.integers(0, 2**31 - 1))
+        # Split into disjoint fit/score halves FIRST, then bootstrap within each
+        # half separately.
+        #
+        # The obvious ordering -- resample with replacement, then half-split --
+        # is wrong, and it was the first version of this script. Duplicate copies
+        # of the same original prompt land in both halves, so the direction is
+        # fitted on prompts it is then scored against. That leaks training data
+        # into test and makes the MDE optimistic. Found by adversarial review;
+        # the numbers from the old version are not quoted anywhere.
+        perm_pos, perm_neg = rng.permutation(n_pos), rng.permutation(n_neg)
+        half_pos, half_neg = n_pos // 2, n_neg // 2
+        fit_pos, score_pos = perm_pos[:half_pos], perm_pos[half_pos : 2 * half_pos]
+        fit_neg, score_neg = perm_neg[:half_neg], perm_neg[half_neg : 2 * half_neg]
+
+        boot_fit_pos = fit_pos[rng.integers(0, len(fit_pos), len(fit_pos))]
+        boot_fit_neg = fit_neg[rng.integers(0, len(fit_neg), len(fit_neg))]
+        boot_score_pos = score_pos[rng.integers(0, len(score_pos), len(score_pos))]
+        boot_score_neg = score_neg[rng.integers(0, len(score_neg), len(score_neg))]
+
         try:
-            base_d, _ = held_out_d_prime(
-                acts[(baseline, "h")][idx_pos], acts[(baseline, "l")][idx_neg],
-                n_splits=args.splits, fires_high=True, seed=seed,
+            base_d = paired_d_prime(
+                baseline, boot_fit_pos, boot_fit_neg, boot_score_pos, boot_score_neg
             )
         except ValueError:
             continue
         for scheme in diffs:
             try:
-                scheme_d, _ = held_out_d_prime(
-                    acts[(scheme, "h")][idx_pos], acts[(scheme, "l")][idx_neg],
-                    n_splits=args.splits, fires_high=True, seed=seed,
+                scheme_d = paired_d_prime(
+                    scheme, boot_fit_pos, boot_fit_neg, boot_score_pos, boot_score_neg
                 )
             except ValueError:
                 continue
@@ -149,13 +202,25 @@ def main() -> int:
         mde = rows[worst]["mde_at_power"]
         print(f"\nLargest MDE across schemes: {mde:.4f} d' units "
               f"({mde / base_point:.1%} of d'_0), at {worst}.")
+        detected = [s for s, r in rows.items() if r["observed_is_detectable"]]
+        null_only = [s for s, r in rows.items() if not r["observed_is_detectable"]]
         print()
-        print("How to state the null honestly:")
-        print(f"  A degradation larger than {mde:.3f} d' units ({mde / base_point:.0%} of the")
-        print(f"  full-precision value) would have been detected at {args.power:.0%} power.")
-        print("  The observed changes are all smaller than that, so the claim is bounded:")
-        print("  quantization does not cost more than that much discriminability ON THIS")
-        print("  READOUT. It is NOT a claim that nothing changed.")
+        print("How to state this honestly:")
+        if detected:
+            print(f"  DETECTED degradation at: {', '.join(sorted(detected))}. For these the")
+            print("  observed drop exceeds the minimum detectable effect, so it is a positive")
+            print("  finding, not a null.")
+        for scheme in sorted(null_only):
+            row = rows[scheme]
+            print(f"  {scheme}: no detected change; degradation above "
+                  f"{row['mde_at_power']:.3f} d' units "
+                  f"({row['mde_as_fraction_of_d0']:.0%} of d'_0) is ruled out at "
+                  f"{args.power:.0%} power.")
+        print()
+        print("  Each bound applies to THIS READOUT only. A tight bound on probe")
+        print("  discriminability is not a bound on behaviour: the same run shows")
+        print("  coherent unsafe flips rising to 48% at 3 bits while the probe still")
+        print("  retains 82% of d'_0.")
 
     out = run / "results" / "dprime_power.json"
     out.write_text(json.dumps({

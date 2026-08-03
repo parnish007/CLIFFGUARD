@@ -20,11 +20,25 @@ independent of the readout's firing direction. For a fires-LOW readout such
 as PROBE-RM (harmful prompts sit at LOWER margin), pass fires_high=False and
 the sign is handled internally.
 
-Important property (see docs/theory_panel_2026-08.md §2.4): d' is invariant
-under any strictly increasing transform of the score, because such a
-transform maps every threshold to an image threshold and leaves the ROC
-unchanged. Threshold recalibration therefore cannot restore lost d' — which
-is why fixing defect D0 is necessary but not sufficient.
+Invariance, stated correctly. d' is invariant under a common POSITIVE AFFINE
+rescaling of both classes, ``s -> a*s + b`` with ``a > 0``, because mean and
+standard deviation scale together and their ratio is unchanged.
+
+It is NOT invariant under an arbitrary strictly increasing transform. That
+stronger property belongs to the ROC and hence to AUC: a monotone map moves
+every threshold to an image threshold and preserves ranks, but it distorts
+means and variances, so ``(mu_pos - mu_neg) / sigma_pooled`` changes. An
+earlier version of this docstring claimed the stronger property; it was wrong,
+and the error mattered because it was used to argue that the norm-normalised
+margin ``<a, r> / ||a||`` could not affect d'. Per-example division by
+``||a(x)||`` is not a common affine map — the divisor varies by example — so
+that argument does not hold and the normalisation had to be tested empirically
+instead (see scripts/analyse_margin_normalisation.py).
+
+What survives, and is what the project actually needs: threshold
+recalibration cannot restore lost d', because moving a single threshold slides
+along the ROC rather than changing it. Fixing defect D0 is therefore necessary
+but not sufficient.
 """
 
 from __future__ import annotations

@@ -8,29 +8,34 @@ what remains. Update the evidence column as results land; never let a claim's st
 
 ## 0. The single most important line in this document
 
-> **The geometry behaves exactly as the theory predicts. The behaviour does not follow it.
-> Falsifier F5 has fired.**
+> **RTN quantization produces a safety cliff between 5 and 3 bits that a linear
+> refusal probe substantially understates. Four earlier headline findings were
+> retracted on 2026-08-03 after adversarial review.**
 
-A full 7-rung ladder now exists: `artifacts/runs/20260803-075641_dafdc44_local-ladder-rtn-qwen1.5b`,
-Qwen2.5-1.5B-Instruct, n=250/class, round-to-nearest at 8→2 bits. Full write-up in
-[`results_local_ladder.md`](results_local_ladder.md). In one paragraph:
+Read [`corrections_2026-08-03.md`](corrections_2026-08-03.md) before citing
+anything here. In brief, the first pass was measured against a corpus partition
+that agrees with the model's own behaviour only **52.4 %** of the time —
+`download_fold_a.py` labels by whether hh-rlhf's *rejected response* contains a
+refusal marker, which is a property of the response, not the prompt. Every
+"harmful"/"benign" statement built on it was false.
 
-The FP16→quantized rotation of the refusal direction **replicates at 8/8 rungs** (z = 15–26) and
-grows smoothly from 1.77° to 88.69°, roughly doubling per bit removed. Weight-space η follows
-`η₄·base^(4−b)` with **base = 4.355, 95 % CI [4.114, 4.611], R² = 0.9989** — the interval excludes
-4, so A3's assumed base is rejected while the law itself is confirmed with a sharper constant. And
-**held-out d′ does not move**: 0.4129 at FP16, 0.3914 at 2 bits, against a standard deviation of
-0.085 — no detectable degradation at a rung where η has grown 7400× and the direction has rotated
-88.7°. The η(weights)/η(d′ decay) ratio spans **374×** and falls monotonically.
+With model-derived labels (`scripts/run_behavioural_ladder.py`, 500 prompts,
+real generations from every rung):
 
-The prior version of this line read "we currently have zero validated empirical results." That is
-no longer true, and the replacement is not the result the theory wanted.
+| bits | coherent unsafe flips | frozen-probe d′ retained |
+|---|---|---|
+| 5 | 3.2 % | 99.0 % |
+| 4 | 15.2 % | 99.4 % |
+| 3 | **48.0 %** | 87.3 % |
+| 2 | 0 % (100 % degenerate) | −2.4 % |
 
-**The load-bearing caveat.** `d′₀ = 0.41` is a *label ceiling*, not a model property: "refused"
-describes the hh-rlhf rejected response, not what this model does. The honest claim is therefore
-narrow — *within the range this probe can measure*, quantization-induced rotation does not reduce
-discriminability. It is **not** "quantization is safe". Deriving labels from the target model's own
-completions is the highest-value next step and is not yet built.
+At 3 bits the model has stopped refusing on nearly half the prompts it
+previously refused, while the probe still reports 87 % of its separating power.
+**Probe metrics are not valid safety certificates for quantized checkpoints.**
+
+At 2 bits the model degenerates entirely — a *capability* failure, reported
+separately. Merging it with safety failure produces a false 93.8 % unsafe-flip
+rate, which an earlier version of this work did.
 
 ---
 
@@ -40,18 +45,18 @@ completions is the highest-value next step and is not yet built.
 
 | # | Claim | Type | Status |
 |---|---|---|---|
-| **C1** | Quantization degrades behaviour by **inflating variance** on the behavioural subspace, not by rotating or selectively destroying it. | Mechanism | **Rotation half supported, degradation half refuted.** The rotation is real and systematic (8/8 replicate, z = 15–26, 1.77°→88.69°) but produces no measurable d′ loss. Rotation and degradation are **decoupled**. |
-| **C2** | Discriminability follows `d'(q) = d'₀(1+η_q)^(−1/2)`, with **η measurable from weights + benign activations only** — no harmful prompts, no judge, no labels. | Predictive law | **Mechanism REFUTED on Qwen2.5-1.5B (F5 fired).** η(weights) rises 7400× while η(d′) rises ~20×; their ratio spans 374× and falls monotonically. The weight→behaviour transfer is strongly compressive, not the identity the law assumes. |
-| **C3** | The apparent "cliff" is a **threshold-crossing artifact**, not a phase transition. `d'(b)` is smooth; the sigmoid makes it look sharp. Predicted collapse at `b* ≈ 2.94` bits. | Shape claim | **Untestable on this run.** `b*` is undefined because `d′₀ = 0.413 < z₀.₉₅ = 1.645`. Stage 4's "3/4 within 1 sd" is a flat prediction matching a flat measurement and carries almost no information. |
-| **C4** | Which sector collapses first is set by its **composition rule**: long chains and rare failures break before single-shot decisions. `b*(4T) − b*(T) → 1 bit`. | Ordering law | Derived; **not yet tested** — blocked behind C3 having a defined `b*`. |
-| **C5** | **Isotropy is a property of the quantizer, not of quantization.** RTN/NF4/GGUF isotropic → cliff; AWQ/GPTQ anisotropic → no cliff. | Conjecture | **Premise false, effect real, needs restating.** RTN is *not* isotropic (null rejected 7/8 rungs), so the isotropic-vs-anisotropic framing fails. But the controlled arm settles the underlying question: at an **identical bit budget**, salience-aware quantization rotates the direction **22–26 % less** while injecting **1.5–2.0× more total weight noise**. The distinction is not *whether* damage is concentrated but **where it points**. Effect vanishes at 2 bits, where both saturate near orthogonality. |
-| **A3** | `η(b) = η₄ · 4^(4−b)` — the noise-to-signal ratio quadruples per bit removed. | Assumption | **Confirmed in form, rejected in constant.** Measured base **4.355, 95 % CI [4.114, 4.611]**, R² = 0.9989, n = 7. The interval excludes 4. Theorem 2 should carry a measured base. Interval is model-conditional (rungs share weights, direction, activation sample). |
+| **C1** | Quantization degrades behaviour by **inflating variance** on the behavioural subspace. | Mechanism | **Consistent, not established.** The frozen FP16 readout decays 100 % → 99.4 % → 87.3 % → −2.4 % across 8/4/3/2 bits, which Theorem 1 permits. The earlier "rotation and degradation are decoupled" claim was withdrawn: it compared a refit probe against a refit probe. |
+| **C2** | Discriminability follows `d'(q) = d'₀(1+η_q)^(−1/2)`, with η measurable from weights and benign activations. | Predictive law | **Not refuted; imprecisely calibrated.** F5's η(weights)/η(d′) ratio spans **9.2×** under model-derived labels, down from the 374× reported against the bad partition. η remains an `eta_proxy` over 14 `down_proj` matrices, not total perturbation. |
+| **C3** | The cliff is a **threshold-crossing artifact**; `d'(b)` is smooth. | Shape claim | **Untested.** `b*` is undefined because the operating-point model does not apply to a generative refusal decision. The behavioural cliff between 5 and 3 bits is real but is not shown to be a threshold artifact. |
+| **C4** | Sector ordering: different behaviours break at different, predictable bit-widths. | Ordering law | **In progress.** GSM8K arm running (`scripts/run_sector_ladder.py`); scored against gold answers, so it does not inherit the corpus defect. |
+| **C5** | Isotropy is a property of the quantizer. | Conjecture | **Premise false; effect measured but reinterpreted.** RTN is not isotropic. At identical bit budget, salience-aware quantization rotates the direction 22–26 % less while injecting more total projected error. The `irrecoverable_fraction` evidence is **withdrawn** — it is identically cos²(θ/2). |
+| **A3** | `η(b) = η₄ · 4^(4−b)`. | Assumption | **NOT rejected.** The earlier rejection was an artifact: the quantizer uses `levels = 2^b − 1`, so fitting the *theoretical* sequence gives 4.3429 against a measured 4.3552. The number is the implementation's arithmetic. |
 
 ### Tier 2 — the limits (what cannot be done)
 
 | # | Claim | Type | Status |
 |---|---|---|---|
-| **C6** | Threshold/affine recalibration **cannot** restore lost discriminability (ROC invariance). | Proved (i) | **Proved**; empirically corroborated (99 % of damage orthogonal) — corroboration gated on C0 |
+| **C6** | Threshold recalibration **cannot** restore lost discriminability. | Proved (i) | **Proved for a single threshold** (moving it slides along the ROC). The "99 % of damage is orthogonal" corroboration is **withdrawn**: that statistic is identically cos²(θ/2), and it decomposes two aggregate unit directions rather than per-example score noise, so it says nothing about recoverability. Note also that d′ is invariant only under a *common positive affine* rescaling, not under arbitrary monotone maps — that is an AUC property, and the module docstring claiming otherwise has been corrected. |
 | **C7** | No function of a **frozen quantized checkpoint alone** can uniformly recover FP16 behaviour (DPI + quantization-cell collision). | Proved (i) | **Proved** |
 | **C8** | Quantization error is **deterministic** given the weights, so self-consistency / repeated sampling cannot average it away. | Proved (i) | **Proved** (refutes our own earlier `d'√T` conjecture) |
 

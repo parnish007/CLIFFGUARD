@@ -211,3 +211,21 @@ def test_random_direction_distance_approaches_sqrt2() -> None:
 def test_random_direction_distance_rejects_tiny_dimension() -> None:
     with pytest.raises(ValueError, match="dimension"):
         random_direction_distance(1)
+
+
+def test_irrecoverable_fraction_is_exactly_cos_squared_half_angle() -> None:
+    """It is a function of the angle alone, and nothing else.
+
+    Pinned because a results write-up once reported its decline across a
+    quantization ladder as a counterintuitive empirical finding. It is
+    trigonometry: any trend in it is the angle trend restated.
+    """
+    import math
+
+    rng = np.random.default_rng(0)
+    for _ in range(12):
+        a = rng.normal(size=64)
+        b = rng.normal(size=64)
+        res = isotropy_test(a, b, n_null=20, seed=0)
+        expected = math.cos(math.radians(res.angle_deg) / 2.0) ** 2
+        assert res.irrecoverable_fraction == pytest.approx(expected, abs=1e-9)

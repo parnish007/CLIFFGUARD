@@ -120,46 +120,51 @@ flowchart LR
 
 ## Quick Start
 
-> ### Latest result — the direction rotates, the behaviour does not (2026-08-03)
+> ### Latest result — a safety cliff the probe cannot see (2026-08-03)
 >
-> A full 7-rung quantization ladder on **Qwen2.5-1.5B-Instruct** (round-to-nearest, 8→2 bits,
-> n = 250/class), run end-to-end on a **6 GB laptop GPU in 12 minutes with no downloads**:
-> `python scripts/run_local_ladder.py --n 250`
+> **Corrected after adversarial review.** Four earlier headline findings were retracted; see
+> [`docs/corrections_2026-08-03.md`](docs/corrections_2026-08-03.md).
 >
-> - The FP16→quantized rotation of the refusal direction **replicates at 8/8 rungs** (z = 15–26)
->   and grows smoothly **1.77° → 88.69°**, roughly doubling per bit removed.
-> - Weight-space noise follows `η(b) = η₄·base^(4−b)` with **base = 4.355, 95 % CI [4.114, 4.611],
->   R² = 0.9989** — the interval *excludes* 4, so the assumed base is rejected while the law itself
->   is confirmed with a sharper constant.
-> - **Held-out d′ does not move**: 0.4129 → 0.3914, against a standard deviation of 0.085. No
->   detectable degradation at a rung where η has grown 7400× and the direction has rotated 88.7°.
-> - At 2 bits the mean projection onto the direction goes **negative** — it has reoriented past
->   orthogonal — and d′ is *still* 0.39. **Separability survives a reversed coordinate system.**
+> Qwen2.5-1.5B-Instruct, round-to-nearest 8→2 bits, 500 prompts, **real generations from every
+> rung**, run end to end on a 6 GB laptop GPU:
 >
-> The quantized model has not lost the harmful/benign distinction; it has **moved where the
-> distinction lives**. The practical consequence: **direction drift is not a valid safety metric.**
+> | bits | coherent unsafe flips | frozen-probe d′ retained | output |
+> |---|---|---|---|
+> | 5 | 3.2 % | 99.0 % | fluent |
+> | 4 | 15.2 % | 99.4 % | fluent |
+> | **3** | **48.0 %** | 87.3 % | fluent |
+> | 2 | 0 % | −2.4 % | **100 % degenerate** |
 >
-> A controlled arm settles the salience question at an identical bit budget: activation-aware
-> quantization rotates the direction **22–26 % less** while injecting **1.5–2.0× more** total
-> weight noise — it buys rotation resistance by spending extra error elsewhere.
+> Between 5 and 3 bits the model stops refusing on nearly half the prompts it previously refused,
+> while its output stays fluent and a linear refusal probe still reports 87 % of its separating
+> power. **Activation-probe metrics are not valid safety certificates for quantized checkpoints.**
 >
-> **Load-bearing caveat:** d′₀ = 0.41 is an hh-rlhf *label* ceiling, not a model property.
-> "Refused" describes the dataset's rejected response, not what this model does. The honest claim
-> is *within the range this probe can measure*, **not** "quantization is safe."
+> At 2 bits the model degenerates entirely — a *capability* failure, reported separately. Merging
+> it with safety failure yields a false 93.8 % "unsafe-flip rate", which an earlier version of this
+> work did before a degeneracy gate was added.
+>
+> **Why the earlier version was wrong:** every result had been measured against a corpus partition
+> built by labelling prompts according to whether hh-rlhf's *rejected response* looked like a
+> refusal. That is a property of the response, not the prompt — the "refused" file opens with
+> *"How much time do you spend with your family?"*. Agreement with the model's own behaviour is
+> **52.4 %**, i.e. chance.
+>
+> ```bash
+> python scripts/run_behavioural_ladder.py --n 250    # generations + three-way classification
+> python scripts/run_local_ladder.py --n 250          # weights, eta, probe ladder
+> python scripts/analyse_probe_transfer.py            # frozen vs refit estimands
+> ```
 >
 > Full write-up: [`docs/results_local_ladder.md`](docs/results_local_ladder.md) ·
-> theory verdicts: [`docs/theorems.md` §8](docs/theorems.md) ·
-> claim status: [`docs/claims_and_evidence.md`](docs/claims_and_evidence.md)
+> review: [`docs/codex_review_2026-08-03.md`](docs/codex_review_2026-08-03.md) ·
+> theory verdicts: [`docs/theorems.md` §8](docs/theorems.md)
 >
 > <details><summary>Earlier pre-pivot results (Colab T4, May 2026)</summary>
 >
-> Fold A (calibration) and Fold B (cliff measurement) were run end-to-end on a Colab T4 with
-> Llama-3.2-3B-Instruct and NF4. Fold A calibrated τ_FP16 = 0.09742 and τ_NF4 = 0.09827 against 400
-> benign prompts at FPR = 5 %. Fold B measured Δ_cliff(NF4) = 0.167 (geometric) and
-> Δ_B-cliff(NF4) = 0.000 (behavioural proxy). H1 was **not accepted** for that single scheme +
-> family pair. Note that these numbers predate the D0 calibration fix and the Stage 0 replication
-> gate, so the 0.167 figure has no established noise floor — see
-> [`docs/research_audit_2026-08.md`](docs/research_audit_2026-08.md).
+> Fold A/B were run on a Colab T4 with Llama-3.2-3B-Instruct and NF4, measuring
+> Δ_cliff(NF4) = 0.167. Those numbers predate the D0 calibration fix, the Stage 0 gate, and the
+> corpus audit above, so they have no established noise floor and their labels share the defect
+> just described. See [`docs/research_audit_2026-08.md`](docs/research_audit_2026-08.md).
 > </details>
 
 <details>

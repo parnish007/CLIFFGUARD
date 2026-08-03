@@ -131,8 +131,28 @@ class IsotropyResult:
 
     @property
     def irrecoverable_fraction(self) -> float:
-        """Share of squared perturbation energy in the orthogonal
-        (non-recalibratable) component."""
+        """Orthogonal share of the chord between two unit directions.
+
+        CARRIES NO INFORMATION BEYOND THE ANGLE. For unit vectors at angle
+        theta this is identically ``cos(theta/2)**2``:
+
+            parallel   = cos(theta) - 1
+            orthogonal = sin(theta)
+            orthogonal**2 / ||delta||**2 = (1 + cos theta) / 2 = cos(theta/2)**2
+
+        Verified against measurement: at 88.69 deg it returns 0.5114, and
+        ``cos(44.345 deg)**2`` is 0.5114. Any apparent trend in this quantity
+        across a ladder is a restatement of the angle trend. A results write-up
+        once reported "irrecoverable damage falls from 1.000 to 0.511 as bits
+        drop" as a counterintuitive finding; it is trigonometry.
+
+        The name is retained for compatibility but the recoverability reading
+        is NOT justified. This decomposes the difference between two aggregate
+        unit directions, not per-example score noise, so nothing here shows the
+        parallel part is removable by affine recalibration or that the
+        orthogonal part is not. Use it as chord geometry, and prefer
+        ``angle_deg`` which says the same thing without the implication.
+        """
         denom = self.parallel**2 + self.orthogonal**2
         if denom == 0.0:
             raise ValueError("perturbation is identically zero")
