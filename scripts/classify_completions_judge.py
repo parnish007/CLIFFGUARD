@@ -48,7 +48,8 @@ from scripts.run_behavioural_ladder import (
     REFUSAL_MARKERS,
     has_refusal_marker,
 )
-from scripts.run_local_ladder import MODEL_ID, load_fp16_model, load_prompts
+import scripts.run_local_ladder as ladder
+from scripts.run_local_ladder import load_fp16_model, load_prompts
 
 FloatArray = Any
 
@@ -135,9 +136,16 @@ def judge_batch(
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("run", type=Path)
+    ap.add_argument("--judge-model", default=None,
+                    help="checkpoint used to GRADE completions. Defaults to the model under "
+                         "test, which is only adequate if that model is large enough: a 1.5B "
+                         "self-judge was measured saturating at 100%% REFUSE, including on "
+                         "plainly helpful answers. Use a 7-8B instruct model or a purpose-built "
+                         "safety classifier.")
     ap.add_argument("--batch-size", type=int, default=8)
-    ap.add_argument("--nll-cache", type=Path,
-                    default=Path("artifacts/behavioural_cache/nll_n500_t48.json"))
+    ap.add_argument("--nll-cache", type=Path, default=None,
+                    help="per-completion NLL from the behavioural run. Defaults to the copy "
+                         "inside the run directory, so a fresh clone needs no external path.")
     args = ap.parse_args()
 
     import torch
@@ -148,7 +156,28 @@ def main() -> int:
     n_prompts = int(manifest["n_prompts"])
     schemes = ["FP16"] + [f"RTN_{b}B" for b in manifest["bits"]]
 
+    # The model under test supplies the prompts and the NLL reference; the judge
+    # is a separate choice and should normally be a bigger model.
+    under_test = str(manifest.get("model_id") or ladder.MODEL_ID)
+    ladder.MODEL_ID = args.judge_model or under_test
+    judge_model_id = ladder.MODEL_ID
+    print(f"under test : {under_test}")
+    print(f"judge      : {judge_model_id}"
+          + ("   (SAME as the model under test -- see --judge-model)"
+             if judge_model_id == under_test else ""))
+
+    if args.nll_cache is None:
+        candidate = args.run / "results" / "completion_nll.json"
+        if not candidate.exists():
+            raise SystemExit(
+                f"no NLL file at {candidate}. Re-run scripts/run_behavioural_ladder.py, "
+                "which now writes it into the run directory, or pass --nll-cache."
+            )
+        args.nll_cache = candidate
+
+    ladder.MODEL_ID = under_test
     harmful, benign = load_prompts(n_prompts // 2)
+    ladder.MODEL_ID = judge_model_id
     prompts = harmful + benign
     completions = {
         s: json.loads((args.run / "results" / f"completions_{s}.json").read_text(encoding="utf-8"))
@@ -196,7 +225,7 @@ def main() -> int:
 
     # ---- model judge -----------------------------------------------------
     print("\n=== model judge (FP16 grading every completion) ===")
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
+    tokenizer = AutoTokenizer.from_pretrained(judge_model_id)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     model = load_fp16_model()
@@ -273,7 +302,7 @@ def main() -> int:
 
     out = args.run / "results" / "judge_classification.json"
     out.write_text(json.dumps({
-        "judge_model": MODEL_ID, "labels": LABELS,
+        "judge_model": judge_model_id, "model_under_test": under_test, "labels": LABELS,
         "degeneracy_threshold": threshold,
         "marker_variant_sensitivity": sensitivity,
         "results": results,

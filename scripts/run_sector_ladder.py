@@ -48,8 +48,8 @@ from scripts.run_behavioural_ladder import (
     generate_batched,
     score_nll,
 )
+import scripts.run_local_ladder as ladder
 from scripts.run_local_ladder import (
-    MODEL_ID,
     load_fp16_model,
     load_rtn_model,
     rtn_bits_per_parameter,
@@ -122,6 +122,7 @@ def load_gsm8k(n: int) -> tuple[list[str], list[float]]:
 
 def main() -> int:  # noqa: C901 - linear experiment script
     ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--model", default=ladder.MODEL_ID, help="HF checkpoint under test")
     ap.add_argument("--n", type=int, default=200, help="GSM8K problems")
     ap.add_argument("--bits", type=int, nargs="*", default=[8, 7, 6, 5, 4, 3, 2])
     ap.add_argument("--group", type=int, default=64)
@@ -136,9 +137,13 @@ def main() -> int:  # noqa: C901 - linear experiment script
     from transformers import AutoTokenizer
 
     sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]
+    ladder.MODEL_ID = args.model          # loaders read the module global
+    args.cache = args.cache / "".join(
+        c if (c.isalnum() or c in "-_.") else "-" for c in args.model
+    )
     args.cache.mkdir(parents=True, exist_ok=True)
 
-    print(f"model: {MODEL_ID}")
+    print(f"model: {args.model}")
     print(f"GPU: {torch.cuda.get_device_name(0)}")
     questions, golds = load_gsm8k(args.n)
     print(f"GSM8K: {len(questions)} problems")
@@ -151,7 +156,7 @@ def main() -> int:  # noqa: C901 - linear experiment script
         for q in questions
     ]
 
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
+    tokenizer = AutoTokenizer.from_pretrained(args.model)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
@@ -258,7 +263,7 @@ def main() -> int:  # noqa: C901 - linear experiment script
 
     run = new_run(
         args.label,
-        model_id=MODEL_ID,
+        model_id=args.model,
         extra={
             "stage": "sector_ladder", "sector": "reasoning_gsm8k",
             "dataset": "openai/gsm8k main test", "n_problems": len(prompts),

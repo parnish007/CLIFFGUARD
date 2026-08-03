@@ -53,8 +53,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from cliffguard.eval.discriminability import held_out_d_prime
 from cliffguard.eval.storage import new_run, record_corpus, record_environment
+import scripts.run_local_ladder as ladder
 from scripts.run_local_ladder import (
-    MODEL_ID,
     load_fp16_model,
     load_prompts,
     load_rtn_model,
@@ -270,10 +270,12 @@ def collect_activations(
 
 def main() -> int:  # noqa: C901 - linear experiment script
     ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--model", default=ladder.MODEL_ID, help="HF checkpoint under test")
     ap.add_argument("--n", type=int, default=250, help="prompts per source class")
     ap.add_argument("--bits", type=int, nargs="*", default=[8, 7, 6, 5, 4, 3, 2])
     ap.add_argument("--group", type=int, default=64)
-    ap.add_argument("--layer", type=int, default=14)
+    ap.add_argument("--layer", type=int, default=-1,
+                    help="residual-stream read point; -1 selects mid-depth for the model")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--splits", type=int, default=50)
     ap.add_argument("--max-new-tokens", type=int, default=48)
@@ -287,11 +289,29 @@ def main() -> int:  # noqa: C901 - linear experiment script
     from transformers import AutoTokenizer
 
     sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]
+    # The loader helpers read ladder.MODEL_ID, so the module global is the single
+    # place the checkpoint choice must land. `from ... import MODEL_ID` would bind
+    # a copy here and silently keep loading the default.
+    ladder.MODEL_ID = args.model
+    args.cache = args.cache / "".join(
+        c if (c.isalnum() or c in "-_.") else "-" for c in args.model
+    )
     args.cache.mkdir(parents=True, exist_ok=True)
     if args.smoke:
         args.splits = 8
 
-    print(f"model: {MODEL_ID}")
+    if args.layer < 0:
+        # Mid-depth, matching the 14/28 read point used on the 1.5B model. Reading
+        # the config avoids hardcoding a layer index that is meaningless on a model
+        # with a different depth -- 14 is the middle of 28 layers and near the end
+        # of a 16-layer model.
+        from transformers import AutoConfig
+
+        n_layers = int(AutoConfig.from_pretrained(args.model).num_hidden_layers)
+        args.layer = n_layers // 2
+        print(f"layer: auto-selected {args.layer} (mid-depth of {n_layers})")
+
+    print(f"model: {args.model}")
     print(f"GPU: {torch.cuda.get_device_name(0)}")
 
     harmful, benign = load_prompts(args.n)
@@ -301,7 +321,7 @@ def main() -> int:  # noqa: C901 - linear experiment script
     source = ["hh_refused"] * len(harmful) + ["hh_benign"] * len(benign)
     print(f"corpus: {len(prompts)} prompts ({len(harmful)} hh-refused + {len(benign)} hh-benign)")
 
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
+    tokenizer = AutoTokenizer.from_pretrained(args.model)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
@@ -457,7 +477,7 @@ def main() -> int:  # noqa: C901 - linear experiment script
     # ---- persist ---------------------------------------------------------
     run = new_run(
         args.label,
-        model_id=MODEL_ID,
+        model_id=args.model,
         extra={
             "stage": "behavioural_ladder", "layer": args.layer, "n_prompts": len(prompts),
             "bits": args.bits, "group": args.group, "seed": args.seed,
@@ -499,6 +519,9 @@ def main() -> int:  # noqa: C901 - linear experiment script
     for name in schemes:
         run.save_json(f"completions_{name}", {"completions": completions[name]})
         run.save_array("activations", f"{name}", activations[name])
+    # The judge script needs these; writing them into the run directory keeps it
+    # self-contained instead of depending on a cache path from a previous session.
+    run.save_json("completion_nll", {k: v.tolist() for k, v in nll.items()})
     run.save_json("behavioural_ladder", behavioural)
     run.save_json("dprime_model_labels", dprime)
     run.save_json("labels", {
