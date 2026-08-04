@@ -186,6 +186,30 @@ CHECKS: tuple[Check, ...] = (
           lambda s: _fmt(_gate_row(s, "Qwen2.5-3B", 4.5)["marker_composite"]
                          / _gate_row(s, "Qwen2.5-3B", 4.5)["judge_composite"], 1),
           lambda v: _rx(rf"a factor\s+of {v}")),
+    # ---- what the refusal class contains ---------------------------------
+    Check("audit: new refusals",
+          lambda s: str(s["refusal_class_audit"]["Qwen2.5-3B"]["n_new_refusals"]),
+          lambda v: _rx(rf"We read the {v}")),
+    Check("audit: with marker",
+          lambda s: str(s["refusal_class_audit"]["Qwen2.5-3B"]
+                        ["n_new_refusals_with_marker"]),
+          lambda v: _rx(rf"Only {v} of the 32 contain a refusal marker")),
+    Check("audit: mean length new refusals",
+          lambda s: _fmt(s["refusal_class_audit"]["Qwen2.5-3B"]
+                         ["mean_len_new_refusals"], 0),
+          lambda v: _rx(rf"mean length is {v} characters")),
+    Check("audit: FP16 marker share",
+          lambda s: _fmt(100 * s["refusal_class_audit"]["Qwen2.5-3B"]
+                         ["fp16_marker_share"], 0),
+          lambda v: _rx(rf"{v}") + r"\\?%\s+of\s+it\s+contains\s+a"),
+    Check("audit: rung marker share",
+          lambda s: _fmt(100 * s["refusal_class_audit"]["Qwen2.5-3B"]
+                         ["rung_marker_share"], 0),
+          lambda v: _rx(rf"against {v}") + r"\\?%\s+at\s+4\.5\s+bits"),
+    Check("audit: Phi marker share shift",
+          lambda s: _fmt(100 * s["refusal_class_audit"]["Phi-3.5-mini"]
+                         ["rung_marker_share"], 0),
+          lambda v: _rx("rises from 16") + r"\\?%\s+to\s+" + v + r"\\?%"),
     # ---- capability -------------------------------------------------------
     Check("GSM8K FP16 accuracy",
           lambda s: f"{100 * s['gsm8k']['Qwen2.5-3B']['fp16_accuracy']:.1f}",
@@ -307,6 +331,18 @@ DATA_CHECKS: tuple[Check, ...] = (
 )
 
 
+def live_tex(source: str) -> str:
+    """Strip what the reader never sees, so a check cannot be satisfied by it.
+
+    Matching against raw source means a commented-out or \iffalse-disabled
+    sentence carrying the right number passes the assertion while the rendered
+    paper says something else, or nothing. Percent signs escaped as \% are
+    not comments and must survive.
+    """
+    without_inactive = re.sub(r"\\iffalse\\b.*?\\fi\\b", "", source, flags=re.S)
+    return re.sub(r"(?<!\\)%.*", "", without_inactive)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--tex", type=Path,
@@ -319,7 +355,7 @@ def main() -> int:
 
     stats = json.loads(args.stats.read_text(encoding="utf-8"))
     data = json.loads(args.data.read_text(encoding="utf-8"))
-    text = args.tex.read_text(encoding="utf-8")
+    text = live_tex(args.tex.read_text(encoding="utf-8"))
 
     failures: list[str] = []
     print(f"{'quantity':34s} {'expected':16s} status")

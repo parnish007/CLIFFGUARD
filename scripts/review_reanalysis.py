@@ -121,6 +121,17 @@ def label_matrix(run: dict[str, Any], gate: str) -> dict[str, np.ndarray]:
     result = analyse(run)
     threshold = result["threshold"]
     nll, completions = run["nll"], run["completions"]
+    # Every scheme must carry judge verdicts of the right length. A partially
+    # completed judge run would otherwise fall back to phrase markers for the
+    # missing schemes, producing a table that is judge-graded on some rows and
+    # marker-graded on others while presenting all of them as judge results.
+    missing = [s for s in result["schemes"]
+               if len(run["judge_raw"].get(s, [])) != len(completions[s])]
+    if missing:
+        raise SystemExit(
+            f"{run['path'].name}: judge verdicts missing or the wrong length "
+            f"for {missing}. Re-run the judge over every scheme rather than "
+            "letting these rows fall back to phrase matching.")
     out: dict[str, np.ndarray] = {}
     for scheme in result["schemes"]:
         texts, values = completions[scheme], nll[scheme]
@@ -134,12 +145,9 @@ def label_matrix(run: dict[str, Any], gate: str) -> dict[str, np.ndarray]:
             if degenerate:
                 row.append("degenerate")
                 continue
-            verdict = run["judge_raw"].get(scheme, [None] * len(texts))[i]
-            if verdict is None:
-                row.append("refusal" if has_refusal_marker(text) else "compliance")
-            else:
-                row.append({"REFUSE": "refusal", "COMPLY": "compliance"}
-                           .get(verdict, "unclear"))
+            verdict = run["judge_raw"][scheme][i]
+            row.append({"REFUSE": "refusal", "COMPLY": "compliance"}
+                       .get(verdict, "unclear"))
         out[scheme] = np.array(row)
     return out
 
@@ -267,6 +275,7 @@ def drift_analysis(
     # the fact that all of them scored the same prompt set.
     draws: dict[str, list[float]] = {m: [] for m in per_model}
     pooled: list[float] = []
+    difference: list[float] = []
     anchor: dict[str, list[float]] = {m: [] for m in per_model}
     for _ in range(N_BOOTSTRAP):
         idx = rng.integers(0, n, size=n)
@@ -281,6 +290,12 @@ def drift_analysis(
             anchor[model].append(
                 100 * rates["FP16"] - (intercept + slope * 16.0))
         pooled.append(float(np.mean(kappas)))
+        # The difference must be resampled jointly, not inferred from whether
+        # two separate intervals overlap. Both models scored the same prompts,
+        # so the same resample drives both slopes and their correlation is
+        # carried through.
+        if len(kappas) == 2:
+            difference.append(kappas[1] - kappas[0])
 
     def summarise(values: list[float]) -> dict[str, float]:
         arr = np.asarray(values)
@@ -297,6 +312,16 @@ def drift_analysis(
     point["_pooled"] = summarise(pooled)
     point["_pooled"]["estimate"] = float(
         np.mean([point[m]["kappa"] for m in per_model]))
+    if difference:
+        names = list(per_model)
+        point["_difference"] = summarise(difference)
+        point["_difference"]["models"] = f"{names[1]} minus {names[0]}"
+        point["_difference"]["estimate"] = (
+            point[names[1]]["kappa"] - point[names[0]]["kappa"])
+        # Two-sided bootstrap p for "the slopes are equal".
+        arr = np.asarray(difference)
+        tail = min(float((arr <= 0).mean()), float((arr >= 0).mean()))
+        point["_difference"]["p_two_sided"] = min(1.0, 2 * tail)
     return point
 
 
@@ -399,6 +424,52 @@ def gsm8k_paired(runs: Path, gsm8k_path: Path, n_items: int) -> dict[str, Any]:
     flat = out.pop("_all_cell_rows", [])
     for row, adjusted in zip(flat, holm([r["mcnemar_p"] for r in flat])):
         row["mcnemar_p_holm_all_cells"] = adjusted
+    return out
+
+
+def refusal_class_audit(
+    composite: dict[str, dict[str, np.ndarray]], runs: Path, scheme: str
+) -> dict[str, Any]:
+    """Describe what the judge's refusal class contains, in numbers.
+
+    The manuscript quotes these when discussing whether "refusal" means what the
+    word suggests. They were originally read off by hand, which put them outside
+    the provenance chain every other number in the paper sits inside -- so they
+    are emitted here and checked like the rest.
+    """
+    out: dict[str, Any] = {}
+    for model, labels in composite.items():
+        run = None
+        for run_dir in sorted(runs.iterdir()):
+            candidate = load_run(run_dir) if run_dir.is_dir() else None
+            if (candidate is not None and candidate["judge_raw"]
+                    and MODEL_LABELS.get(candidate["manifest"].get("model_id", "?"))
+                    == model
+                    and len(candidate["completions"]["FP16"]) >= 150):
+                run = candidate
+                break
+        if run is None:
+            continue
+        base, cur = labels["FP16"], labels[scheme]
+        texts_q, texts_f = run["completions"][scheme], run["completions"]["FP16"]
+        new_refusals = np.where((base == "compliance") & (cur == "refusal"))[0]
+        entry: dict[str, Any] = {
+            "scheme": scheme,
+            "n_new_refusals": int(new_refusals.size),
+            "n_new_refusals_with_marker": int(sum(
+                has_refusal_marker(texts_q[i]) for i in new_refusals)),
+            "mean_len_new_refusals": float(np.mean(
+                [len(texts_q[i]) for i in new_refusals])) if new_refusals.size else 0.0,
+            "mean_len_fp16_all": float(np.mean([len(t) for t in texts_f])),
+            "mean_len_rung_all": float(np.mean([len(t) for t in texts_q])),
+        }
+        for name, lab, texts in (("fp16", base, texts_f), ("rung", cur, texts_q)):
+            idx = np.where(lab == "refusal")[0]
+            marked = int(sum(has_refusal_marker(texts[i]) for i in idx))
+            entry[f"{name}_refusals"] = int(idx.size)
+            entry[f"{name}_refusals_with_marker"] = marked
+            entry[f"{name}_marker_share"] = (marked / idx.size) if idx.size else 0.0
+        out[model] = entry
     return out
 
 
@@ -687,6 +758,10 @@ def main() -> int:
         crossed_rows.sort(key=lambda r: -float(r["bits"]))
         crossed[model] = crossed_rows
     payload["gate_by_grader"] = crossed
+
+    # ---- what the judge's refusal class actually contains ----------------
+    payload["refusal_class_audit"] = refusal_class_audit(
+        composite, args.runs, "RTN_4B")
 
     # ---- why the marker-list flip rate is not monotone in the list -------
     payload["marker_decomposition"] = marker_decomposition(args.runs)

@@ -778,6 +778,36 @@
       }
     ]
   },
+  "refusal_class_audit": {
+    "Qwen2.5-3B": {
+      "scheme": "RTN_4B",
+      "n_new_refusals": 32,
+      "n_new_refusals_with_marker": 7,
+      "mean_len_new_refusals": 235.15625,
+      "mean_len_fp16_all": 245.874,
+      "mean_len_rung_all": 247.592,
+      "fp16_refusals": 409,
+      "fp16_refusals_with_marker": 222,
+      "fp16_marker_share": 0.5427872860635696,
+      "rung_refusals": 430,
+      "rung_refusals_with_marker": 226,
+      "rung_marker_share": 0.5255813953488372
+    },
+    "Phi-3.5-mini": {
+      "scheme": "RTN_4B",
+      "n_new_refusals": 21,
+      "n_new_refusals_with_marker": 0,
+      "mean_len_new_refusals": 186.52380952380952,
+      "mean_len_fp16_all": 210.082,
+      "mean_len_rung_all": 204.294,
+      "fp16_refusals": 435,
+      "fp16_refusals_with_marker": 70,
+      "fp16_marker_share": 0.16091954022988506,
+      "rung_refusals": 451,
+      "rung_refusals_with_marker": 108,
+      "rung_marker_share": 0.2394678492239468
+    }
+  },
   "marker_decomposition": {
     "Qwen2.5-3B": [
       {
@@ -1158,6 +1188,15 @@
       "ci_low": 0.7528571428571431,
       "ci_high": 1.5500000000000007,
       "estimate": 1.1457142857142864
+    },
+    "_difference": {
+      "mean": 0.2959937142857142,
+      "se": 0.3245927017717905,
+      "ci_low": -0.34857142857142637,
+      "ci_high": 0.942857142857142,
+      "models": "Phi-3.5-mini minus Qwen2.5-3B",
+      "estimate": 0.29142857142856693,
+      "p_two_sided": 0.355
     }
   },
   "gsm8k": {

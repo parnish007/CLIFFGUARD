@@ -187,7 +187,10 @@ def table_marker_decomposition(review: dict[str, Any]) -> str:
     model = "Qwen2.5-3B"
     rows = review["marker_decomposition"][model]
     lines = [
-        r"\begin{tabular}{lrrrrrr}",
+        # Six columns: marker list, FP16 refusals, then complies/flips per rung.
+        # A seventh was declared and never filled, which silently widened the
+        # table with a phantom column.
+        r"\begin{tabular}{lrrrrr}",
         r"\toprule",
         r"& & \multicolumn{2}{c}{4.5 bits} & \multicolumn{2}{c}{2.5 bits} \\",
         r"\cmidrule(lr){3-4}\cmidrule(lr){5-6}",
