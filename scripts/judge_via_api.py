@@ -162,7 +162,12 @@ def normalise(raw: str) -> str:
 def call(provider: Provider, key: str, prompt: str, retries: int = 5) -> str:
     body = json.dumps(provider.build(prompt, provider.model)).encode("utf-8")
     url = provider.url
-    headers = {"Content-Type": "application/json"}
+    # urllib announces itself as "Python-urllib/3.x", which Groq's edge blocks
+    # with a Cloudflare 1010 before the request reaches the API. The same
+    # request from curl succeeds, so the block is on the agent string alone.
+    headers = {"Content-Type": "application/json",
+               "User-Agent": "cliffguard-judge/1.0",
+               "Accept": "application/json"}
     if provider.name == "gemini":
         url = f"{url}?key={key}"
     else:

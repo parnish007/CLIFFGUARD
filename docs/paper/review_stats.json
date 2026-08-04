@@ -1531,8 +1531,144 @@
     }
   },
   "probe": {
+    "Qwen2.5-3B": {
+      "n_splits": 200,
+      "label_source": "judge",
+      "n_positive": 409,
+      "n_negative": 91,
+      "fp16_absolute_dprime": 0.7362040107983537,
+      "rows": [
+        {
+          "scheme": "FP16",
+          "bits": 16.0,
+          "retained_mean": 1.0,
+          "retained_ci_low": 1.0,
+          "retained_ci_high": 1.0
+        },
+        {
+          "scheme": "RTN_8B",
+          "bits": 8.5,
+          "retained_mean": 1.0039313296282808,
+          "retained_ci_low": 0.9973276685276345,
+          "retained_ci_high": 1.0092223109108998
+        },
+        {
+          "scheme": "RTN_7B",
+          "bits": 7.5,
+          "retained_mean": 1.0034560029883708,
+          "retained_ci_low": 0.9906150832986506,
+          "retained_ci_high": 1.0191731995481996
+        },
+        {
+          "scheme": "RTN_6B",
+          "bits": 6.5,
+          "retained_mean": 1.0010641425863316,
+          "retained_ci_low": 0.9834481234262769,
+          "retained_ci_high": 1.0314814247141713
+        },
+        {
+          "scheme": "RTN_5B",
+          "bits": 5.5,
+          "retained_mean": 0.9903173405713197,
+          "retained_ci_low": 0.9585866895038814,
+          "retained_ci_high": 1.026001951744811
+        },
+        {
+          "scheme": "RTN_4B",
+          "bits": 4.5,
+          "retained_mean": 0.9534668944178375,
+          "retained_ci_low": 0.8638878985621631,
+          "retained_ci_high": 1.0438806210073972
+        },
+        {
+          "scheme": "RTN_3B",
+          "bits": 3.5,
+          "retained_mean": 0.4155018286818058,
+          "retained_ci_low": 0.03391179481092363,
+          "retained_ci_high": 0.7817401531046984
+        },
+        {
+          "scheme": "RTN_2B",
+          "bits": 2.5,
+          "retained_mean": 0.3108233226360813,
+          "retained_ci_low": -0.004391800050115366,
+          "retained_ci_high": 0.6314503227836767
+        }
+      ]
+    },
+    "Phi-3.5-mini": {
+      "n_splits": 200,
+      "label_source": "judge",
+      "n_positive": 435,
+      "n_negative": 65,
+      "fp16_absolute_dprime": 2.0058766668051957,
+      "rows": [
+        {
+          "scheme": "FP16",
+          "bits": 16.0,
+          "retained_mean": 1.0,
+          "retained_ci_low": 1.0,
+          "retained_ci_high": 1.0
+        },
+        {
+          "scheme": "RTN_8B",
+          "bits": 8.5,
+          "retained_mean": 1.0018481508120098,
+          "retained_ci_low": 0.9992781926328103,
+          "retained_ci_high": 1.004517858089841
+        },
+        {
+          "scheme": "RTN_7B",
+          "bits": 7.5,
+          "retained_mean": 0.9989564017390987,
+          "retained_ci_low": 0.9944271311933169,
+          "retained_ci_high": 1.0034458575875311
+        },
+        {
+          "scheme": "RTN_6B",
+          "bits": 6.5,
+          "retained_mean": 1.0041970260532938,
+          "retained_ci_low": 0.9927321373468196,
+          "retained_ci_high": 1.014131771943237
+        },
+        {
+          "scheme": "RTN_5B",
+          "bits": 5.5,
+          "retained_mean": 0.9965923646901982,
+          "retained_ci_low": 0.9820115070851477,
+          "retained_ci_high": 1.0157669689539972
+        },
+        {
+          "scheme": "RTN_4B",
+          "bits": 4.5,
+          "retained_mean": 0.9768518771713829,
+          "retained_ci_low": 0.9427845589546147,
+          "retained_ci_high": 1.0083399537292559
+        },
+        {
+          "scheme": "RTN_3B",
+          "bits": 3.5,
+          "retained_mean": 0.5733532508515016,
+          "retained_ci_low": 0.4810653983251736,
+          "retained_ci_high": 0.6696673050099916
+        },
+        {
+          "scheme": "RTN_2B",
+          "bits": 2.5,
+          "retained_mean": 0.045464869211373264,
+          "retained_ci_low": -0.07722336086211963,
+          "retained_ci_high": 0.15632875124449158
+        }
+      ]
+    }
+  },
+  "probe_marker_labels": {
     "Qwen2.5-1.5B": {
       "n_splits": 200,
+      "label_source": "marker",
+      "n_positive": 304,
+      "n_negative": 196,
+      "fp16_absolute_dprime": 1.3970815968370187,
       "rows": [
         {
           "scheme": "FP16",
@@ -1594,6 +1730,10 @@
     },
     "Qwen2.5-3B": {
       "n_splits": 200,
+      "label_source": "marker",
+      "n_positive": 223,
+      "n_negative": 277,
+      "fp16_absolute_dprime": 1.0394750920155238,
       "rows": [
         {
           "scheme": "FP16",
@@ -1655,6 +1795,10 @@
     },
     "Phi-3.5-mini": {
       "n_splits": 200,
+      "label_source": "marker",
+      "n_positive": 71,
+      "n_negative": 429,
+      "fp16_absolute_dprime": 1.3977489475842333,
       "rows": [
         {
           "scheme": "FP16",

@@ -547,15 +547,21 @@ def marker_decomposition(runs: Path) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def probe_retention(runs: Path, n_splits: int) -> dict[str, Any]:
+def probe_retention(runs: Path, n_splits: int,
+                    label_source: str = "judge") -> dict[str, Any]:
     """Fraction of FP16 d' the FROZEN FP16 direction retains, per scheme.
 
-    The manuscript reported a single number per cell with no dispersion, which
-    the review reasonably objected to. The estimator already used a fit/score
-    split -- the direction is fitted on one half and scored on a disjoint half,
-    over synchronized replicates -- but that was never stated, so it read as if
-    the direction had been evaluated on its own fitting data. Both are fixed
-    here: the split is explicit, and the spread across replicates is reported.
+    The direction is fitted on one half of the prompts and scored on a disjoint
+    half, over synchronized replicates, and the spread across replicates is
+    reported rather than a single number.
+
+    label_source decides what the probe is asked to separate, and it is the
+    difference between a clean dissociation and a confounded one. The behavioural
+    result uses the 7B judge's labels; fitting the probe on MARKER-derived labels
+    and then concluding it "fails to track behaviour" compares two systems aimed
+    at different targets, so the probe could be succeeding at its own task. With
+    label_source="judge" both arms share a target and the comparison is
+    like-for-like. "marker" reproduces the original estimand for contrast.
     """
     from cliffguard.eval.discriminability import d_prime
 
@@ -571,9 +577,18 @@ def probe_retention(runs: Path, n_splits: int) -> dict[str, Any]:
         label = MODEL_LABELS.get(manifest.get("model_id", "?"))
         if label is None:
             continue
-        refused = np.array(
-            json.loads(labels_file.read_text(encoding="utf-8"))["fp16_refused"],
-            dtype=bool)
+        if label_source == "judge":
+            run = load_run(run_dir)
+            if run is None or not run["judge_raw"]:
+                continue
+            verdicts = run["judge_raw"].get("FP16")
+            if verdicts is None:
+                continue
+            refused = np.array([v == "REFUSE" for v in verdicts], dtype=bool)
+        else:
+            refused = np.array(
+                json.loads(labels_file.read_text(encoding="utf-8"))["fp16_refused"],
+                dtype=bool)
         schemes = ["FP16"] + sorted(
             (p.stem for p in acts_dir.glob("*.npy") if p.stem != "FP16"),
             key=lambda s: -int(s.split("_")[1][:-1]))
@@ -592,6 +607,10 @@ def probe_retention(runs: Path, n_splits: int) -> dict[str, Any]:
 
         rng = np.random.default_rng(0)
         per_split: dict[str, list[float]] = {s: [] for s in schemes}
+        # Retention is a ratio, so it hides the scale it is a ratio OF. A probe
+        # keeping 100% of a d' of 0.3 is keeping nothing worth having. The
+        # absolute FP16 value is recorded alongside it.
+        base_values: list[float] = []
         for _ in range(n_splits):
             pp, pn = rng.permutation(n_pos), rng.permutation(n_neg)
             fit_p, score_p = pp[:half_pos], pp[half_pos : 2 * half_pos]
@@ -603,6 +622,7 @@ def probe_retention(runs: Path, n_splits: int) -> dict[str, Any]:
             vec = vec / norm
             base = d_prime(margins(pos["FP16"][score_p], vec, True),
                            margins(neg["FP16"][score_n], vec, True), fires_high=True)
+            base_values.append(base)
             for s in schemes:
                 value = d_prime(margins(pos[s][score_p], vec, True),
                                 margins(neg[s][score_n], vec, True), fires_high=True)
@@ -614,6 +634,11 @@ def probe_retention(runs: Path, n_splits: int) -> dict[str, Any]:
                 "analysis would depend on directory order")
         out[label] = {
             "n_splits": n_splits,
+            "label_source": label_source,
+            "n_positive": int(refused.sum()),
+            "n_negative": int((~refused).sum()),
+            "fp16_absolute_dprime": float(np.mean(base_values)) if base_values
+            else float("nan"),
             "rows": [
                 {"scheme": s, "bits": bits_of(s),
                  "retained_mean": float(np.mean(per_split[s])),
@@ -773,7 +798,11 @@ def main() -> int:
     payload["gsm8k"] = gsm8k_paired(args.runs, args.gsm8k, args.n_items)
 
     # ---- probe retention, with the dispersion the manuscript omitted ------
-    payload["probe"] = probe_retention(args.runs, args.splits)
+    # Both label sources: "judge" shares a target with the behavioural arm,
+    # "marker" reproduces the original estimand so the two can be compared.
+    payload["probe"] = probe_retention(args.runs, args.splits, "judge")
+    payload["probe_marker_labels"] = probe_retention(
+        args.runs, args.splits, "marker")
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
