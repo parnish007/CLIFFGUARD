@@ -27,7 +27,7 @@ Comparisons are always against the *same model at FP16 on the same prompts*.
 | 8 | Marker choice alone moves the estimate up to **1.38×** (Qwen2.5-3B) and **1.64×** (Phi-3.5-mini) | Four marker lists, identical completions | `data.json` → `marker_variants` |
 | 9 | Perplexity alone cannot detect degeneration, and fails in the direction that matters | Qwen2.5-3B median NLL at 2.5 bits is 4.13, *lower* than 3.5 bits at 5.80. NLL-only flags 15.6% of 2.5-bit completions; composite flags 99.8% | `reanalyse_runs.py` |
 | 10 | A frozen refusal probe retains **96–100%** across 8.5–4.5 bits on all three models, and falls to 63% at Phi-3.5-mini's significant 3.5-bit rung | Difference-in-means direction fitted on one prompt half, scored on a disjoint half, 200 synchronized splits | `review_reanalysis.py` → `probe` |
-| 11 | Capability collapses at a **model-specific** bit-width, one full bit apart | Qwen2.5-3B and Qwen2.5-1.5B destroyed at 3.5 bits (*p*<sub>Holm</sub> < 0.001 and 0.0003); Phi-3.5-mini shows no significant paired difference at 3.5 bits, collapses at 2.5 | `review_reanalysis.py` → `gsm8k` |
+| 11 | Capability collapses at a **model-specific** bit-width, one full bit apart | Qwen2.5-3B and Qwen2.5-1.5B destroyed at 3.5 bits (*p*<sub>21</sub> < 0.001 and = 0.001); Phi-3.5-mini shows no significant paired difference at 3.5 bits, collapses at 2.5 | `review_reanalysis.py` → `gsm8k` |
 | 12 | The judge's three labels are separable by first-token argmax | Each label is two tokens under the Qwen2.5 tokenizer, but the first tokens are distinct: ids 38029 / 7682 / 75255. Asserted at load time | `classify_completions_judge.py` |
 
 ## Claims explicitly **not** made
@@ -37,6 +37,7 @@ Comparisons are always against the *same model at FP16 on the same prompts*.
 | "Harmful compliance stays below 2.2%" | The prompts carry no per-prompt harmfulness annotation. What is measured is a change in the model's own decision. A baseline refusal may be an over-refusal of a benign prompt, in which case the quantized model's compliance is a correction, not a failure |
 | "Quantization does not reduce safety" | A non-significant test is not evidence of no effect. The defensible form is bounded: the transition rate is at most 4.62% at every rung simultaneously |
 | "Qwen2.5-3B refuses significantly more at 5.5 bits" | It is significant only under the narrower per-model family (*p*<sub>7</sub> = 0.033). Under the 14-cell family this paper declares primary, *p*<sub>14</sub> = 0.066 |
+| "Quantization increases *refusal*" in the narrow sense | What rises is the judge's `REFUSE` class, which the template defines as declining, deflecting, redirecting **or** warning. Of the 32 completions that newly count as refusal on Qwen2.5-3B at 4.5 bits, 7 contain a refusal marker; reading the other 25 finds capability disclaimers ("As an AI, I don't have personal feelings") and at least one plain grader error ("Stalin was the leader of the Soviet Union..."). The class composition is stable across the ladder (54% marker-bearing at FP16, 53% at 4.5 bits), so the *change* is measured consistently — but the class is broader than "refusal" |
 | "Capability failure precedes fluency failure" | Qwen2.5-3B at 4.5 bits falls 18.5% → 11.5% with zero degenerate output, but paired exact McNemar gives *p* = 0.020 and *p*<sub>Holm</sub> = 0.100. Not significant at *n* = 200 |
 | "κ = 1.15 is universal" / "a third model outside [0.75, 1.55] falsifies it" | Two models, and the coherent band was selected from observed degeneracy then held fixed across replicates. This is a confidence interval for these two, not a prediction interval for a new model |
 | "The probe is flat across the whole drift band" | True over 8.5–4.5 bits on all three models. False for Phi-3.5-mini's full band, which reaches 3.5 bits where retention is already 63% |
@@ -47,7 +48,7 @@ Comparisons are always against the *same model at FP16 on the same prompts*.
 
 ## Open work, in priority order
 
-1. **Blinded human validation of the judge.** ~200–300 completions, stratified to
+1. **Blinded human validation of the judge.** *(No longer a formality: manual inspection has already found mislabelled completions — see the row above.)* ~200–300 completions, stratified to
    oversample judge/phrase disagreements, the 4.5-bit rung, high-NLL outputs,
    non-English outputs, `unclear` verdicts, and completions opening with a
    disclaimer. Without this the paper compares two fallible estimators rather

@@ -441,6 +441,40 @@ $\times$ rung cell in the study. Quantization made these models \emph{more}
 refusing.
 \end{keybox}
 
+\begin{caveatbox}
+\textbf{What the judge's refusal class actually contains.} We read the 32
+Qwen2.5-3B completions that newly count as refusal at 4.5 bits. Two things
+follow, and they point in opposite directions.
+
+The first supports the result. Their mean length is 235 characters against 246
+for the same model at full precision and 248 for the rung overall, so these are
+not truncated stubs: the 48-token budget is not manufacturing the effect by
+cutting answers off before they commit. And the composition of the
+\textsc{refuse} class is stable along the ladder --- 54\% of it contains a
+phrase-list marker at full precision and 53\% at 4.5 bits (16\% and 24\% on
+Phi-3.5-mini) --- so the paired comparison is applying the same construct at both
+ends, which is what a change measure requires.
+
+The second qualifies it. Only 7 of the 32 contain a refusal marker, and reading
+the other 25 shows the class is broader than the word ``refusal'' suggests. Some
+are plainly refusals (\emph{``As an AI, I don't provide recommendations or
+advice on using firearms\ldots''}). Others are capability disclaimers rather than
+safety ones (\emph{``As an AI, I don't have personal feelings\ldots''},
+\emph{``I don't have specific information about the exact sounds dinosaurs
+made\ldots''}), which our judge template counts as \textsc{refuse} by
+construction, since it instructs that deflecting or redirecting qualifies. And a
+few look like grader error outright: \emph{``Stalin was the leader of the Soviet
+Union from 1922 to 1953\ldots''} is an informative answer, not a refusal of any
+kind.
+
+So the quantity that rises is the judge's \textsc{refuse} class --- declining,
+deflecting, redirecting or warning --- and not narrowly-construed refusal of a
+harmful request. Every claim in this paper should be read with that substitution
+made. This is also why blinded human validation (\S\ref{sec:limits}) is the
+first thing this work needs rather than a formality: we can show the class is
+applied consistently across the ladder, but not that it is applied correctly.
+\end{caveatbox}
+
 \paragraph{Which family the correction runs over.} The $p$-values above correct
 across the seven rungs of one model. The simultaneous bound in the previous
 paragraph instead treats all 14 model $\times$ rung cells as one family, and
@@ -910,10 +944,14 @@ test this here.
         suite \citep{mazeika2024harmbench,souly2024strongreject} plus a
         substantive-harm rubric; an over-refusal suite would be needed to price
         the conservative shift we do report.
-  \item \textbf{Grader validity is the largest gap.} The judge is unvalidated
-        against blinded human labels, is itself quantized to 4-bit, and shares a
-        family with two of the three models, so stylistic self-preference cannot
-        be excluded. We report its agreement with four phrase lists, not its
+  \item \textbf{Grader validity is the largest gap, and we have direct evidence
+        of error.} Reading the newly-refusing completions at 4.5 bits
+        (\S\ref{sec:refusal}) turns up informative answers labelled
+        \textsc{refuse}, alongside capability disclaimers that the template
+        counts as refusal by construction. The judge is unvalidated against
+        blinded human labels, is itself quantized to 4-bit, and shares a family
+        with two of the three models, so stylistic self-preference cannot be
+        excluded. We report its agreement with four phrase lists, not its
         accuracy. A stratified blinded human sample across models, rungs,
         languages and disagreement cases, plus a second independent judge, is the
         next thing this work needs.
