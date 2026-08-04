@@ -117,12 +117,12 @@ PROVIDERS: dict[str, Provider] = {
         "nvidia", "NVIDIA_API_KEY",
         "https://integrate.api.nvidia.com/v1/chat/completions",
         "meta/llama-3.1-70b-instruct",
-        _openai_style("meta/llama-3.1-70b-instruct"), _openai_extract, 1.1),
+        _openai_style("meta/llama-3.1-70b-instruct"), _openai_extract, 1.55),
     "gemini": Provider(
         "gemini", "GEMINI_API_KEY",
         "https://generativelanguage.googleapis.com/v1beta/models/"
-        "gemini-2.0-flash:generateContent",
-        "gemini-2.0-flash",
+        "gemini-flash-latest:generateContent",
+        "gemini-flash-latest",
         _gemini_build, _gemini_extract, 4.1),
     "openrouter": Provider(
         "openrouter", "OPENROUTER_API_KEY",
@@ -169,7 +169,9 @@ def call(provider: Provider, key: str, prompt: str, retries: int = 5) -> str:
                "User-Agent": "cliffguard-judge/1.0",
                "Accept": "application/json"}
     if provider.name == "gemini":
-        url = f"{url}?key={key}"
+        # Google moved from ?key= to a header; the query form still works but
+        # the header is what the current quickstart documents.
+        headers["X-goog-api-key"] = key
     else:
         headers["Authorization"] = f"Bearer {key}"
 

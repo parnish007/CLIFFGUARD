@@ -44,9 +44,8 @@
   left=8pt, right=8pt, top=6pt, bottom=6pt, arc=2pt
 }
 
-\title{\bfseries CliffGuard: Degeneration-Aware Evaluation Finds That\\
-       Low-Bit Quantization Increases Refusal,\\
-       While Phrase-List Scoring Reports the Opposite}
+\title{\bfseries CliffGuard: Degeneration-Aware Scoring Reverses\\
+       the Apparent Refusal Trend Under RTN Quantization}
 
 \author{%
   Trilochan Sharma\\
@@ -698,14 +697,10 @@ response, because a marker appearing after 300 characters of compliance is not a
 refusal. Our implementation uses that window throughout, and the argument below
 does not depend on its width. Enlarging $\mathcal{M}$ pushes the two indicators in
 \emph{opposite} directions: the baseline factor can only rise, the rung factor
-can only fall. We are careful about what that establishes. It does not prove the
-product must be non-monotone --- a product of a nondecreasing and a nonincreasing
-indicator may still be constant or monotone in either direction. What it removes
-is any \emph{guarantee}: enlarging the list carries no structural argument that
-the estimate moves in a known direction, so an analyst cannot reason ``I was more
-inclusive, therefore my estimate is closer to the truth''. Whether it is
-non-monotone in fact is then an empirical question, and on these runs the answer
-is yes: at 4.5 bits the flip count goes 54, 58, 71, 57 as the list grows
+can only fall. That does not force non-monotonicity --- such a product may still be
+monotone --- but it removes any \emph{guarantee} of one, so ``I used a more
+inclusive list, therefore my estimate is closer to the truth'' does not follow.
+Whether it is non-monotone in fact is empirical, and here it is: at 4.5 bits the flip count goes 54, 58, 71, 57 as the list grows
 (Table~\ref{tab:markerdecomp}).
 
 \begin{table}[htbp]

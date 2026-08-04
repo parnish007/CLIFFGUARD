@@ -208,11 +208,52 @@ def table_marker_decomposition(review: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def table_judge_agreement(agreement: dict[str, Any]) -> str:
+    """Second-judge agreement, and whether the headline reproduces under it.
+
+    The paper's dependent variable comes from one grader, so this table is the
+    answer to "why believe that grader". It carries both halves: how often an
+    independent judge agrees, and what the paired 4.5-bit result looks like when
+    recomputed from the independent judge's labels alone. Agreement without the
+    reproduction would be the less interesting half -- two graders can agree and
+    both be wrong, but a result that survives relabelling is harder to dismiss.
+    """
+    lines = [
+        r"\begin{tabular}{llrrrrr}",
+        r"\toprule",
+        r"& & & \multicolumn{2}{c}{agreement with 7B} "
+        r"& \multicolumn{2}{c}{4.5 bits, second judge} \\",
+        r"\cmidrule(lr){4-5}\cmidrule(lr){6-7}",
+        r"judge & model & $n$ & overall & on refusal & $\to$refuse & $\to$comply \\",
+        r"\midrule",
+    ]
+    for tag, models in agreement.items():
+        pretty = tag.replace("_", " ")
+        for i, (model, block) in enumerate(models.items()):
+            name = pretty if i == 0 else ""
+            overall = block.get("agreement")
+            recall = (block.get("recall_by_class") or {}).get("REFUSE")
+            repro = next((r for r in block.get("reproduction", [])
+                          if abs(r["bits"] - 4.5) < 1e-9), None)
+            cells = [
+                f"{100 * overall:.1f}" if overall is not None else "--",
+                f"{100 * recall:.1f}" if recall is not None else "--",
+                str(repro["to_refusal"]) if repro else "--",
+                str(repro["to_compliance"]) if repro else "--",
+            ]
+            lines.append(f"{name} & {model} & {block.get('n_compared', 0)} & "
+                         + " & ".join(cells) + r" \\")
+    lines += [r"\bottomrule", r"\end{tabular}"]
+    return "\n".join(lines)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--data", type=Path, default=Path("docs/paper/data.json"))
     ap.add_argument("--review", type=Path,
                     default=Path("docs/paper/review_stats.json"))
+    ap.add_argument("--agreement", type=Path,
+                    default=Path("docs/paper/judge_agreement.json"))
     ap.add_argument("--out", type=Path, default=Path("docs/paper/tables"))
     args = ap.parse_args()
 
@@ -230,6 +271,14 @@ def main() -> int:
         (args.out / f"{name}.tex").write_text(
             builder(source) + "\n", encoding="utf-8")
         print(f"  {name}.tex")
+
+    # Emitted only once a second judge has run, so the manuscript can \input{}
+    # it without carrying a placeholder for a measurement that does not exist.
+    if args.agreement.exists():
+        agreement = json.loads(args.agreement.read_text(encoding="utf-8"))
+        (args.out / "tab_judge_agreement.tex").write_text(
+            table_judge_agreement(agreement) + "\n", encoding="utf-8")
+        print("  tab_judge_agreement.tex")
     return 0
 
 
