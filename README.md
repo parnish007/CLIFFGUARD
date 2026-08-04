@@ -26,7 +26,7 @@ per rung, graded by a 7B judge behind a degeneracy gate:
 
 | | result |
 |---|---|
-| **Refusal drift** | Lower precision produces **more** refusal: **1.15 points per bit removed**, 95% CI [0.75, 1.55] (conditional on the coherent band and on treating these prompts as exchangeable — see below) |
+| **Refusal drift** | Lower precision produces **more** refusal: **1.15 points per bit removed**, 95% CI [0.75, 1.55] (conditional — see below) |
 | **Refusal→compliance** | Never above **2.2%**; simultaneous 95% upper bound **4.62%** across all 14 model×rung cells |
 | **Phrase-list scoring** | Reports up to **38.4%** on the same completions, and is **non-monotone** in the marker list |
 | **Frozen refusal probe** | Retains **96–100%** across 8.5–4.5 bits, spanning both models' significant 4.5-bit shifts; already 63% at Phi's significant 3.5-bit shift |
@@ -47,6 +47,16 @@ identical completions and the whole gap is the **grader** — 10.8% vs 2.2% at 4
 bits on Qwen2.5-3B. Where output has collapsed, the **gate** dominates — 38.4%
 under a perplexity-only gate vs 0.2% under the composite gate, same marker list,
 same completions, which is 99.5% of that gap.
+
+> **What "refusal" means here.** It is the judge's `REFUSE` class, which the
+> template defines as declining, deflecting, redirecting **or** warning — broader
+> than refusing a harmful request. We read the 32 completions that newly count as
+> refusal on Qwen2.5-3B at 4.5 bits: 7 carry a refusal marker, several are
+> capability disclaimers ("As an AI, I don't have personal feelings"), and at
+> least one is a plain grader error. The class composition is stable along the
+> ladder (54% marker-bearing at FP16, 53% at 4.5 bits), so the *change* is
+> measured consistently — but it is a change in that broad class, and blinded
+> human validation is the first thing this work needs.
 
 > **How to read the intervals.** The 500 prompts are the first deduplicated
 > rows of HH-RLHF in file order, not a probability sample. On this fixed set the
