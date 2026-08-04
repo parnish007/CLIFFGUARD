@@ -1,10 +1,9 @@
-"""Smoke tests that README.md and configs/example.yaml are well-formed."""
+"""The README must keep promising what the repository actually delivers."""
 
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 README = REPO_ROOT / "README.md"
-EXAMPLE_YAML = REPO_ROOT / "configs" / "example.yaml"
 
 
 # ---------------------------------------------------------------------------
@@ -85,40 +84,3 @@ def test_readme_reproduction_commands_name_real_scripts() -> None:
         assert script in text, f"README omits {script}"
         assert (REPO_ROOT / "scripts" / script).exists(), (
             f"README advertises scripts/{script}, which does not exist")
-
-
-# ---------------------------------------------------------------------------
-# configs/example.yaml
-# ---------------------------------------------------------------------------
-
-
-def test_example_yaml_exists() -> None:
-    assert EXAMPLE_YAML.exists()
-
-
-def test_example_yaml_is_non_empty() -> None:
-    assert EXAMPLE_YAML.stat().st_size > 0
-
-
-def test_example_yaml_contains_fpr_target() -> None:
-    assert "fpr_target" in EXAMPLE_YAML.read_text(encoding="utf-8")
-
-
-def test_example_yaml_contains_kenlm() -> None:
-    assert "kenlm" in EXAMPLE_YAML.read_text(encoding="utf-8")
-
-
-def test_example_yaml_contains_order_tier_ab() -> None:
-    assert "order_tier_ab" in EXAMPLE_YAML.read_text(encoding="utf-8")
-
-
-def test_example_yaml_contains_tier_field() -> None:
-    assert "tier:" in EXAMPLE_YAML.read_text(encoding="utf-8")
-
-
-def test_example_yaml_contains_schemes_field() -> None:
-    assert "schemes:" in EXAMPLE_YAML.read_text(encoding="utf-8")
-
-
-def test_example_yaml_contains_folds_field() -> None:
-    assert "folds:" in EXAMPLE_YAML.read_text(encoding="utf-8")

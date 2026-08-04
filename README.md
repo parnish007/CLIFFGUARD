@@ -147,19 +147,26 @@ answer, in file order.
 | `docs/claims_and_evidence.md` | Every claim with its evidence status |
 | `scripts/run_behavioural_ladder.py` | Generation + degeneracy detection |
 | `scripts/classify_completions_judge.py` | 7B judge grading + the four marker lists |
-| `scripts/review_reanalysis.py` | All inferential statistics |
 | `scripts/run_sector_ladder.py` | GSM8K capability arm |
+| `scripts/run_local_ladder.py` | Weight/probe ladder |
 | `scripts/analyse_probe_transfer.py` | Frozen vs refit probe |
+| `scripts/reanalyse_runs.py` | Re-label stored completions with the composite gate |
+| `scripts/review_reanalysis.py` | All inferential statistics |
 | `scripts/build_paper_*.py` | Data, figure and table generation |
 | `scripts/check_paper_numbers.py` | Asserts the paper's prose numbers match the measurements |
-| `notebooks/colab_run.ipynb` | Hands-off hosted-GPU runner |
-| `cliffguard/` | Library package (quantizers, discriminability, degeneracy) |
+| `cliffguard/eval/` | Measurement library: discriminability, isotropy, noise floor, storage |
+| `notebooks/colab_run.ipynb` | Hosted-GPU runner (reduced replication by default) |
 | `tests/` | pytest suite |
-| `artifacts/runs/` | Immutable run directories |
+| `artifacts/runs/` | Immutable run directories (gitignored) |
+
+This repository publishes the paper's reproduction path and nothing else. An
+earlier prompt-injection defence design left behind a gate-stack of 54 library
+modules, 43 test files and 12 entry points that no result here depends on; those
+are kept locally and excluded from the published tree rather than deleted.
 
 ## Status
 
-![Tests](https://img.shields.io/badge/tests-1233_passing-brightgreen?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-226_passing-brightgreen?style=flat-square)
 ![mypy](https://img.shields.io/badge/mypy-strict-brightgreen?style=flat-square)
 ![ruff](https://img.shields.io/badge/ruff-clean-orange?style=flat-square)
 ![Paper](https://img.shields.io/badge/paper-17pp,_zero_overfull-blue?style=flat-square)

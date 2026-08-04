@@ -1,0 +1,41 @@
+name: checks
+
+# The previous workflow triggered on a figure-generation script that no longer
+# exists, so it never ran. This one guards what the repository actually
+# promises: the code is clean, the tests pass, and no number quoted in the
+# paper, README or claims ledger has drifted from the measurements behind it.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install
+        run: uv sync --all-extras --dev
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Type-check
+        run: uv run mypy cliffguard scripts
+
+      - name: Test
+        run: uv run pytest -q
+
+      # Redundant with the test suite, which runs the same assertions, but it
+      # prints every quantity and its source, so a failure here says which
+      # claim drifted rather than only that one did.
+      - name: Paper numbers match their sources
+        run: uv run python scripts/check_paper_numbers.py

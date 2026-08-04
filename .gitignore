@@ -145,3 +145,114 @@ docs/theory_panel_2026-08.md
 docs/corrections_2026-08-03.md
 docs/results_colab.md
 verified_citations.md
+
+# ── Superseded gate-stack ────────────────────────────────────────────────────
+# The published repository is the paper's reproduction path. Everything below
+# belongs to the earlier prompt-injection defence design (the "blueprint"),
+# which no result in the paper depends on: 54 of 60 library modules were
+# unreachable from the pipeline. Kept on disk for provenance, not published.
+
+cliffguard/attest/
+cliffguard/bprobe/
+cliffguard/conductor/
+cliffguard/engines/
+cliffguard/ladder/
+cliffguard/lookout/
+cliffguard/probe/
+cliffguard/tripwire/
+cliffguard/vestibule/
+
+# Evaluation modules belonging to the same superseded design. The six that
+# survive (composition, discriminability, isotropy, noise_floor,
+# noise_spectrum, storage) are the measurement library the paper uses.
+cliffguard/eval/attack_corpus.py
+cliffguard/eval/bcn2.py
+cliffguard/eval/calibration.py
+cliffguard/eval/cliff_metrics.py
+cliffguard/eval/drift_sim.py
+cliffguard/eval/figures.py
+cliffguard/eval/five_fold_live.py
+cliffguard/eval/five_fold_orchestrator.py
+cliffguard/eval/folds.py
+cliffguard/eval/harmfulness_direction.py
+cliffguard/eval/judges.py
+cliffguard/eval/kenlm_stub.py
+cliffguard/eval/kenlm_trainer.py
+cliffguard/eval/orchestrator.py
+cliffguard/eval/refusal_direction.py
+cliffguard/eval/repro.py
+cliffguard/eval/results_writer.py
+cliffguard/eval/runner.py
+cliffguard/eval/stats.py
+cliffguard/eval/threshold_calibrator.py
+cliffguard/eval/tripwire_r_calibration.py
+
+# Blueprint-era shared types.
+cliffguard/blueprint_refs.py
+cliffguard/types.py
+
+# Tests for the above. They pass, but they exercise a system the paper does
+# not contain, and publishing them misrepresents what this code is.
+tests/test_attack_corpus.py
+tests/test_attest_wh.py
+tests/test_bcn2.py
+tests/test_bprobe_consistency.py
+tests/test_bprobe_logit.py
+tests/test_calibration.py
+tests/test_cliff_metrics.py
+tests/test_conductor.py
+tests/test_context.py
+tests/test_drift_sim.py
+tests/test_dry_run_e2e.py
+tests/test_engines_autoawq.py
+tests/test_engines_llamacpp.py
+tests/test_engines_transformers_bnb.py
+tests/test_engines_vllm.py
+tests/test_five_fold_orchestrator.py
+tests/test_integration_smoke.py
+tests/test_lookout_ct.py
+tests/test_lookout_jg.py
+tests/test_orchestrator.py
+tests/test_probe_hd.py
+tests/test_probe_mt.py
+tests/test_probe_rm.py
+tests/test_results_writer.py
+tests/test_run_evaluation.py
+tests/test_runner.py
+tests/test_threshold_calibrator.py
+tests/test_tripwire_h.py
+tests/test_tripwire_r.py
+tests/test_types.py
+tests/test_vestibule_lz.py
+tests/test_vestibule_ps.py
+tests/test_figures.py
+tests/test_folds.py
+tests/test_harmfulness_direction.py
+tests/test_judges.py
+tests/test_kenlm_stub.py
+tests/test_kenlm_trainer.py
+tests/test_refusal_direction.py
+tests/test_repro.py
+tests/test_stats.py
+tests/test_tripwire_r_calibration.py
+tests/test_preregistration.py
+
+# ── Superseded pipeline entry points ─────────────────────────────────────────
+# Scripts for the five-fold / tier-based evaluation. Eight of these import the
+# gate-stack modules ignored above, so they cannot run from a clone at all;
+# the rest belong to the same design. The published scripts/ directory is
+# exactly the paper's pipeline.
+scripts/analyse_margin_normalisation.py
+scripts/build_preregistration_manifest.py
+scripts/colab_run.py
+scripts/compare_runs.py
+scripts/download_fold_a.py
+scripts/dry_run.py
+scripts/generate_cliff_corpus.py
+scripts/run_evaluation_3050.py
+scripts/run_full_evaluation.py
+scripts/run_local_checks.py
+scripts/run_local_stage0.py
+scripts/verify_gguf_pair.py
+tests/test_generate_cliff_corpus.py
+configs/example.yaml
