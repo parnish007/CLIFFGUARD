@@ -116,8 +116,8 @@ PROVIDERS: dict[str, Provider] = {
     "nvidia": Provider(
         "nvidia", "NVIDIA_API_KEY",
         "https://integrate.api.nvidia.com/v1/chat/completions",
-        "meta/llama-3.3-70b-instruct",
-        _openai_style("meta/llama-3.3-70b-instruct"), _openai_extract, 1.1),
+        "meta/llama-3.1-70b-instruct",
+        _openai_style("meta/llama-3.1-70b-instruct"), _openai_extract, 1.1),
     "gemini": Provider(
         "gemini", "GEMINI_API_KEY",
         "https://generativelanguage.googleapis.com/v1beta/models/"

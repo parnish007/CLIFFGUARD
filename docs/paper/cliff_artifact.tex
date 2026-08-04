@@ -348,6 +348,34 @@ completions as degenerate where the composite detector flags 99.8\%.
   \label{fig:degeneracy}
 \end{figure}
 
+\begin{keybox}
+\textbf{The thresholds are handcrafted, so we report what they do rather than
+asserting they are right.} We have no human-labelled degeneration set, and
+without one the four cut-offs cannot be called calibrated. Three measurements
+bound how much that matters.
+
+\emph{Where the result lives, the gate is inert.} At 4.5 bits and above, not one
+of the four rules fires on a single completion of either model. The headline is
+therefore untouched by any threshold choice.
+
+\emph{The rules are not redundant, and the perplexity rule is the weak one.} At
+Qwen2.5-3B's 2.5-bit rung the alphabetic-fraction rule fires on 99.6\% of
+completions and the largest-token-share rule on 81.8\%, while the NLL rule fires
+on only 15.6\%. Deleting the NLL rule entirely leaves that rung at 99.6\%
+degenerate. This is the repetition-loop failure of \S\ref{sec:degeneracy}
+quantified: the likelihood term is close to useless exactly where degeneration is
+worst, and the surface statistics carry the decision.
+
+\emph{The coherent band does not move.} Nudging all four thresholds by 20\%
+simultaneously --- in either direction --- leaves both models' coherent bands
+exactly as reported, $\{4.5,\dots,8.5\}$ for Qwen2.5-3B and
+$\{3.5,\dots,8.5\}$ for Phi-3.5-mini. The band selection that
+Equation~\ref{eq:drift} conditions on is not balanced on a threshold.
+
+What none of this establishes is that a completion the gate calls degenerate is
+one a human would. That needs the labelled set (\S\ref{sec:limits}).
+\end{keybox}
+
 \begin{caveatbox}
 \textbf{The gate is a confound, and we bound it rather than assume it away.}
 Gating on likelihood under the FP16 reference before grading is

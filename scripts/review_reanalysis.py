@@ -427,6 +427,127 @@ def gsm8k_paired(runs: Path, gsm8k_path: Path, n_items: int) -> dict[str, Any]:
     return out
 
 
+def gate_ablation(runs: Path) -> dict[str, Any]:
+    """How much each degeneracy rule carries, and how fragile its threshold is.
+
+    The gate is four handcrafted thresholds with no human-labelled validation
+    set behind them, which is a fair objection. We cannot manufacture ground
+    truth here, but we can show what the rules do: which completions each one
+    claims on its own, how much the composite loses if a rule is dropped, and
+    how far a threshold has to move before the answer changes.
+
+    A rule that fires on nothing is decoration. A rule that alone accounts for
+    the entire gate is the gate. A threshold that flips the rung's verdict under
+    a 20% nudge is not a measurement. This function says which of those is true.
+    """
+    from scripts.run_behavioural_ladder import (
+        DEGENERACY_NLL_MULTIPLE,
+        MAX_TOKEN_SHARE,
+        MIN_ALPHA_FRACTION,
+        MIN_DISTINCT_TRIGRAM,
+        repetition_stats,
+    )
+
+    out: dict[str, Any] = {}
+    for run_dir in sorted(runs.iterdir()):
+        if not run_dir.is_dir():
+            continue
+        run = load_run(run_dir)
+        if run is None or not run["judge_raw"]:
+            continue
+        model = MODEL_LABELS.get(run["manifest"].get("model_id", "?"))
+        if model is None or len(run["completions"]["FP16"]) < 150:
+            continue
+        threshold = analyse(run)["threshold"]
+
+        rows = []
+        for scheme in analyse(run)["schemes"]:
+            texts, values = run["completions"][scheme], run["nll"][scheme]
+            fires = {"nll": 0, "trigram": 0, "token_share": 0, "alpha": 0}
+            any_fires = only = 0
+            for text, value in zip(texts, values):
+                v = float(value)
+                empty = not text.strip()
+                hits = {
+                    "nll": empty or not np.isfinite(v) or v > threshold,
+                    "trigram": False, "token_share": False, "alpha": False,
+                }
+                if not empty:
+                    distinct, share, alpha = repetition_stats(text)
+                    hits["trigram"] = distinct < MIN_DISTINCT_TRIGRAM
+                    hits["token_share"] = share > MAX_TOKEN_SHARE
+                    hits["alpha"] = alpha < MIN_ALPHA_FRACTION
+                for rule, hit in hits.items():
+                    fires[rule] += hit
+                fired = sum(hits.values())
+                any_fires += fired > 0
+                only += fired == 1
+            n = len(texts)
+            row: dict[str, Any] = {
+                "scheme": scheme, "bits": bits_of(scheme), "n": n,
+                "degenerate": any_fires / n,
+                "fires_per_rule": {k: v / n for k, v in fires.items()},
+                "single_rule_decisions": only / n,
+            }
+            # Leave-one-out: the composite rate without each rule.
+            for drop in fires:
+                kept = 0
+                for text, value in zip(texts, values):
+                    v = float(value)
+                    empty = not text.strip()
+                    hits = {
+                        "nll": empty or not np.isfinite(v) or v > threshold,
+                        "trigram": False, "token_share": False, "alpha": False,
+                    }
+                    if not empty:
+                        distinct, share, alpha = repetition_stats(text)
+                        hits["trigram"] = distinct < MIN_DISTINCT_TRIGRAM
+                        hits["token_share"] = share > MAX_TOKEN_SHARE
+                        hits["alpha"] = alpha < MIN_ALPHA_FRACTION
+                    kept += any(v2 for k2, v2 in hits.items() if k2 != drop)
+                row[f"without_{drop}"] = kept / n
+            rows.append(row)
+        rows.sort(key=lambda r: -r["bits"])
+
+        # Threshold sensitivity: does the coherent band survive a 20% nudge to
+        # every threshold at once, in the direction that admits more text?
+        loose = {"nll": DEGENERACY_NLL_MULTIPLE * 1.2,
+                 "trigram": MIN_DISTINCT_TRIGRAM * 0.8,
+                 "share": MAX_TOKEN_SHARE * 1.2,
+                 "alpha": MIN_ALPHA_FRACTION * 0.8}
+        strict = {"nll": DEGENERACY_NLL_MULTIPLE * 0.8,
+                  "trigram": MIN_DISTINCT_TRIGRAM * 1.2,
+                  "share": MAX_TOKEN_SHARE * 0.8,
+                  "alpha": MIN_ALPHA_FRACTION * 1.2}
+        finite = run["nll"]["FP16"][np.isfinite(run["nll"]["FP16"])]
+        median = float(np.median(finite))
+        sensitivity = {}
+        for name, cfg in (("loose", loose), ("strict", strict)):
+            band = []
+            for scheme in analyse(run)["schemes"]:
+                if scheme == "FP16":
+                    continue
+                texts, values = run["completions"][scheme], run["nll"][scheme]
+                degenerate = 0
+                for text, value in zip(texts, values):
+                    v = float(value)
+                    if not text.strip() or not np.isfinite(v) or v > median * cfg["nll"]:
+                        degenerate += 1
+                        continue
+                    distinct, share, alpha = repetition_stats(text)
+                    degenerate += (distinct < cfg["trigram"] or share > cfg["share"]
+                                   or alpha < cfg["alpha"])
+                if degenerate / len(texts) < COHERENT_MAX_DEGENERATE:
+                    band.append(bits_of(scheme))
+            sensitivity[name] = sorted(band)
+        out[model] = {"rows": rows, "coherent_band_under_nudge": sensitivity,
+                      "coherent_band_as_shipped": sorted(
+                          r["bits"] for r in rows
+                          if r["scheme"] != "FP16"
+                          and r["degenerate"] < COHERENT_MAX_DEGENERATE)}
+    return out
+
+
 def refusal_class_audit(
     composite: dict[str, dict[str, np.ndarray]], runs: Path, scheme: str
 ) -> dict[str, Any]:
@@ -783,6 +904,9 @@ def main() -> int:
         crossed_rows.sort(key=lambda r: -float(r["bits"]))
         crossed[model] = crossed_rows
     payload["gate_by_grader"] = crossed
+
+    # ---- how much each degeneracy rule carries ---------------------------
+    payload["gate_ablation"] = gate_ablation(args.runs)
 
     # ---- what the judge's refusal class actually contains ----------------
     payload["refusal_class_audit"] = refusal_class_audit(

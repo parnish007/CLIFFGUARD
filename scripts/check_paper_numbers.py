@@ -210,6 +210,30 @@ CHECKS: tuple[Check, ...] = (
           lambda s: _fmt(100 * s["refusal_class_audit"]["Phi-3.5-mini"]
                          ["rung_marker_share"], 0),
           lambda v: _rx("rises from 16") + r"\\?%\s+to\s+" + v + r"\\?%"),
+    # ---- gate ablation ---------------------------------------------------
+    Check("gate: alpha rule at 2.5 bits",
+          lambda s: _fmt(100 * next(
+              r["fires_per_rule"]["alpha"]
+              for r in s["gate_ablation"]["Qwen2.5-3B"]["rows"]
+              if r["bits"] == 2.5), 1),
+          lambda v: _rx(rf"fires on {v}") + r"\\?% of"),
+    Check("gate: token-share rule at 2.5 bits",
+          lambda s: _fmt(100 * next(
+              r["fires_per_rule"]["token_share"]
+              for r in s["gate_ablation"]["Qwen2.5-3B"]["rows"]
+              if r["bits"] == 2.5), 1),
+          lambda v: _rx(rf"share rule on {v}") + r"\\?%"),
+    Check("gate: nll rule at 2.5 bits",
+          lambda s: _fmt(100 * next(
+              r["fires_per_rule"]["nll"]
+              for r in s["gate_ablation"]["Qwen2.5-3B"]["rows"]
+              if r["bits"] == 2.5), 1),
+          lambda v: _rx(rf"on only {v}") + r"\\?%"),
+    Check("gate: without nll at 2.5 bits",
+          lambda s: _fmt(100 * next(
+              r["without_nll"] for r in s["gate_ablation"]["Qwen2.5-3B"]["rows"]
+              if r["bits"] == 2.5), 1),
+          lambda v: _rx(rf"leaves that rung at {v}") + r"\\?%"),
     # ---- capability -------------------------------------------------------
     Check("GSM8K FP16 accuracy",
           lambda s: f"{100 * s['gsm8k']['Qwen2.5-3B']['fp16_accuracy']:.1f}",

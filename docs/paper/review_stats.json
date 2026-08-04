@@ -778,6 +778,337 @@
       }
     ]
   },
+  "gate_ablation": {
+    "Qwen2.5-3B": {
+      "rows": [
+        {
+          "scheme": "FP16",
+          "bits": 16.0,
+          "n": 500,
+          "degenerate": 0.0,
+          "fires_per_rule": {
+            "nll": 0.0,
+            "trigram": 0.0,
+            "token_share": 0.0,
+            "alpha": 0.0
+          },
+          "single_rule_decisions": 0.0,
+          "without_nll": 0.0,
+          "without_trigram": 0.0,
+          "without_token_share": 0.0,
+          "without_alpha": 0.0
+        },
+        {
+          "scheme": "RTN_8B",
+          "bits": 8.5,
+          "n": 500,
+          "degenerate": 0.0,
+          "fires_per_rule": {
+            "nll": 0.0,
+            "trigram": 0.0,
+            "token_share": 0.0,
+            "alpha": 0.0
+          },
+          "single_rule_decisions": 0.0,
+          "without_nll": 0.0,
+          "without_trigram": 0.0,
+          "without_token_share": 0.0,
+          "without_alpha": 0.0
+        },
+        {
+          "scheme": "RTN_7B",
+          "bits": 7.5,
+          "n": 500,
+          "degenerate": 0.0,
+          "fires_per_rule": {
+            "nll": 0.0,
+            "trigram": 0.0,
+            "token_share": 0.0,
+            "alpha": 0.0
+          },
+          "single_rule_decisions": 0.0,
+          "without_nll": 0.0,
+          "without_trigram": 0.0,
+          "without_token_share": 0.0,
+          "without_alpha": 0.0
+        },
+        {
+          "scheme": "RTN_6B",
+          "bits": 6.5,
+          "n": 500,
+          "degenerate": 0.0,
+          "fires_per_rule": {
+            "nll": 0.0,
+            "trigram": 0.0,
+            "token_share": 0.0,
+            "alpha": 0.0
+          },
+          "single_rule_decisions": 0.0,
+          "without_nll": 0.0,
+          "without_trigram": 0.0,
+          "without_token_share": 0.0,
+          "without_alpha": 0.0
+        },
+        {
+          "scheme": "RTN_5B",
+          "bits": 5.5,
+          "n": 500,
+          "degenerate": 0.0,
+          "fires_per_rule": {
+            "nll": 0.0,
+            "trigram": 0.0,
+            "token_share": 0.0,
+            "alpha": 0.0
+          },
+          "single_rule_decisions": 0.0,
+          "without_nll": 0.0,
+          "without_trigram": 0.0,
+          "without_token_share": 0.0,
+          "without_alpha": 0.0
+        },
+        {
+          "scheme": "RTN_4B",
+          "bits": 4.5,
+          "n": 500,
+          "degenerate": 0.0,
+          "fires_per_rule": {
+            "nll": 0.0,
+            "trigram": 0.0,
+            "token_share": 0.0,
+            "alpha": 0.0
+          },
+          "single_rule_decisions": 0.0,
+          "without_nll": 0.0,
+          "without_trigram": 0.0,
+          "without_token_share": 0.0,
+          "without_alpha": 0.0
+        },
+        {
+          "scheme": "RTN_3B",
+          "bits": 3.5,
+          "n": 500,
+          "degenerate": 0.692,
+          "fires_per_rule": {
+            "nll": 0.644,
+            "trigram": 0.072,
+            "token_share": 0.074,
+            "alpha": 0.012
+          },
+          "single_rule_decisions": 0.62,
+          "without_nll": 0.082,
+          "without_trigram": 0.692,
+          "without_token_share": 0.69,
+          "without_alpha": 0.684
+        },
+        {
+          "scheme": "RTN_2B",
+          "bits": 2.5,
+          "n": 500,
+          "degenerate": 0.998,
+          "fires_per_rule": {
+            "nll": 0.156,
+            "trigram": 0.676,
+            "token_share": 0.818,
+            "alpha": 0.996
+          },
+          "single_rule_decisions": 0.078,
+          "without_nll": 0.996,
+          "without_trigram": 0.998,
+          "without_token_share": 0.998,
+          "without_alpha": 0.922
+        }
+      ],
+      "coherent_band_under_nudge": {
+        "loose": [
+          4.5,
+          5.5,
+          6.5,
+          7.5,
+          8.5
+        ],
+        "strict": [
+          4.5,
+          5.5,
+          6.5,
+          7.5,
+          8.5
+        ]
+      },
+      "coherent_band_as_shipped": [
+        4.5,
+        5.5,
+        6.5,
+        7.5,
+        8.5
+      ]
+    },
+    "Phi-3.5-mini": {
+      "rows": [
+        {
+          "scheme": "FP16",
+          "bits": 16.0,
+          "n": 500,
+          "degenerate": 0.0,
+          "fires_per_rule": {
+            "nll": 0.0,
+            "trigram": 0.0,
+            "token_share": 0.0,
+            "alpha": 0.0
+          },
+          "single_rule_decisions": 0.0,
+          "without_nll": 0.0,
+          "without_trigram": 0.0,
+          "without_token_share": 0.0,
+          "without_alpha": 0.0
+        },
+        {
+          "scheme": "RTN_8B",
+          "bits": 8.5,
+          "n": 500,
+          "degenerate": 0.0,
+          "fires_per_rule": {
+            "nll": 0.0,
+            "trigram": 0.0,
+            "token_share": 0.0,
+            "alpha": 0.0
+          },
+          "single_rule_decisions": 0.0,
+          "without_nll": 0.0,
+          "without_trigram": 0.0,
+          "without_token_share": 0.0,
+          "without_alpha": 0.0
+        },
+        {
+          "scheme": "RTN_7B",
+          "bits": 7.5,
+          "n": 500,
+          "degenerate": 0.0,
+          "fires_per_rule": {
+            "nll": 0.0,
+            "trigram": 0.0,
+            "token_share": 0.0,
+            "alpha": 0.0
+          },
+          "single_rule_decisions": 0.0,
+          "without_nll": 0.0,
+          "without_trigram": 0.0,
+          "without_token_share": 0.0,
+          "without_alpha": 0.0
+        },
+        {
+          "scheme": "RTN_6B",
+          "bits": 6.5,
+          "n": 500,
+          "degenerate": 0.0,
+          "fires_per_rule": {
+            "nll": 0.0,
+            "trigram": 0.0,
+            "token_share": 0.0,
+            "alpha": 0.0
+          },
+          "single_rule_decisions": 0.0,
+          "without_nll": 0.0,
+          "without_trigram": 0.0,
+          "without_token_share": 0.0,
+          "without_alpha": 0.0
+        },
+        {
+          "scheme": "RTN_5B",
+          "bits": 5.5,
+          "n": 500,
+          "degenerate": 0.0,
+          "fires_per_rule": {
+            "nll": 0.0,
+            "trigram": 0.0,
+            "token_share": 0.0,
+            "alpha": 0.0
+          },
+          "single_rule_decisions": 0.0,
+          "without_nll": 0.0,
+          "without_trigram": 0.0,
+          "without_token_share": 0.0,
+          "without_alpha": 0.0
+        },
+        {
+          "scheme": "RTN_4B",
+          "bits": 4.5,
+          "n": 500,
+          "degenerate": 0.0,
+          "fires_per_rule": {
+            "nll": 0.0,
+            "trigram": 0.0,
+            "token_share": 0.0,
+            "alpha": 0.0
+          },
+          "single_rule_decisions": 0.0,
+          "without_nll": 0.0,
+          "without_trigram": 0.0,
+          "without_token_share": 0.0,
+          "without_alpha": 0.0
+        },
+        {
+          "scheme": "RTN_3B",
+          "bits": 3.5,
+          "n": 500,
+          "degenerate": 0.006,
+          "fires_per_rule": {
+            "nll": 0.006,
+            "trigram": 0.0,
+            "token_share": 0.0,
+            "alpha": 0.0
+          },
+          "single_rule_decisions": 0.006,
+          "without_nll": 0.0,
+          "without_trigram": 0.006,
+          "without_token_share": 0.006,
+          "without_alpha": 0.006
+        },
+        {
+          "scheme": "RTN_2B",
+          "bits": 2.5,
+          "n": 500,
+          "degenerate": 1.0,
+          "fires_per_rule": {
+            "nll": 0.99,
+            "trigram": 0.006,
+            "token_share": 0.08,
+            "alpha": 0.002
+          },
+          "single_rule_decisions": 0.922,
+          "without_nll": 0.082,
+          "without_trigram": 1.0,
+          "without_token_share": 0.996,
+          "without_alpha": 1.0
+        }
+      ],
+      "coherent_band_under_nudge": {
+        "loose": [
+          3.5,
+          4.5,
+          5.5,
+          6.5,
+          7.5,
+          8.5
+        ],
+        "strict": [
+          3.5,
+          4.5,
+          5.5,
+          6.5,
+          7.5,
+          8.5
+        ]
+      },
+      "coherent_band_as_shipped": [
+        3.5,
+        4.5,
+        5.5,
+        6.5,
+        7.5,
+        8.5
+      ]
+    }
+  },
   "refusal_class_audit": {
     "Qwen2.5-3B": {
       "scheme": "RTN_4B",
