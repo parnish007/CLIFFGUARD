@@ -41,6 +41,7 @@ import hashlib
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 _FOLD_A_DIR = Path("data/folds/fold_a")
 _REFUSAL_MARKERS = (
@@ -71,6 +72,44 @@ def _classify_refusal(text: str) -> bool:
     return any(m.lower() in head.lower() for m in _REFUSAL_MARKERS)
 
 
+def _iter_hh_rows_direct(max_rows: int) -> Any:
+    """Stream hh-rlhf rows straight from the Hub, without the datasets library.
+
+    `load_dataset("Anthropic/hh-rlhf")` is the documented path and it is tried
+    first, but it breaks often enough on hosted runtimes -- library major
+    versions change how script-based datasets load, and a Colab image can carry
+    any of them -- that a run costing an hour of GPU time should not depend on
+    it. The underlying files are plain gzipped JSONL at a stable URL, so this
+    fallback needs nothing but urllib and gzip.
+
+    harmless-base is read first because refusal-flavoured exchanges are
+    concentrated there; helpful-base follows to top up the benign side.
+    """
+    import gzip
+    import urllib.request
+
+    base = "https://huggingface.co/datasets/Anthropic/hh-rlhf/resolve/main"
+    seen = 0
+    for subset in ("harmless-base", "helpful-base"):
+        url = f"{base}/{subset}/train.jsonl.gz"
+        print(f"[download_fold_a] streaming {subset} ...", flush=True)
+        request = urllib.request.Request(
+            url, headers={"User-Agent": "cliffguard/1.0"})
+        with urllib.request.urlopen(request, timeout=180) as response:
+            with gzip.open(response, "rt", encoding="utf-8") as handle:
+                for line in handle:
+                    if seen >= max_rows:
+                        return
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        yield json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    seen += 1
+
+
 def download_anthropic_hh(
     target_dir: Path,
     n_benign: int = 1200,
@@ -80,15 +119,23 @@ def download_anthropic_hh(
 
     License: MIT (see https://huggingface.co/datasets/Anthropic/hh-rlhf)
     """
+    # Enough rows to fill both quotas with headroom: roughly one row in fifty
+    # classifies as refused, so 800 refused needs tens of thousands scanned.
+    scan_budget = max(60_000, 60 * (n_benign + n_refused))
+    ds: Any
     try:
         from datasets import load_dataset
-    except ImportError as exc:
-        raise ImportError(
-            "datasets library not installed. Run: uv add datasets"
-        ) from exc
 
-    print("[download_fold_a] Loading Anthropic/hh-rlhf ...")
-    ds = load_dataset("Anthropic/hh-rlhf", split="train")
+        print("[download_fold_a] Loading Anthropic/hh-rlhf via datasets ...",
+              flush=True)
+        ds = load_dataset("Anthropic/hh-rlhf", split="train")
+    except Exception as exc:                      # noqa: BLE001 - any failure
+        # ImportError, a datasets version that cannot load this repo, a Hub
+        # error: all of them mean the same thing here, so all fall back rather
+        # than ending the run.
+        print(f"[download_fold_a] datasets path unavailable ({type(exc).__name__}: "
+              f"{exc}); streaming the raw files instead", flush=True)
+        ds = _iter_hh_rows_direct(scan_budget)
 
     benign: list[dict[str, str]] = []
     refused: list[dict[str, str]] = []
@@ -116,8 +163,19 @@ def download_anthropic_hh(
         if len(benign) >= n_benign and len(refused) >= n_refused:
             break
 
+    # A short corpus is worse than none: the runner would happily take 40
+    # prompts and produce a paired comparison nobody can act on. Say so here,
+    # where the cause is visible, rather than three steps downstream.
+    if len(benign) < n_benign or len(refused) < n_refused:
+        raise SystemExit(
+            f"corpus short: {len(benign)}/{n_benign} benign, "
+            f"{len(refused)}/{n_refused} refused. The scan budget was exhausted "
+            "before both quotas filled; raise --max or check network access.")
+
     _write_jsonl(target_dir / "anthropic_hh_benign.jsonl", benign)
     _write_jsonl(target_dir / "anthropic_hh_refused.jsonl", refused)
+    print(f"[download_fold_a] wrote {len(benign)} benign, {len(refused)} refused",
+          flush=True)
     print(f"[download_fold_a]   benign: {len(benign)} prompts written")
     print(f"[download_fold_a]   refused: {len(refused)} prompts written")
 
@@ -155,11 +213,14 @@ def download_oasst(target_dir: Path, n_benign: int = 600) -> None:
 
 
 def verify(target_dir: Path) -> bool:
+    # Only the two HH files are required. oasst_benign.jsonl is reported when
+    # present but its absence is not a failure: no runner in this repository
+    # reads it, and treating it as required makes a complete corpus look broken.
     expected = {
         "anthropic_hh_benign.jsonl": 1200,
         "anthropic_hh_refused.jsonl": 800,
-        "oasst_benign.jsonl": 600,
     }
+    optional = {"oasst_benign.jsonl": 600}
     all_ok = True
     print()
     print("Verification:")
@@ -174,6 +235,15 @@ def verify(target_dir: Path) -> bool:
         else:
             print(f"  {fname}: MISSING")
             all_ok = False
+    for fname, target in optional.items():
+        path = target_dir / fname
+        if path.exists():
+            count = sum(1 for ln in path.read_text(encoding="utf-8").splitlines()
+                        if ln.strip())
+            print(f"  {fname}: {count} lines — optional, "
+                  f"{'OK' if count >= target else 'short'}")
+        else:
+            print(f"  {fname}: absent — optional, no runner reads it")
     return all_ok
 
 
@@ -222,15 +292,25 @@ def main(argv: list[str] | None = None) -> int:
     n_refused = args.max if args.max else 800
     n_benign_oa = args.max if args.max else 600
 
+    # The HH subsets are required: every runner reads exactly those two files,
+    # and a failure here must stop the build.
     try:
-        download_anthropic_hh(args.target_dir, n_benign=n_benign_hh, n_refused=n_refused)
-        download_oasst(args.target_dir, n_benign=n_benign_oa)
-    except ImportError as exc:
-        print(f"[download_fold_a] ERROR: {exc}", file=sys.stderr)
-        return 2
-    except Exception as exc:
-        print(f"[download_fold_a] ERROR while downloading: {exc}", file=sys.stderr)
+        download_anthropic_hh(args.target_dir, n_benign=n_benign_hh,
+                              n_refused=n_refused)
+    except Exception as exc:                      # noqa: BLE001
+        print(f"[download_fold_a] ERROR building the HH corpus: {exc}",
+              file=sys.stderr)
         return 3
+
+    # OASST is not. No runner in this repository reads oasst_benign.jsonl, so a
+    # failure there is a warning: returning non-zero would make a caller think
+    # the corpus is unusable when it is complete.
+    try:
+        download_oasst(args.target_dir, n_benign=n_benign_oa)
+    except Exception as exc:                      # noqa: BLE001
+        print(f"[download_fold_a] optional OASST subset skipped "
+              f"({type(exc).__name__}: {exc}). No runner uses it.",
+              file=sys.stderr)
 
     ok = verify(args.target_dir)
     return 0 if ok else 1
