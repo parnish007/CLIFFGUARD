@@ -26,7 +26,7 @@ per rung, graded by a 7B judge behind a degeneracy gate:
 
 | | result |
 |---|---|
-| **Refusal drift** | Lower precision produces **more** refusal: **1.15 points per bit removed**, 95% CI [0.75, 1.55] (conditional — see below) |
+| **Refusal drift** | Lower precision produces **more** refusal: **1.15 points per bit removed**, 95% CI [0.75, 1.55]. **The direction replicates across graders; the significance does not** — see below |
 | **Refusal→compliance** | Never above **2.2%**; simultaneous 95% upper bound **4.62%** across all 14 model×rung cells |
 | **Phrase-list scoring** | Reports up to **38.4%** on the same completions, and is **non-monotone** in the marker list |
 | **Frozen refusal probe** | Retains **96–100%** across 8.5–4.5 bits, spanning both models' significant 4.5-bit shifts; already 63% at Phi's significant 3.5-bit shift |
@@ -47,6 +47,15 @@ identical completions and the whole gap is the **grader** — 10.8% vs 2.2% at 4
 bits on Qwen2.5-3B. Where output has collapsed, the **gate** dominates — 38.4%
 under a perplexity-only gate vs 0.2% under the composite gate, same marker list,
 same completions, which is 99.5% of that gap.
+
+> **Four independent graders, and the significance does not replicate.** We
+> re-scored the identical completions with Llama-3.3-70B, Llama-3.1-70B and two
+> Claude models — three families other than the one under test. Three of four
+> agree the shift runs *toward* refusal, so the direction is not an artifact of
+> one grader. But the magnitude collapses (32-vs-11 becomes 1-vs-2 to 12-vs-7),
+> none reaches significance, and pairwise agreement with the 7B judge is only
+> 64.9–89.3%. We withdraw the significance claim. A dependent variable that moves
+> thirtyfold with grader choice is this project's own thesis applied to itself.
 
 > **What "refusal" means here.** It is the judge's `REFUSE` class, which the
 > template defines as declining, deflecting, redirecting **or** warning — broader

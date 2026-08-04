@@ -104,11 +104,25 @@ def export(runs: Path, size: int, schemes: list[str]) -> int:
     return 0
 
 
-def ingest(runs: Path) -> int:
-    """Fold verdict files back into the same layout an API judge produces."""
+def ingest(runs: Path, tag: str, suffix: str) -> int:
+    """Fold verdict files back into the same layout an API judge produces.
+
+    `suffix` selects which grader's files to read, so several models can grade
+    the same batches without colliding. Comparing two Claude models against each
+    other measures grader noise WITHIN a family; comparing either against Llama
+    measures disagreement ACROSS families. Only the second number means much on
+    its own -- if two models of one family already disagree as much as two
+    families do, cross-family agreement was never evidence of anything.
+    """
     by_target: dict[tuple[str, str], dict[str, str]] = {}
-    for f in sorted(BATCH_DIR.glob("*.verdicts")):
-        run_name, scheme, _ = f.stem.split("__")
+    for f in sorted(BATCH_DIR.glob(f"*{suffix}")):
+        # A bare ".verdicts" suffix also matches ".haiku.verdicts", which would
+        # silently merge two graders into one artifact and manufacture perfect
+        # agreement between them. Require the stem to be exactly the batch name.
+        stem = f.name[: -len(suffix)]
+        if stem.count("__") != 2 or "." in stem.rsplit("__", 1)[-1]:
+            continue
+        run_name, scheme, _ = stem.split("__")
         store = by_target.setdefault((run_name, scheme), {})
         for line in f.read_text(encoding="utf-8").splitlines():
             parts = line.split()
@@ -117,10 +131,10 @@ def ingest(runs: Path) -> int:
             store[parts[0]] = normalise(parts[1])
 
     if not by_target:
-        print(f"no .verdicts files in {BATCH_DIR}")
+        print(f"no *{suffix} files in {BATCH_DIR}")
         return 1
     for (run_name, scheme), verdicts in by_target.items():
-        out = runs / run_name / "results" / f"judge_api_{JUDGE_TAG}_{scheme}.json"
+        out = runs / run_name / "results" / f"judge_api_{tag}_{scheme}.json"
         if not out.parent.exists():
             print(f"  [skip] {run_name}: no such run")
             continue
@@ -141,10 +155,14 @@ def main() -> int:
     ap.add_argument("--size", type=int, default=50,
                     help="items per batch; small enough to grade attentively")
     ap.add_argument("--schemes", nargs="*", default=list(DEFAULT_SCHEMES))
+    ap.add_argument("--tag", default=JUDGE_TAG,
+                    help="grader name recorded in the artifact, e.g. agent_opus")
+    ap.add_argument("--suffix", default=".verdicts",
+                    help="extension the grader wrote, e.g. .opus.verdicts")
     args = ap.parse_args()
     if args.action == "export":
         return export(args.runs, args.size, args.schemes)
-    return ingest(args.runs)
+    return ingest(args.runs, args.tag, args.suffix)
 
 
 if __name__ == "__main__":

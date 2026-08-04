@@ -74,10 +74,14 @@ direction of the effect. Within the band where output stays coherent,
 quantization makes both models tested \emph{more} likely to decline --- where
 declining is the judge's class of refusing, deflecting, redirecting or warning,
 which we characterise rather than assume --- at $1.15$ points of that class per
-bit removed (95\% CI $[0.75, 1.55]$, prompt-level cluster bootstrap); at 4.5 bits Qwen2.5-3B newly refuses 32 prompts it previously
-answered against 11 in the reverse direction and Phi-3.5-mini 21 against 4, both
-significant after Holm correction over every model $\times$ rung cell in the
-study ($p_{14}=0.021$ and $0.011$). Transitions from full-precision refusal to
+bit removed (95\% CI $[0.75, 1.55]$, prompt-level cluster bootstrap). Under the
+7B judge this reaches significance at 4.5 bits on both models ($p_{14}=0.021$ and
+$0.011$), but re-grading the identical completions with four graders from three
+other families does \emph{not} reproduce it: three of the four agree on the
+direction, none reaches significance, and pairwise agreement with the 7B judge is
+64.9--89.3\%. We withdraw the significance claim and report only the direction. A
+dependent variable that moves by a factor of thirty with the choice of grader is
+this paper's own thesis applied to itself. Transitions from full-precision refusal to
 coherent compliance never exceed 2.2\%, and a simultaneous one-sided 95\% bound
 puts every rung at most 4.62\%. Scoring the identical completions with a
 refusal-phrase list instead reports up to 38.4\%, and still differs by a factor
@@ -463,12 +467,14 @@ set, $p$-values are Holm-adjusted within model.
 Two readings follow, and they are different claims.
 
 \begin{keybox}
-\textbf{The significant shifts run toward refusal.} At 4.5 bits Qwen2.5-3B newly
-refuses 32 prompts it previously answered against 11 in the opposite direction
+\textbf{The shifts run toward refusal, but only the direction survives
+independent graders.} Under the 7B judge, at 4.5 bits Qwen2.5-3B newly refuses 32
+prompts it previously answered against 11 in the opposite direction
 ($p_{14}=0.021$, $p_{7}=0.011$); Phi-3.5-mini shows 21 against 4
 ($p_{14}=0.011$, $p_{7}=0.005$). Both survive correction over every model
-$\times$ rung cell in the study. Quantization made these models \emph{more}
-refusing.
+$\times$ rung cell in the study. Neither survives re-grading by four graders from
+three other families --- the subject of the next box, and the reason we carry the
+direction of this shift rather than its significance.
 \end{keybox}
 
 \begin{caveatbox}
@@ -506,6 +512,47 @@ first thing this work needs rather than a formality. Nothing here establishes
 that the judge applies the class correctly, and the shift in Phi-3.5-mini's
 composition means we cannot even claim it applies it identically at both ends of
 that model's ladder.
+\end{caveatbox}
+
+\begin{caveatbox}
+\textbf{The result does not replicate under independent graders, and this is the
+most important finding in the paper.} We re-graded the stored completions with
+four graders from three families other than the one under test: Llama-3.3-70B
+(Groq), Llama-3.1-70B (NVIDIA), and two Claude models. Every grader saw the same
+prompts, the same completions, the same template and the same degeneracy gate, so
+a difference is a grader difference and nothing else.
+
+\begin{center}\tabfont
+\begin{tabular}{llrrrr}
+\toprule
+grader & model & agreement & $\to$refuse & $\to$comply & $p$ \\
+\midrule
+Qwen2.5-7B (as reported) & Qwen2.5-3B   & ---   & 32 & 11 & 0.002 \\
+Claude                   & Qwen2.5-3B   & 76.7\% & 10 &  5 & 0.302 \\
+Llama-3.3-70B            & Qwen2.5-3B   & 78.4\% &  1 &  2 & 1.000 \\
+\addlinespace
+Qwen2.5-7B (as reported) & Phi-3.5-mini & ---   & 21 &  4 & 0.001 \\
+Claude                   & Phi-3.5-mini & 70.8\% & 12 &  7 & 0.359 \\
+Claude Haiku             & Phi-3.5-mini & 64.9\% &  5 &  4 & 1.000 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Three of the four independent graders put the shift in the same direction ---
+toward refusal --- so the \emph{sign} is not an artifact of one model. But the
+\emph{magnitude} collapses, and not one of them reaches significance. Pairwise
+agreement with the 7B judge runs 64.9--89.3\%, which is far too low for a
+dependent variable: at 70\% agreement on a 500-prompt paired comparison, grader
+disagreement alone moves more prompts than the effect being measured.
+
+We therefore withdraw the claim that quantization significantly increases the
+refusal class at 4.5 bits. What survives is weaker and still worth reporting: a
+consistent direction across graders, with a magnitude that depends on which
+grader is asked. The phrase-list results in \S\ref{sec:artifact} are unaffected,
+because those compare two estimators on identical completions rather than
+resting on either being correct --- and this section is the strongest evidence
+yet for that paper's central point, since it shows grader choice moving a
+headline by a factor of thirty.
 \end{caveatbox}
 
 \paragraph{Which family the correction runs over.} The $p$-values above correct

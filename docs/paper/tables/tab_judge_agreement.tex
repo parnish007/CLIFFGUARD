@@ -1,0 +1,17 @@
+\begin{tabular}{llrrrrr}
+\toprule
+& & & \multicolumn{2}{c}{agreement with 7B} & \multicolumn{2}{c}{4.5 bits, second judge} \\
+\cmidrule(lr){4-5}\cmidrule(lr){6-7}
+judge & model & $n$ & overall & on refusal & $\to$refuse & $\to$comply \\
+\midrule
+agent claude & Qwen2.5-3B & 450 & 76.7 & 73.4 & 10 & 5 \\
+ & Phi-3.5-mini & 400 & 70.8 & 68.2 & 12 & 7 \\
+agent haiku & Qwen2.5-3B & 100 & 58.0 & 52.3 & -- & -- \\
+ & Phi-3.5-mini & 1000 & 64.9 & 60.6 & 5 & 4 \\
+gemini gemini-2-0-flash & Qwen2.5-3B & 4 & 0.0 & 0.0 & 0 & 0 \\
+ & Phi-3.5-mini & 4 & 0.0 & 0.0 & 0 & 0 \\
+groq llama-3-3-70b-versatile & Qwen2.5-3B & 580 & 78.4 & 77.6 & 1 & 2 \\
+ & Phi-3.5-mini & 10 & 70.0 & 70.0 & 1 & 0 \\
+nvidia meta-llama-3-1-70b-instruct & Qwen2.5-3B & 375 & 89.3 & 93.0 & -- & -- \\
+\bottomrule
+\end{tabular}
