@@ -140,15 +140,23 @@ CHECKS: tuple[Check, ...] = (
           lambda s: str(_row(s, "Qwen2.5-3B", 4.5)["to_compliance"]),
           lambda v: _rx(rf"against {v} in the reverse direction|"
                         rf"against {v} in the opposite direction")),
-    Check("Qwen 4.5 Holm p",
+    # Bound to the family subscript, not to a bare "p=". A pattern that matches
+    # any Holm-adjusted p-value would pass even if the manuscript quoted the
+    # per-model number while calling the 14-cell family primary, which is
+    # exactly the substitution worth catching.
+    Check("Qwen 4.5 p_7",
           lambda s: f"{_row(s, 'Qwen2.5-3B', 4.5)['mcnemar_p_holm']:.3f}",
-          lambda v: _rx(rf"Holm-adjusted \$p={v}\$")),
+          lambda v: _rx(rf"opposite direction \(\$p_\{{14\}}=0\.021\$, "
+                        rf"\$p_\{{7\}}={v}\$\)")),
     Check("Phi 4.5 to-refuse count",
           lambda s: str(_row(s, "Phi-3.5-mini", 4.5)["to_refusal"]),
           lambda v: _rx(rf"Phi-3.5-mini (?:shows )?{v} against")),
-    Check("Phi 4.5 Holm p",
+    Check("Phi 4.5 p_7",
           lambda s: f"{_row(s, 'Phi-3.5-mini', 4.5)['mcnemar_p_holm']:.3f}",
-          lambda v: _rx(rf"Phi-3\.5-mini 21 against 4 \(\$p={v}\$\)")),
+          lambda v: _rx(rf"p_\{{7\}}={v}\$\)\. Both survive")),
+    Check("Phi 4.5 p_14 in keybox",
+          lambda s: f"{_row(s, 'Phi-3.5-mini', 4.5)['mcnemar_p_holm_all_cells']:.3f}",
+          lambda v: _rx(rf"21 against 4\s*\(\$p_\{{14\}}={v}\$")),
     Check("Qwen 4.5 strict-family p",
           lambda s: f"{_row(s, 'Qwen2.5-3B', 4.5)['mcnemar_p_holm_all_cells']:.3f}",
           lambda v: _rx(rf"survive on both models \(\$p={v}\$ for Qwen2\.5-3B")),
@@ -224,6 +232,54 @@ CHECKS: tuple[Check, ...] = (
 )
 
 
+class DocCheck(NamedTuple):
+    """A headline number that also appears outside the manuscript.
+
+    The README and the claims ledger restate the paper's main figures, and
+    nothing regenerates them, so they are exactly as liable to drift as the
+    prose was -- and more visible, since the README is the first thing a reader
+    sees. These are the numbers that would mislead if they went stale.
+    """
+
+    label: str
+    path: Path
+    value: Callable[[dict[str, Any]], str]
+    pattern: Callable[[str], str]
+
+
+README = Path("README.md")
+LEDGER = Path("docs/claims_and_evidence.md")
+
+
+def _pooled(stats: dict[str, Any], key: str) -> str:
+    return f"{stats['drift']['_pooled'][key]:.2f}"
+
+
+DOC_CHECKS: tuple[DocCheck, ...] = (
+    DocCheck("README pooled kappa", README,
+             lambda s: _pooled(s, "estimate"),
+             lambda v: _rx(rf"\*\*{v} points per bit removed\*\*")),
+    DocCheck("README kappa interval", README,
+             lambda s: f"[{_pooled(s, 'ci_low')}, {_pooled(s, 'ci_high')}]",
+             lambda v: _rx("95% CI " + re.escape(v).replace(",\\ ", ", "))),
+    DocCheck("README max transition rate", README,
+             lambda s: f"{100 * max(r['rate_itt'] for r in _transitions(s)):.1f}",
+             lambda v: _rx(rf"Never above \*\*{v}%\*\*")),
+    DocCheck("README simultaneous bound", README,
+             lambda s: f"{100 * max(r['upper95_simultaneous'] for r in _transitions(s)):.2f}",
+             lambda v: _rx(rf"upper bound \*\*{v}%\*\*")),
+    DocCheck("ledger pooled kappa", LEDGER,
+             lambda s: _pooled(s, "estimate"),
+             lambda v: _rx(rf"\*\*{v} points/bit\*\*")),
+    DocCheck("ledger simultaneous bound", LEDGER,
+             lambda s: f"{100 * max(r['upper95_simultaneous'] for r in _transitions(s)):.2f}",
+             lambda v: _rx(rf"\*\*{v}%\*\* simultaneous")),
+    DocCheck("ledger max transition rate", LEDGER,
+             lambda s: f"{100 * max(r['rate_itt'] for r in _transitions(s)):.1f}",
+             lambda v: _rx(rf"stay \*\*.{{0,4}}{v}%\*\*")),
+)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--tex", type=Path,
@@ -246,11 +302,24 @@ def main() -> int:
             failures.append(f"  {check.label}: expected {value!r} in context "
                             f"/{check.pattern(value)}/")
 
+    print()
+    for doc in DOC_CHECKS:
+        if not doc.path.exists():
+            continue
+        value = doc.value(stats)
+        body = doc.path.read_text(encoding="utf-8")
+        found = re.search(doc.pattern(value), body) is not None
+        print(f"{doc.label:34s} {value:16s} {'ok' if found else 'MISSING'}")
+        if not found:
+            failures.append(f"  {doc.label}: expected {value!r} in "
+                            f"{doc.path} /{doc.pattern(value)}/")
+
     if failures:
         print("\nprose disagrees with the measurements:")
         print("\n".join(failures))
         return 1
-    print(f"\nall {len(CHECKS)} quoted quantities match {args.stats} in context")
+    print(f"\nall {len(CHECKS) + len(DOC_CHECKS)} quoted quantities match "
+          f"{args.stats} in context")
     return 0
 
 

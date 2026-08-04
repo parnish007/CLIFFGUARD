@@ -182,8 +182,8 @@ def fig_probe(review: dict[str, Any], out: Path) -> None:
     ax.set_ylabel("frozen-probe $d'$ retained")
     ax.yaxis.set_major_formatter(PercentFormatter(decimals=0))
     ax.legend(loc="lower left", frameon=False)
-    ax.set_title("The probe is flat where behaviour drifts,\n"
-                 "and collapses only once the model does")
+    ax.set_title("Near-flat over 8.5--4.5 bits, where behaviour drifts;\n"
+                 "Phi-3.5-mini is already at 63% by its 3.5-bit shift")
     save(fig, out, "fig_probe")
 
 

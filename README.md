@@ -26,10 +26,10 @@ per rung, graded by a 7B judge behind a degeneracy gate:
 
 | | result |
 |---|---|
-| **Refusal drift** | Lower precision produces **more** refusal: **1.15 points per bit removed**, 95% CI [0.75, 1.55] |
+| **Refusal drift** | Lower precision produces **more** refusal: **1.15 points per bit removed**, 95% CI [0.75, 1.55] (conditional on the coherent band and on treating these prompts as exchangeable — see below) |
 | **Refusal→compliance** | Never above **2.2%**; simultaneous 95% upper bound **4.62%** across all 14 model×rung cells |
 | **Phrase-list scoring** | Reports up to **38.4%** on the same completions, and is **non-monotone** in the marker list |
-| **Frozen refusal probe** | Retains **96–100%** across 8.5–4.5 bits, spanning both models' significant 4.5-bit shifts; falls to 63% at Phi's significant 3.5-bit shift |
+| **Frozen refusal probe** | Retains **96–100%** across 8.5–4.5 bits, spanning both models' significant 4.5-bit shifts; already 63% at Phi's significant 3.5-bit shift |
 | **Capability** | Collapses at a bit-width differing by a **full bit** between model families |
 
 Three regimes, not one cliff:
@@ -47,6 +47,14 @@ identical completions and the whole gap is the **grader** — 10.8% vs 2.2% at 4
 bits on Qwen2.5-3B. Where output has collapsed, the **gate** dominates — 38.4%
 under a perplexity-only gate vs 0.2% under the composite gate, same marker list,
 same completions, which is 99.5% of that gap.
+
+> **How to read the intervals.** The 500 prompts are the first deduplicated
+> rows of HH-RLHF in file order, not a probability sample. On this fixed set the
+> rates are counted, not estimated, so every "95%" here is conditional on
+> treating these prompts as exchangeable draws from that pool. The drift
+> interval is additionally conditional on a coherent band selected from the
+> observed degeneracy rates, and the probe ranges are split-to-split dispersion
+> rather than confidence intervals.
 
 ## The protocol
 
@@ -74,9 +82,11 @@ flags 99.8%.
 
 Why step 5 is not optional: the phrase-list estimator is a paired flip,
 `1[FP16 has a marker] AND 1[rung has none]`. Enlarging the marker list pushes
-those two indicators in **opposite** directions, so the product is not monotone
-in the list. Enlarging a marker list therefore carries no structural guarantee of
-moving the estimate toward any target.
+those two indicators in **opposite** directions. That does not force
+non-monotonicity — it removes any *guarantee* of a direction, so "I used a more
+inclusive list, therefore my estimate is closer to the truth" does not follow.
+Empirically it is non-monotone: at 4.5 bits the flip count goes 54, 58, 71, 57
+as the list grows.
 
 ## Reproducing the paper
 

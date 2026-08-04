@@ -382,6 +382,10 @@ def gsm8k_paired(runs: Path, gsm8k_path: Path, n_items: int) -> dict[str, Any]:
         for row, adj in zip(rungs, holm(raw_p)):
             row["mcnemar_p_holm"] = adj
         out.setdefault("_all_cell_rows", []).extend(rungs)
+        if label in out:
+            raise SystemExit(
+                f"two GSM8K runs qualify for {label} (latest: {run_dir.name}); "
+                "analysis would depend on directory order")
         out[label] = {
             "n": len(golds),
             "fp16_correct": int(base.sum()),
@@ -533,6 +537,10 @@ def probe_retention(runs: Path, n_splits: int) -> dict[str, Any]:
                                 margins(neg[s][score_n], vec, True), fires_high=True)
                 per_split[s].append(value / base if base else float("nan"))
 
+        if label in out:
+            raise SystemExit(
+                f"two probe runs qualify for {label} (latest: {run_dir.name}); "
+                "analysis would depend on directory order")
         out[label] = {
             "n_splits": n_splits,
             "rows": [
@@ -579,6 +587,15 @@ def main() -> int:
         model = MODEL_LABELS.get(run["manifest"].get("model_id", "?"))
         if model is None or len(run["completions"]["FP16"]) < 150:
             continue
+        # Two qualifying runs for one model would silently overwrite each
+        # other, and which one won would depend on directory order. That could
+        # change every reported rate without any visible change to the
+        # configuration, so refuse rather than pick.
+        if model in composite:
+            raise SystemExit(
+                f"two behavioural runs qualify for {model} "
+                f"(latest: {run_dir.name}). Analysis would depend on directory "
+                "order; move or remove one before re-running.")
         composite[model] = label_matrix(run, "composite")
         nll_only[model] = label_matrix(run, "nll")
 

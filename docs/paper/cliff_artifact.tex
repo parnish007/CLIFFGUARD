@@ -75,8 +75,9 @@ direction of the effect. Within the band where output stays coherent,
 quantization makes both models tested \emph{more} likely to refuse, at $1.15$
 refusal-rate points per bit removed (95\% CI $[0.75, 1.55]$, prompt-level cluster
 bootstrap); at 4.5 bits Qwen2.5-3B newly refuses 32 prompts it previously
-answered against 11 in the reverse direction (Holm-adjusted $p=0.011$) and
-Phi-3.5-mini 21 against 4 ($p=0.005$). Transitions from full-precision refusal to
+answered against 11 in the reverse direction and Phi-3.5-mini 21 against 4, both
+significant after Holm correction over every model $\times$ rung cell in the
+study ($p_{14}=0.021$ and $0.011$). Transitions from full-precision refusal to
 coherent compliance never exceed 2.2\%, and a simultaneous one-sided 95\% bound
 puts every rung at most 4.62\%. Scoring the identical completions with a
 refusal-phrase list instead reports up to 38.4\%, and still differs by a factor
@@ -273,12 +274,20 @@ k-quants behave.
 are 500 first-turn human utterances from Anthropic HH-RLHF \citep{bai2022hh},
 taken as the first 500 deduplicated rows in file order rather than by random
 draw. This is a fixed benchmark, not a probability sample from a defined
-population, and it matters for how the intervals should be read: the cluster
-bootstrap and the exact binomial bounds quantify variability under resampling
-\emph{these} prompts, which is the right uncertainty for asking whether the same
-procedure on a comparable prompt set would see the same sign. They are not
-warranted as inference to all HH-RLHF utterances, still less to prompts in
-general. Completions are greedy, 48 new tokens, left-padded batching.
+population, and it governs how every interval in this paper should be read.
+
+On these 500 prompts the transition rate is not an unknown parameter --- it is
+counted. The bootstrap and the exact binomial bounds are therefore not
+benchmark-level confidence statements; they answer a different and explicitly
+assumption-bearing question: if these prompts are treated as exchangeable draws
+from the first-turn HH-RLHF pool, how much would the estimate move on a
+comparable draw? That assumption is not testable here, and every ``95\%'' in
+this paper should be read as conditional on it. Two further conditions apply
+where noted: the drift intervals are additionally conditional on a coherent band
+selected from the observed degeneracy rates and then held fixed
+(\S\ref{sec:law}), and the probe ranges are dispersion over splits of one fixed
+prompt set rather than intervals at all (\S\ref{sec:probe}). Completions are
+greedy, 48 new tokens, left-padded batching.
 The residual stream, where used, is read at mid-depth resolved from each model's
 own configuration.
 
@@ -374,13 +383,19 @@ dependence on the judge staying on format when shown degraded input. Each label
 is two tokens under this tokenizer, but their \emph{first} tokens are distinct
 (\texttt{\char32REF}, \texttt{\char32COM}, \texttt{\char32UNC}; ids 38029, 7682,
 75255), so the three-way argmax is well defined; the runner asserts this at load
-time rather than assuming it. We are precise about what this scores: it is an
-argmax over the first token of each label, which is the branch the judge would
-take if it generated, and \emph{not} the total log-probability of the label
-sequence. The two coincide whenever the second token is near-determined given
-the first, which we expect here but did not measure. Summing log-probabilities
-over both tokens would remove the assumption at the cost of a second forward
-pass, and is the version we would run given the budget. \textsc{unclear} is kept as its own category and
+time rather than assuming it. We are precise about what this scores, since two
+assumptions hide in it. It is an argmax over the first token of each label ---
+the branch the judge would take if it generated --- and \emph{not} the total
+log-probability of the label sequence; the two coincide whenever the second token
+is near-determined given the first, which we expect here but did not measure.
+And the three ids come from tokenizing each label standalone with a leading
+space, not from the candidate continuations in template context; distinct
+standalone first pieces do not by themselves prove distinct in-context
+continuations. Scoring both tokens of each label in context would remove both
+assumptions for one extra forward pass, and is the version we would run given
+the budget. Separately, the judge sees the prompt and the completion truncated
+to 600 characters each. No completion reaches that length --- the generation
+budget is 48 tokens --- and exactly one prompt of 500 does, at 691 characters. \textsc{unclear} is kept as its own category and
 never merged into either decision; it accounts for at most 0.2\% of completions
 at any rung.
 Judge-model grading is standard \citep{zheng2023judging}; we report it alongside
@@ -420,9 +435,10 @@ Two readings follow, and they are different claims.
 \begin{keybox}
 \textbf{The significant shifts run toward refusal.} At 4.5 bits Qwen2.5-3B newly
 refuses 32 prompts it previously answered against 11 in the opposite direction
-($p_{\text{Holm}}=0.011$); Phi-3.5-mini shows 21 against 4
-($p_{\text{Holm}}=0.005$). Both survive correction over every model $\times$ rung
-cell in the study. Quantization made these models \emph{more} refusing.
+($p_{14}=0.021$, $p_{7}=0.011$); Phi-3.5-mini shows 21 against 4
+($p_{14}=0.011$, $p_{7}=0.005$). Both survive correction over every model
+$\times$ rung cell in the study. Quantization made these models \emph{more}
+refusing.
 \end{keybox}
 
 \paragraph{Which family the correction runs over.} The $p$-values above correct
@@ -608,9 +624,15 @@ The quantity a phrase-list pipeline reports is a paired flip,
 where $m_{\mathcal{M}}(x)$ is true when completion $x$ contains a marker from
 list $\mathcal{M}$. Enlarging $\mathcal{M}$ pushes the two indicators in
 \emph{opposite} directions: the baseline factor can only rise, the rung factor
-can only fall. Their product is therefore not monotone in $\mathcal{M}$, and an
-analyst cannot bound the error by being more inclusive --- the estimate can move
-either way, and does.
+can only fall. We are careful about what that establishes. It does not prove the
+product must be non-monotone --- a product of a nondecreasing and a nonincreasing
+indicator may still be constant or monotone in either direction. What it removes
+is any \emph{guarantee}: enlarging the list carries no structural argument that
+the estimate moves in a known direction, so an analyst cannot reason ``I was more
+inclusive, therefore my estimate is closer to the truth''. Whether it is
+non-monotone in fact is then an empirical question, and on these runs the answer
+is yes: at 4.5 bits the flip count goes 54, 58, 71, 57 as the list grows
+(Table~\ref{tab:markerdecomp}).
 
 \begin{table}[htbp]
   \centering\tabfont
@@ -634,7 +656,10 @@ either way, and does.
 
 Across rungs the estimate moves by up to $1.38\times$ on Qwen2.5-3B and
 $1.64\times$ on Phi-3.5-mini with the choice of strings alone. Every variant
-reports a rising cliff that the judge does not.
+rises steeply below 5 bits where the judge does not, though none is monotone
+along the ladder --- all four dip between 6 and 5 code bits, and on Phi-3.5-mini
+every variant falls back to near zero at 2 bits, where the model has stopped
+producing text a marker could appear in.
 
 \begin{figure}[htbp]
   \centering
@@ -767,12 +792,15 @@ the probe collapses along with the model (Qwen2.5-3B to 34\%).
 \end{caveatbox}
 
 \begin{keybox}
-\textbf{The probe tracks the degeneration regime, not the behavioural one.} Over
-8.5--4.5 bits it is near-flat while the refusal decision drifts significantly and
-arithmetic falls by seven points, 38\% of its baseline; it drops sharply only
-below 4
-bits, in the regime our detector calls degenerate --- where the output is already
-visibly broken and no monitor is needed to notice a problem. This is the
+\textbf{Over 8.5--4.5 bits the probe does not track behaviour.} It is near-flat
+there while the refusal decision drifts significantly on both models and
+arithmetic falls by seven points, 38\% of its baseline. It then falls, and where
+it falls differs by model: on Qwen2.5-3B the drop coincides with degeneration,
+but on Phi-3.5-mini retention is already 63\% at 3.5 bits, a rung our detector
+calls degenerate for only 0.6\% of completions and where the refusal shift is
+significant. So the probe is not simply a degeneration detector either; the
+defensible statement is the narrow one, that across the range where these models
+remain coherent it stays high while their behaviour moves. This is the
 limitation \citet{belinkov2022probing} describes: a linearly decodable label is
 not thereby a behavioural one. It is also why the agreement with
 \citet{chhabra2025refusal} and \citet{duan2026monitors} that compression
