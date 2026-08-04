@@ -27,11 +27,16 @@ def test_paper_prose_matches_measurements() -> None:
     import json
     import re
 
-    from scripts.check_paper_numbers import CHECKS
+    from scripts.check_paper_numbers import CHECKS, DATA_CHECKS
 
     stats = json.loads(STATS.read_text(encoding="utf-8"))
+    data = json.loads((REPO_ROOT / "docs" / "paper" / "data.json").read_text(encoding="utf-8"))
     text = TEX.read_text(encoding="utf-8")
     missing = [
+        (check.label, check.value(data))
+        for check in DATA_CHECKS
+        if re.search(check.pattern(check.value(data)), text) is None
+    ] + [
         (check.label, check.value(stats))
         for check in CHECKS
         if re.search(check.pattern(check.value(stats)), text) is None

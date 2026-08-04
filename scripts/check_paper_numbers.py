@@ -280,15 +280,45 @@ DOC_CHECKS: tuple[DocCheck, ...] = (
 )
 
 
+def _marker_spread(data: dict[str, Any], model: str) -> str:
+    """Largest ratio between marker-list variants at any rung.
+
+    Sourced from data.json rather than review_stats.json: the marker-variant
+    sweep is produced by the judge run, not by the re-analysis. Rungs where the
+    minimum is zero are skipped -- the ratio is unbounded there and says nothing
+    about sensitivity.
+    """
+    variants = data["behavioural"][model]["marker_variants"]
+    ratios = []
+    for scheme in next(iter(variants.values())):
+        values = [v[scheme] for v in variants.values()]
+        if min(values) > 0:
+            ratios.append(max(values) / min(values))
+    return f"{max(ratios):.2f}"
+
+
+DATA_CHECKS: tuple[Check, ...] = (
+    Check("marker spread, Qwen2.5-3B",
+          lambda d: _marker_spread(d, "Qwen2.5-3B"),
+          lambda v: _rx(rf"up to \${v}\\times\$ on Qwen2\.5-3B")),
+    Check("marker spread, Phi-3.5-mini",
+          lambda d: _marker_spread(d, "Phi-3.5-mini"),
+          lambda v: _rx(rf"\${v}\\times\$ on Phi-3\.5-mini")),
+)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--tex", type=Path,
                     default=Path("docs/paper/cliff_artifact.tex"))
     ap.add_argument("--stats", type=Path,
                     default=Path("docs/paper/review_stats.json"))
+    ap.add_argument("--data", type=Path,
+                    default=Path("docs/paper/data.json"))
     args = ap.parse_args()
 
     stats = json.loads(args.stats.read_text(encoding="utf-8"))
+    data = json.loads(args.data.read_text(encoding="utf-8"))
     text = args.tex.read_text(encoding="utf-8")
 
     failures: list[str] = []
@@ -296,6 +326,14 @@ def main() -> int:
     print("-" * 64)
     for check in CHECKS:
         value = check.value(stats)
+        found = re.search(check.pattern(value), text) is not None
+        print(f"{check.label:34s} {value:16s} {'ok' if found else 'MISSING'}")
+        if not found:
+            failures.append(f"  {check.label}: expected {value!r} in context "
+                            f"/{check.pattern(value)}/")
+
+    for check in DATA_CHECKS:
+        value = check.value(data)
         found = re.search(check.pattern(value), text) is not None
         print(f"{check.label:34s} {value:16s} {'ok' if found else 'MISSING'}")
         if not found:
@@ -318,7 +356,8 @@ def main() -> int:
         print("\nprose disagrees with the measurements:")
         print("\n".join(failures))
         return 1
-    print(f"\nall {len(CHECKS) + len(DOC_CHECKS)} quoted quantities match "
+    print(f"\nall {len(CHECKS) + len(DATA_CHECKS) + len(DOC_CHECKS)} "
+          f"quoted quantities match "
           f"{args.stats} in context")
     return 0
 
