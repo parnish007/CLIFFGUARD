@@ -256,3 +256,6 @@ scripts/run_local_stage0.py
 scripts/verify_gguf_pair.py
 tests/test_generate_cliff_corpus.py
 configs/example.yaml
+
+# Judge batch exports: intermediate working files for the agent judge.
+artifacts/judge_batches/
