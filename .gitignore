@@ -246,7 +246,6 @@ scripts/analyse_margin_normalisation.py
 scripts/build_preregistration_manifest.py
 scripts/colab_run.py
 scripts/compare_runs.py
-scripts/download_fold_a.py
 scripts/dry_run.py
 scripts/generate_cliff_corpus.py
 scripts/run_evaluation_3050.py
