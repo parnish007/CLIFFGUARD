@@ -555,6 +555,28 @@ yet for that paper's central point, since it shows grader choice moving a
 headline by a factor of thirty.
 \end{caveatbox}
 
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\linewidth]{figures/fig_judge_agreement.pdf}
+  \caption{Left: agreement between each independent grader and the 7B judge,
+  overall and restricted to completions the 7B judge called refusal. Right: the
+  paired 4.5-bit counts recomputed from each grader's own labels; shaded rows are
+  the 7B judge's own numbers, reproduced from Table~\ref{tab:transitions} for
+  comparison. Only graders that scored both FP16 and the 4.5-bit rung on at least
+  400 completions are shown, since a partial sweep cannot support a paired
+  comparison.}
+  \label{fig:judges}
+\end{figure}
+
+\begin{table}[htbp]
+  \centering\tabfont
+  \input{tables/tab_judge_agreement}
+  \caption{Second-judge agreement and reproduction. Every grader saw the same
+  prompts, completions, template and degeneracy gate as the 7B judge, so a
+  difference is attributable to the grader alone.}
+  \label{tab:judges}
+\end{table}
+
 \paragraph{Which family the correction runs over.} The $p$-values above correct
 across the seven rungs of one model. The simultaneous bound in the previous
 paragraph instead treats all 14 model $\times$ rung cells as one family, and

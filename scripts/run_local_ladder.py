@@ -318,6 +318,29 @@ def load_fp16_model() -> Any:
     return model.to("cuda")
 
 
+def load_deployed_model(repo: str) -> Any:
+    """Load a checkpoint that is ALREADY quantized by a deployed method.
+
+    AWQ and GPTQ checkpoints carry their quantization in the weights, so they are
+    loaded rather than constructed. transformers dispatches to the right kernel
+    from the repo's quantization_config; the only thing this wrapper adds is the
+    dtype-kwarg difference between transformers 4.x and 5.x, and a device map,
+    because these kernels expect their weights already on the GPU.
+    """
+    import torch
+    from transformers import AutoModelForCausalLM
+
+    try:
+        return AutoModelForCausalLM.from_pretrained(
+            repo, dtype=torch.float16, device_map={"": 0}, low_cpu_mem_usage=True
+        )
+    except TypeError:
+        return AutoModelForCausalLM.from_pretrained(
+            repo, torch_dtype=torch.float16, device_map={"": 0},
+            low_cpu_mem_usage=True
+        )
+
+
 def load_nf4_model() -> Any:
     import torch
     from transformers import AutoModelForCausalLM, BitsAndBytesConfig

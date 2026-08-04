@@ -55,6 +55,7 @@ from cliffguard.eval.discriminability import held_out_d_prime
 from cliffguard.eval.storage import new_run, record_corpus, record_environment
 import scripts.run_local_ladder as ladder
 from scripts.run_local_ladder import (
+    load_deployed_model,
     load_fp16_model,
     load_prompts,
     load_rtn_model,
@@ -360,6 +361,11 @@ def main() -> int:  # noqa: C901 - linear experiment script
     ap.add_argument("--max-new-tokens", type=int, default=48)
     ap.add_argument("--batch-size", type=int, default=16)
     ap.add_argument("--cache", type=Path, default=Path("artifacts/behavioural_cache"))
+    ap.add_argument("--deployed", nargs="*", default=[], metavar="LABEL=REPO",
+                    help="pre-quantized checkpoints to score as extra schemes, "
+                         "e.g. AWQ_4B=Qwen/Qwen2.5-3B-Instruct-AWQ. These are "
+                         "already quantized, so RTN is NOT applied to them; they "
+                         "are paired against the same FP16 base as every rung.")
     ap.add_argument("--label", default="behavioural-ladder")
     ap.add_argument("--smoke", action="store_true")
     args = ap.parse_args()
@@ -444,6 +450,20 @@ def main() -> int:  # noqa: C901 - linear experiment script
         name = f"RTN_{bits}B"
         schemes.append(name)
         run_scheme(name, (lambda b: lambda: load_rtn_model(b, args.group, [])[0])(bits))
+
+    # A pre-quantized checkpoint is already quantized, so it is a SCHEME, not a
+    # model to apply RTN to. Pointing --model at an AWQ repo and passing --bits
+    # would quantize it twice and measure something that does not exist. It is
+    # paired against the same FP16 base as every RTN rung, so the comparison is
+    # the same paired one; only the quantizer differs.
+    for spec in args.deployed:
+        if "=" not in spec:
+            raise SystemExit(
+                f"--deployed expects LABEL=REPO, got {spec!r}. The label names "
+                "the scheme in every output; the repo is the checkpoint.")
+        label, repo = spec.split("=", 1)
+        schemes.append(label)
+        run_scheme(label, (lambda r: lambda: load_deployed_model(r))(repo))
 
     # ---- degeneracy scoring, all schemes under ONE reference model -------
     print("\n=== scoring every completion under the FP16 reference ===")

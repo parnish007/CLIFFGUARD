@@ -298,11 +298,108 @@ def fig_refusal_law(review: dict[str, Any], out: Path) -> None:
     save(fig, out, "fig_refusal_law")
 
 
+def fig_judge_agreement(agreement: dict[str, Any], review: dict[str, Any],
+                        out: Path) -> None:
+    """Does the headline survive an independent grader?
+
+    Two panels, because agreement and reproduction answer different questions
+    and reporting only the first would be the friendlier half. Left: how often
+    each grader agrees with the 7B judge, split by what the 7B judge said, since
+    a single agreement number hides whether the disagreement is concentrated in
+    one class. Right: the paired 4.5-bit counts recomputed from each grader's own
+    labels, which is the number the paper's claim actually rests on.
+    """
+    rows = []
+    for tag, models in agreement.items():
+        for model, block in models.items():
+            if block.get("n_compared", 0) < 400:
+                continue                      # too few to plot honestly
+            repro = next((r for r in block.get("reproduction", [])
+                          if abs(r["bits"] - 4.5) < 1e-9), None)
+            rows.append({
+                "grader": tag.split("_")[0].replace("agent", "Claude").title()
+                if tag.startswith("agent") else tag.split("_")[0].title(),
+                "detail": ("Haiku" if "haiku" in tag else
+                           "Llama-3.3-70B" if "groq" in tag else
+                           "Llama-3.1-70B" if "nvidia" in tag else "Claude"),
+                "model": model,
+                "agreement": block["agreement"],
+                "recall_refuse": (block.get("recall_by_class") or {}).get("REFUSE"),
+                "to_refusal": repro["to_refusal"] if repro else None,
+                "to_compliance": repro["to_compliance"] if repro else None,
+            })
+    if not rows:
+        print("  (no second-judge data; skipping fig_judge_agreement)")
+        return
+
+    fig, (ax1, ax2) = plt.subplots(
+        1, 2, figsize=(TEXT_WIDTH_IN, 3.1), constrained_layout=True,
+        gridspec_kw={"width_ratios": [1.0, 1.15]})
+
+    labels = [f"{r['detail']}\n{r['model']}" for r in rows]
+    y = list(range(len(rows)))
+    ax1.barh(y, [100 * r["agreement"] for r in rows], height=0.55,
+             color=JUDGE, alpha=0.85, label="overall")
+    ax1.plot([100 * (r["recall_refuse"] or 0) for r in rows], y, "o",
+             color=MARKER, ms=6, label="on the refusal class", zorder=3)
+    ax1.set_yticks(y)
+    ax1.set_yticklabels(labels, fontsize=7.5)
+    ax1.invert_yaxis()
+    # Room above the first bar for the legend, so it never sits on the data.
+    ax1.set_xlim(0, 100)
+    ax1.set_ylim(len(rows) - 0.4, -1.15)
+    ax1.set_xlabel("agreement with the 7B judge")
+    ax1.xaxis.set_major_formatter(PercentFormatter(decimals=0))
+    ax1.legend(frameon=False, fontsize=7.5, loc="upper left",
+               bbox_to_anchor=(0.0, 1.0), ncol=2, columnspacing=1.0,
+               handletextpad=0.5)
+    ax1.set_title("Graders disagree on a third of completions", fontsize=9)
+
+    # Right panel: the 7B judge's own counts as a reference row, then each
+    # independent grader on the same axis.
+    ref = []
+    for model in ("Qwen2.5-3B", "Phi-3.5-mini"):
+        row = next((r for r in review["transitions"][model]["rows"]
+                    if abs(r["bits"] - 4.5) < 1e-9), None)
+        if row:
+            ref.append({"detail": "Qwen2.5-7B\n(as reported)", "model": model,
+                        "to_refusal": row["to_refusal"],
+                        "to_compliance": row["to_compliance"]})
+    every = ref + [r for r in rows if r["to_refusal"] is not None]
+    y2 = list(range(len(every)))
+    height = 0.36
+    ax2.barh([v - height / 2 for v in y2],
+             [r["to_refusal"] for r in every], height=height,
+             color=JUDGE, label=r"newly refusing")
+    ax2.barh([v + height / 2 for v in y2],
+             [r["to_compliance"] for r in every], height=height,
+             color=MARKER, label=r"newly complying")
+    ax2.set_yticks(y2)
+    ax2.set_yticklabels([f"{r['detail'].splitlines()[0]}\n{r['model']}"
+                         for r in every], fontsize=7.5)
+    ax2.invert_yaxis()
+    ax2.set_ylim(len(every) - 0.4, -1.15)
+    ax2.set_xlabel("prompts changing decision at 4.5 bits")
+    ax2.legend(frameon=False, fontsize=7.5, loc="upper right",
+               bbox_to_anchor=(1.0, 1.0), ncol=2, columnspacing=1.0,
+               handletextpad=0.5)
+    ax2.set_title("The magnitude does not reproduce", fontsize=9)
+    # Mark the reference rows so the eye separates them from the replications.
+    for i in range(len(ref)):
+        ax2.axhspan(i - 0.5, i + 0.5, color=DEGEN, alpha=0.13, zorder=0, lw=0)
+
+    fig.suptitle("Four graders, three families, one dependent variable",
+                 fontsize=10.5)
+    save(fig, out, "fig_judge_agreement")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--data", type=Path, default=Path("docs/paper/data.json"))
     ap.add_argument("--review", type=Path,
                     default=Path("docs/paper/review_stats.json"))
+    ap.add_argument("--agreement", type=Path,
+                    default=Path("docs/paper/judge_agreement.json"))
     ap.add_argument("--out", type=Path, default=Path("docs/paper/figures"))
     args = ap.parse_args()
 
@@ -316,6 +413,11 @@ def main() -> int:
     fig_degeneracy(data, args.out)
     fig_marker_sensitivity(data, args.out)
     fig_refusal_law(review, args.out)
+    # Emitted only when a second judge has run, so the paper never carries a
+    # placeholder figure for a measurement that does not exist.
+    if args.agreement.exists():
+        agreement = json.loads(args.agreement.read_text(encoding="utf-8"))
+        fig_judge_agreement(agreement, review, args.out)
     return 0
 
 
