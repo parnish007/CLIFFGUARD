@@ -72,9 +72,10 @@ two: refusal, compliance, and degenerate output. Applying it to a
 round-to-nearest ladder from 8 down to 2 bits per parameter, with 500 paired
 prompts per rung and a 7B judge behind the degeneracy gate, reverses the expected
 direction of the effect. Within the band where output stays coherent,
-quantization makes both models tested \emph{more} likely to refuse, at $1.15$
-refusal-rate points per bit removed (95\% CI $[0.75, 1.55]$, prompt-level cluster
-bootstrap); at 4.5 bits Qwen2.5-3B newly refuses 32 prompts it previously
+quantization makes both models tested \emph{more} likely to decline --- where
+declining is the judge's class of refusing, deflecting, redirecting or warning,
+which we characterise rather than assume --- at $1.15$ points of that class per
+bit removed (95\% CI $[0.75, 1.55]$, prompt-level cluster bootstrap); at 4.5 bits Qwen2.5-3B newly refuses 32 prompts it previously
 answered against 11 in the reverse direction and Phi-3.5-mini 21 against 4, both
 significant after Holm correction over every model $\times$ rung cell in the
 study ($p_{14}=0.021$ and $0.011$). Transitions from full-precision refusal to
