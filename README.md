@@ -193,6 +193,30 @@ are part of the cache key, so a sampled run never reuses greedy completions.
 above roughly 32B: a 70B fp16 checkpoint is 141 GB before the quantization
 transients and fits no single card.
 
+### Quantizers people deploy
+
+RTN is the clean instrument — it varies *only* bit-width — but nobody ships it.
+The other families are added as extra schemes paired against the same
+full-precision baseline, and are kept **off** the RTN ordinal axis by `bits_of`,
+because each changes the algorithm as well as the width:
+
+```bash
+python scripts/run_behavioural_ladder.py --model <hf-id> --bits 8 4        --nf4        --deployed AWQ_4B=<repo>-AWQ GPTQ_4B=<repo>-GPTQ-Int4        --gguf q4_k_m q3_k_m q2_k --gguf-repo <repo>-GGUF --gguf-stem <stem>
+```
+
+### Judge ensemble
+
+`judge_ensemble.py` combines the stored 7B verdicts with any API graders into a
+majority verdict, and reports **unanimity** beside every rung — an ensemble
+cannot detect a failure mode its members share, so the fraction they actually
+agreed on is the honest denominator. Ties resolve to `unclear` rather than by
+grader order, and the degeneracy gate runs before any vote.
+
+```bash
+python scripts/judge_via_api.py <run-dir> --provider groq   # add graders
+python scripts/judge_ensemble.py
+```
+
 To regenerate the measurements themselves:
 
 ```bash
@@ -235,6 +259,7 @@ answer, in file order.
 | `scripts/analyse_round2.py` | Paired tests for the round-2 arms: 1.5B regrade, 256-token budget, AWQ/GPTQ, GSM8K at 496 |
 | `scripts/download_eval_suites.py` | Assembles prompt corpora carrying per-prompt harmfulness labels |
 | `scripts/analyse_labelled.py` | Separates a safety regression from an over-refusal, which needs those labels |
+| `scripts/judge_ensemble.py` | Majority verdict across graders, with unanimity reported per rung |
 | `scripts/build_paper_*.py` | Data, figure and table generation |
 | `scripts/check_paper_numbers.py` | Asserts the paper's prose numbers match the measurements |
 | `cliffguard/eval/` | Measurement library: discriminability, isotropy, noise floor, storage |

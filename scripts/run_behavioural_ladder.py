@@ -57,6 +57,8 @@ from scripts.run_local_ladder import (
     deployed_quantization_config,
     load_deployed_model,
     load_fp16_model,
+    load_gguf_model,
+    load_nf4_model,
     load_labelled_prompts,
     load_prompts,
     load_rtn_model,
@@ -420,6 +422,18 @@ def main() -> int:  # noqa: C901 - linear experiment script
                          "e.g. AWQ_4B=Qwen/Qwen2.5-3B-Instruct-AWQ. These are "
                          "already quantized, so RTN is NOT applied to them; they "
                          "are paired against the same FP16 base as every rung.")
+    ap.add_argument("--nf4", action="store_true",
+                    help="add a bitsandbytes NF4 scheme built from the same "
+                         "checkpoint. This is what load_in_4bit=True does and "
+                         "what most deployments actually run.")
+    ap.add_argument("--gguf", nargs="*", default=[], metavar="QUANT",
+                    help="GGUF k-quants to add as schemes, e.g. q4_k_m q3_k_m "
+                         "q2_k. Needs --gguf-repo and --gguf-stem.")
+    ap.add_argument("--gguf-repo", default=None,
+                    help="HF repo holding the GGUF files")
+    ap.add_argument("--gguf-stem", default=None,
+                    help="filename stem inside --gguf-repo; the file read is "
+                         "<stem>-<quant>.gguf")
     ap.add_argument("--temperature", type=float, default=0.0,
                     help="0 is greedy, the default everywhere else in this "
                          "project. Above 0 samples; use k runs at different "
@@ -447,6 +461,12 @@ def main() -> int:  # noqa: C901 - linear experiment script
     # a copy here and silently keep loading the default.
     ladder.MODEL_ID = args.model
     ladder.DEVICE_MAP = args.device_map
+    # load_gguf_model reads these as module globals, the same way the loaders
+    # read MODEL_ID. Binding copies here would silently keep the defaults.
+    if args.gguf_repo:
+        ladder.GGUF_REPO = args.gguf_repo
+    if args.gguf_stem:
+        ladder.GGUF_STEM = args.gguf_stem
     if args.temperature > 0.0:
         # Sampling without a fixed seed is not an experiment, it is an anecdote:
         # the whole point of k runs is that they differ only in the seed, so the
@@ -591,6 +611,42 @@ def main() -> int:  # noqa: C901 - linear experiment script
         deployed_meta[label] = {"repo": repo,
                                 "quantization_config": deployed_quantization_config(repo)}
         run_scheme(label, (lambda r: lambda: load_deployed_model(r))(repo))
+
+    # bitsandbytes NF4 on the same checkpoint. Worth its own flag rather than a
+    # --deployed repo because it is constructed at load time from the FP16
+    # weights, like RTN and unlike AWQ, so there is no pre-quantized checkpoint
+    # to point at. It is also the quantizer most people actually run: every
+    # `load_in_4bit=True` and every QLoRA workflow is this.
+    if args.nf4:
+        if "NF4" in schemes:
+            raise SystemExit("NF4 is already a scheme in this run")
+        schemes.append("NF4")
+        deployed_meta["NF4"] = {"repo": args.model, "quantization_config": {
+            "method": "bitsandbytes-nf4", "bits": 4,
+            "double_quant": False, "compute_dtype": "float16"}}
+        run_scheme("NF4", load_nf4_model)
+
+    # GGUF k-quants, the llama.cpp ladder. These vary block structure and
+    # per-tensor type assignment as well as width, which is exactly why the
+    # paper's own ladder is RTN -- but it is also what people deploy, so the
+    # direction has to be checked against them. Named GGUF_<QUANT> to match the
+    # convention in run_local_ladder, and kept off the RTN ordinal axis by
+    # bits_of, which returns NaN for anything that is not an RTN rung.
+    for quant in args.gguf:
+        label = f"GGUF_{quant.upper()}"
+        if label in schemes:
+            raise SystemExit(f"{label} is already a scheme in this run")
+        if not (args.gguf_repo and args.gguf_stem):
+            raise SystemExit(
+                "--gguf needs --gguf-repo and --gguf-stem: the file is named "
+                "<stem>-<quant>.gguf inside the repo, and neither can be "
+                "guessed from the model id.")
+        schemes.append(label)
+        deployed_meta[label] = {
+            "repo": args.gguf_repo,
+            "quantization_config": {"method": "gguf", "quant": quant,
+                                    "file": f"{args.gguf_stem}-{quant}.gguf"}}
+        run_scheme(label, (lambda q: lambda: load_gguf_model(q))(quant))
 
     # ---- degeneracy scoring, all schemes under ONE reference model -------
     print("\n=== scoring every completion under the FP16 reference ===")
