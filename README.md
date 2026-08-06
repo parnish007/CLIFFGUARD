@@ -151,6 +151,48 @@ against round one's 48-token run on the same prompts — and keys everything by
 run label, so two runs of one model are a normal situation rather than an
 ambiguity.
 
+### Labelled prompts, and the 2×2
+
+The Fold A corpus carries no per-prompt harmfulness annotation, so a refusal that
+appears where there was none cannot be attributed: it might be the model
+correctly declining a harmful request, or refusing a benign one. Those are
+opposite outcomes. `download_eval_suites.py` assembles corpora that carry the
+label, and `analyse_labelled.py` reports the two regressions separately:
+
+```bash
+python scripts/download_eval_suites.py --download    # 6 suites, 3457 prompts
+python scripts/run_behavioural_ladder.py --model <hf-id> \
+       --prompts data/eval_suites/or-bench-hard.jsonl --n 250
+python scripts/classify_completions_judge.py <run-dir> \
+       --judge-model Qwen/Qwen2.5-7B-Instruct --judge-4bit
+python scripts/analyse_labelled.py
+```
+
+| suite | n | label | what it measures |
+|---|---|---|---|
+| `or-bench-hard` | 1319 | benign | over-refusal: prompts that look harmful and are not |
+| `or-bench-toxic` | 655 | harmful | the same authors' toxic control |
+| `xstest` | 450 | 250 / 200 | matched safe/unsafe pairs |
+| `strongreject` | 313 | harmful | graded-harm rubric |
+| `advbench` | 520 | harmful | comparability with the jailbreak literature |
+| `harmbench` | 200 | harmful | standard behaviours |
+
+`--n` counts **per harm class** on both corpus routes, and the classes are
+interleaved before truncation — these suites ship class-ordered, so reading the
+first *n* lines of one would otherwise give a single-class corpus and compute
+every over-refusal count on prompts of which none was harmful.
+
+### Sampling and scale
+
+`--temperature` above 0 samples instead of decoding greedily; *k* samples per
+prompt means *k* runs at different `--seed`, which keeps one completion per
+prompt and so keeps every existing consumer working. The seed and temperature
+are part of the cache key, so a sampled run never reuses greedy completions.
+
+`--device-map auto` shards the checkpoint across visible GPUs, which is required
+above roughly 32B: a 70B fp16 checkpoint is 141 GB before the quantization
+transients and fits no single card.
+
 To regenerate the measurements themselves:
 
 ```bash
@@ -191,6 +233,8 @@ answer, in file order.
 | `scripts/reanalyse_runs.py` | Re-label stored completions with the composite gate |
 | `scripts/review_reanalysis.py` | All inferential statistics for the ladder |
 | `scripts/analyse_round2.py` | Paired tests for the round-2 arms: 1.5B regrade, 256-token budget, AWQ/GPTQ, GSM8K at 496 |
+| `scripts/download_eval_suites.py` | Assembles prompt corpora carrying per-prompt harmfulness labels |
+| `scripts/analyse_labelled.py` | Separates a safety regression from an over-refusal, which needs those labels |
 | `scripts/build_paper_*.py` | Data, figure and table generation |
 | `scripts/check_paper_numbers.py` | Asserts the paper's prose numbers match the measurements |
 | `cliffguard/eval/` | Measurement library: discriminability, isotropy, noise floor, storage |

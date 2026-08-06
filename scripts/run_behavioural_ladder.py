@@ -57,6 +57,7 @@ from scripts.run_local_ladder import (
     deployed_quantization_config,
     load_deployed_model,
     load_fp16_model,
+    load_labelled_prompts,
     load_prompts,
     load_rtn_model,
     read_json_cache,
@@ -193,6 +194,7 @@ def generate_batched(
     batch_size: int,
     tag: str,
     max_input_tokens: int = 1024,
+    temperature: float = 0.0,
 ) -> list[str]:
     """Greedy completions for every prompt, in batches, left-padded.
 
@@ -202,9 +204,18 @@ def generate_batched(
     silent -- nothing raises -- which is why it is stated here rather than
     assumed.
 
-    Greedy (do_sample=False) because the comparison across rungs must be
-    deterministic; a sampled difference between two schemes could be temperature
-    rather than quantization.
+    Greedy (do_sample=False) by default because the comparison across rungs must
+    be deterministic; a sampled difference between two schemes could be
+    temperature rather than quantization.
+
+    `temperature > 0` samples instead, which answers a different and also
+    necessary question: greedy decoding estimates one deterministic decision,
+    and deployments sample. The way to get k samples per prompt here is k runs at
+    different --seed, not a nested list -- every consumer of a run directory
+    expects one completion per prompt, and changing that shape would break all of
+    them to express something a second run already expresses. The seed and
+    temperature are part of the cache key, so a sampled run never collides with
+    the greedy one.
     """
     import torch
 
@@ -233,11 +244,13 @@ def generate_batched(
                 texts, return_tensors="pt", padding=True, truncation=True,
                 max_length=max_input_tokens, add_special_tokens=False,
             ).to(model.device)
+            sampling = ({"do_sample": True, "temperature": temperature}
+                        if temperature > 0.0 else {"do_sample": False})
             out = model.generate(
                 **batch,
                 max_new_tokens=max_new_tokens,
-                do_sample=False,
                 pad_token_id=tokenizer.pad_token_id,
+                **sampling,
             )
             # Slice off the prompt: with left padding every row's completion
             # begins at the same offset, namely the padded input width.
@@ -270,7 +283,8 @@ def generate_batched(
 
 
 def score_nll(
-    model: Any, tokenizer: Any, completions: list[str], batch_size: int, tag: str
+    model: Any, tokenizer: Any, completions: list[str], batch_size: int, tag: str,
+    max_length: int = 256,
 ) -> FloatArray:
     """Mean per-token NLL of each completion under the given (FP16) model.
 
@@ -281,6 +295,14 @@ def score_nll(
     asking a broken model to judge its own output is circular.
 
     Empty completions score +inf so they are always degenerate.
+
+    `max_length` must cover the generation budget. It was fixed at 256 tokens,
+    which is fine for the 48-token runs and silently wrong for the 256-token
+    ones: a completion at the budget plus its BOS exceeds 256 pieces, so the
+    tail was cut off and the degeneracy gate judged a prefix while claiming to
+    judge the completion. Repetition loops usually begin partway through, which
+    is precisely the region that was being discarded. Callers pass their own
+    budget; the default preserves the existing behaviour for existing caches.
     """
     import torch
 
@@ -297,7 +319,7 @@ def score_nll(
                     continue
                 batch = tokenizer(
                     [chunk[i] for i in idx], return_tensors="pt", padding=True,
-                    truncation=True, max_length=256, add_special_tokens=True,
+                    truncation=True, max_length=max_length, add_special_tokens=True,
                 ).to(model.device)
                 # use_cache=False: this is a scoring pass, and the KV cache is
                 # pure overhead here -- for a 3.8B model at batch 16 it is enough
@@ -327,28 +349,53 @@ def score_nll(
 
 
 def collect_activations(
-    model: Any, tokenizer: Any, prompts: list[str], layer: int
+    model: Any, tokenizer: Any, prompts: list[str], layer: int,
+    batch_size: int = 8, max_input_tokens: int = 1024,
 ) -> FloatArray:
-    """Residual stream at `layer`, last token -- same readout as the probe runs."""
+    """Residual stream at `layer`, last token -- same readout as the probe runs.
+
+    Batched, and LEFT-padded for the same reason generation is: with left padding
+    every row's final position holds that row's real last token, so one slice at
+    -1 is correct for the whole batch. With right padding it would read padding
+    for every sequence shorter than the longest, and nothing would raise -- the
+    directions would simply be fitted on the wrong vectors.
+
+    This ran one prompt per forward pass, which is 4,000 sequential passes for a
+    seven-rung ladder over 500 prompts and dominates the wall clock of every run
+    once generation is cached. Batching is the single largest speed-up available
+    here, and it is exact rather than approximate: padded positions are masked
+    and never read.
+
+    `batch_size` is deliberately smaller than the generation batch. Asking for
+    `output_hidden_states` materialises EVERY layer, not just the one wanted --
+    for an 80-layer model at 8192 hidden that is gigabytes per batch, and the
+    tensor is discarded immediately.
+    """
     import torch
 
-    rows = []
-    with torch.no_grad():
-        for prompt in prompts:
-            out = tokenizer.apply_chat_template(
-                [{"role": "user", "content": prompt}],
-                add_generation_prompt=True,
-                return_tensors="pt",
-            )
-            batch = (
-                {k: v.to(model.device) for k, v in out.items()
-                 if k in ("input_ids", "attention_mask")}
-                if hasattr(out, "keys")
-                else {"input_ids": out.to(model.device)}
-            )
-            hidden = model(**batch, output_hidden_states=True).hidden_states
-            rows.append(hidden[layer][0, -1, :].float().cpu().numpy())
-    return np.stack(rows).astype(np.float64)
+    original_side = tokenizer.padding_side
+    tokenizer.padding_side = "left"
+    rows: list[Any] = []
+    try:
+        with torch.no_grad():
+            for start in range(0, len(prompts), batch_size):
+                chunk = prompts[start : start + batch_size]
+                texts = [
+                    tokenizer.apply_chat_template(
+                        [{"role": "user", "content": p}],
+                        add_generation_prompt=True, tokenize=False,
+                    )
+                    for p in chunk
+                ]
+                batch = tokenizer(
+                    texts, return_tensors="pt", padding=True, truncation=True,
+                    max_length=max_input_tokens, add_special_tokens=False,
+                ).to(model.device)
+                hidden = model(**batch, output_hidden_states=True).hidden_states
+                rows.append(hidden[layer][:, -1, :].float().cpu().numpy())
+    finally:
+        tokenizer.padding_side = original_side
+    return np.concatenate(rows, axis=0).astype(np.float64)
 
 
 def main() -> int:  # noqa: C901 - linear experiment script
@@ -363,12 +410,30 @@ def main() -> int:  # noqa: C901 - linear experiment script
     ap.add_argument("--splits", type=int, default=50)
     ap.add_argument("--max-new-tokens", type=int, default=48)
     ap.add_argument("--batch-size", type=int, default=16)
+    ap.add_argument("--act-batch-size", type=int, default=8,
+                    help="batch for the activation pass. Smaller than the "
+                         "generation batch because output_hidden_states "
+                         "materialises every layer, not just the one read.")
     ap.add_argument("--cache", type=Path, default=Path("artifacts/behavioural_cache"))
     ap.add_argument("--deployed", nargs="*", default=[], metavar="LABEL=REPO",
                     help="pre-quantized checkpoints to score as extra schemes, "
                          "e.g. AWQ_4B=Qwen/Qwen2.5-3B-Instruct-AWQ. These are "
                          "already quantized, so RTN is NOT applied to them; they "
                          "are paired against the same FP16 base as every rung.")
+    ap.add_argument("--temperature", type=float, default=0.0,
+                    help="0 is greedy, the default everywhere else in this "
+                         "project. Above 0 samples; use k runs at different "
+                         "--seed to get k samples per prompt.")
+    ap.add_argument("--prompts", type=Path, default=None,
+                    help="JSONL corpus with per-prompt harm_label, from "
+                         "scripts/download_eval_suites.py. Without it the Fold A "
+                         "corpus is used, which carries no harmfulness "
+                         "annotation and therefore cannot separate a safety "
+                         "regression from an over-refusal.")
+    ap.add_argument("--device-map", default=None,
+                    help="'auto' shards the checkpoint across visible GPUs. "
+                         "Needed above ~32B: a 70B fp16 checkpoint is 141 GB "
+                         "and fits no single card. Leave unset for one device.")
     ap.add_argument("--label", default="behavioural-ladder")
     ap.add_argument("--smoke", action="store_true")
     args = ap.parse_args()
@@ -381,6 +446,15 @@ def main() -> int:  # noqa: C901 - linear experiment script
     # place the checkpoint choice must land. `from ... import MODEL_ID` would bind
     # a copy here and silently keep loading the default.
     ladder.MODEL_ID = args.model
+    ladder.DEVICE_MAP = args.device_map
+    if args.temperature > 0.0:
+        # Sampling without a fixed seed is not an experiment, it is an anecdote:
+        # the whole point of k runs is that they differ only in the seed, so the
+        # seed has to actually reach the generator.
+        torch.manual_seed(args.seed)
+        torch.cuda.manual_seed_all(args.seed)
+        print(f"decoding: sampled at temperature {args.temperature:g}, "
+              f"seed {args.seed}")
     args.cache = args.cache / "".join(
         c if (c.isalnum() or c in "-_.") else "-" for c in args.model
     )
@@ -404,12 +478,27 @@ def main() -> int:  # noqa: C901 - linear experiment script
     print(f"model: {args.model}")
     print(f"GPU: {torch.cuda.get_device_name(0)}")
 
-    harmful, benign = load_prompts(args.n)
-    # One flat prompt list, order fixed. The hh-rlhf class is kept only as a
-    # provenance record; every label from here on comes from the model.
-    prompts = harmful + benign
-    source = ["hh_refused"] * len(harmful) + ["hh_benign"] * len(benign)
-    print(f"corpus: {len(prompts)} prompts ({len(harmful)} hh-refused + {len(benign)} hh-benign)")
+    # Two corpus routes, and they answer different questions. Fold A supplies
+    # prompts with no harmfulness annotation, so a refusal transition on it is a
+    # change in the model's decision and nothing more. A labelled suite supplies
+    # `harm_label` per prompt, which is what separates a lost refusal on a
+    # harmful request (a safety regression) from a gained refusal on a benign one
+    # (an over-refusal). The runner stores whichever it was given; the analysis
+    # decides what can be claimed from it.
+    if args.prompts:
+        prompts, source, harm_label = load_labelled_prompts(args.prompts, args.n)
+        n_harmful = sum(x == "harmful" for x in harm_label)
+        print(f"corpus: {len(prompts)} labelled prompts from {args.prompts} "
+              f"({n_harmful} harmful + {len(prompts) - n_harmful} benign)")
+    else:
+        harmful, benign = load_prompts(args.n)
+        # One flat prompt list, order fixed. The hh-rlhf class is kept only as a
+        # provenance record; every label from here on comes from the model.
+        prompts = harmful + benign
+        source = ["hh_refused"] * len(harmful) + ["hh_benign"] * len(benign)
+        harm_label = [None] * len(prompts)
+        print(f"corpus: {len(prompts)} prompts ({len(harmful)} hh-refused + "
+              f"{len(benign)} hh-benign)")
 
     tokenizer = AutoTokenizer.from_pretrained(args.model)
     if tokenizer.pad_token is None:
@@ -419,9 +508,27 @@ def main() -> int:  # noqa: C901 - linear experiment script
     completions: dict[str, list[str]] = {}
     activations: dict[str, FloatArray] = {}
 
+    # Greedy runs keep their existing cache names, so every completion already
+    # on disk stays valid. A sampled run is a different measurement and gets a
+    # different key -- without this it would silently reuse greedy completions
+    # and report them as samples.
+    decode_key = ("" if args.temperature <= 0.0
+                  else f"_T{args.temperature:g}_s{args.seed}")
+
     def run_scheme(name: str, loader: Any) -> None:
-        cache_text = args.cache / f"completions_{name}_n{len(prompts)}_t{args.max_new_tokens}.json"
-        cache_acts = args.cache / f"acts_{name}_L{args.layer}_n{len(prompts)}.npy"
+        cache_text = (args.cache /
+                      f"completions_{name}_n{len(prompts)}_t{args.max_new_tokens}"
+                      f"{decode_key}.json")
+        # The batch size is in the key because the result depends on it. Padded
+        # positions are masked and never read, so the batching is exact in
+        # logic -- verified bit-identical against the one-at-a-time version at
+        # batch 1 -- but fp16 kernels reduce in a batch-dependent order, so two
+        # batch sizes give vectors that agree to a cosine of 0.999997 and not
+        # further. That is far below any effect measured here and still not
+        # something to blend inside one run without saying so.
+        cache_acts = (args.cache /
+                      f"acts_{name}_L{args.layer}_n{len(prompts)}"
+                      f"_b{args.act_batch_size}.npy")
         cached_texts = read_json_cache(cache_text)
         cached_acts = read_npy_cache(cache_acts)
         if cached_texts is not None and cached_acts is not None:
@@ -441,9 +548,11 @@ def main() -> int:  # noqa: C901 - linear experiment script
         print(f"[{name}] generating {args.max_new_tokens} tokens x {len(prompts)} prompts ...",
               flush=True)
         texts = generate_batched(
-            model, tokenizer, prompts, args.max_new_tokens, args.batch_size, name
+            model, tokenizer, prompts, args.max_new_tokens, args.batch_size, name,
+            temperature=args.temperature,
         )
-        acts = collect_activations(model, tokenizer, prompts, args.layer)
+        acts = collect_activations(model, tokenizer, prompts, args.layer,
+                                   batch_size=args.act_batch_size)
         del model
         # Written BEFORE the memory release, so a rung that finishes generating
         # and is then killed on the next load still leaves its work on disk.
@@ -485,7 +594,8 @@ def main() -> int:  # noqa: C901 - linear experiment script
 
     # ---- degeneracy scoring, all schemes under ONE reference model -------
     print("\n=== scoring every completion under the FP16 reference ===")
-    nll_cache = args.cache / f"nll_n{len(prompts)}_t{args.max_new_tokens}.json"
+    nll_cache = (args.cache /
+                 f"nll_n{len(prompts)}_t{args.max_new_tokens}{decode_key}.json")
     nll: dict[str, FloatArray] = {}
     cached: dict[str, FloatArray] = {}
     raw_nll = read_json_cache(nll_cache)
@@ -505,7 +615,8 @@ def main() -> int:  # noqa: C901 - linear experiment script
         reference.eval()
         for name in absent:
             nll[name] = score_nll(
-                reference, tokenizer, completions[name], args.batch_size, name)
+                reference, tokenizer, completions[name], args.batch_size, name,
+                max_length=max(256, args.max_new_tokens + 16))
         del reference
         release_host_memory("nll-reference")
         # Merge rather than replace: a scheme scored by an earlier run at this
@@ -534,10 +645,19 @@ def main() -> int:  # noqa: C901 - linear experiment script
     n_refused = int(fp16_refused.sum())
     print(f"\nFP16: {n_refused} refusal / {int((fp16_labels == 'compliance').sum())} compliance "
           f"/ {int((fp16_labels == 'degenerate').sum())} degenerate  (of {len(prompts)})")
-    agreement = float(
-        np.mean(fp16_refused == np.array([s == "hh_refused" for s in source], dtype=bool))
-    )
-    print(f"agreement between FP16 behaviour and hh-rlhf labels: {agreement:.3f}")
+    # The corpus class the model's own behaviour is compared against. On Fold A
+    # it is hh-rlhf's response-derived class, which is a property of a response
+    # someone else wrote; on a labelled suite it is the prompt's harmfulness,
+    # which is a property of the request. The second is the meaningful one, and
+    # naming which is in force keeps the printed agreement figure interpretable.
+    if args.prompts:
+        corpus_pos = np.array([x == "harmful" for x in harm_label], dtype=bool)
+        corpus_name = "prompt harmfulness labels"
+    else:
+        corpus_pos = np.array([s == "hh_refused" for s in source], dtype=bool)
+        corpus_name = "hh-rlhf labels"
+    agreement = float(np.mean(fp16_refused == corpus_pos))
+    print(f"agreement between FP16 behaviour and {corpus_name}: {agreement:.3f}")
     print("  This is the label ceiling as a number. The probe d' reported earlier was")
     print("  separating the CORPUS's classes, which match this model's own behaviour")
     print("  only this often.")
@@ -597,7 +717,6 @@ def main() -> int:  # noqa: C901 - linear experiment script
     print("\n=== d' WITH MODEL-DERIVED LABELS (label ceiling removed) ===")
     print(f"{'scheme':10s} {'d(model)':>9s} {'sd':>7s} {'d(corpus)':>10s}")
     print("-" * 40)
-    corpus_pos = np.array([s == "hh_refused" for s in source], dtype=bool)
     dprime: dict[str, Any] = {}
     for name in schemes:
         acts = activations[name]
@@ -608,10 +727,17 @@ def main() -> int:  # noqa: C901 - linear experiment script
         model_mean, model_sd = held_out_d_prime(
             pos_model, neg_model, n_splits=args.splits, fires_high=True, seed=args.seed
         )
-        corpus_mean, _ = held_out_d_prime(
-            acts[corpus_pos], acts[~corpus_pos],
-            n_splits=args.splits, fires_high=True, seed=args.seed,
-        )
+        # The corpus split needs the same guard as the model-derived one above.
+        # It did not have it, and a corpus whose classes are unbalanced at this
+        # n -- which any truncated single-class suite produces -- crashed here
+        # after the generation had already been paid for.
+        if int(corpus_pos.sum()) >= 4 and int((~corpus_pos).sum()) >= 4:
+            corpus_mean, _ = held_out_d_prime(
+                acts[corpus_pos], acts[~corpus_pos],
+                n_splits=args.splits, fires_high=True, seed=args.seed,
+            )
+        else:
+            corpus_mean = float("nan")
         dprime[name] = {"d_prime_model_labels": model_mean, "sd": model_sd,
                         "d_prime_corpus_labels": corpus_mean}
         print(f"{name:10s} {model_mean:+9.4f} {model_sd:7.4f} {corpus_mean:+10.4f}")
@@ -622,6 +748,12 @@ def main() -> int:  # noqa: C901 - linear experiment script
         model_id=args.model,
         extra={
             "stage": "behavioural_ladder", "layer": args.layer, "n_prompts": len(prompts),
+            # as_posix, not str: a manifest written on Windows would otherwise
+            # record "data\eval_suites\xstest.jsonl" and never match the same
+            # corpus named on Linux. Run directories are meant to be portable.
+            "prompt_corpus": (args.prompts.as_posix() if args.prompts
+                              else "data/folds/fold_a"),
+            "prompt_corpus_labelled": bool(args.prompts),
             "bits": args.bits, "group": args.group, "seed": args.seed,
             # The authoritative scheme list. Downstream tools used to rebuild it
             # from `bits` as ["FP16"] + RTN rungs, which is right for a plain
@@ -632,7 +764,11 @@ def main() -> int:  # noqa: C901 - linear experiment script
             "schemes": schemes,
             "deployed": deployed_meta,
             "max_new_tokens": args.max_new_tokens, "batch_size": args.batch_size,
-            "decoding": "greedy (do_sample=False)",
+            "activation_batch_size": args.act_batch_size,
+            "decoding": ("greedy (do_sample=False)" if args.temperature <= 0.0
+                         else f"sampled, temperature={args.temperature:g}, "
+                              f"seed={args.seed}"),
+            "temperature": args.temperature,
             "refusal_markers": list(REFUSAL_MARKERS), "classify_window": CLASSIFY_WINDOW,
             "degeneracy_nll_multiple": DEGENERACY_NLL_MULTIPLE,
             "degeneracy_nll_threshold": nll_threshold,
@@ -676,13 +812,15 @@ def main() -> int:  # noqa: C901 - linear experiment script
     # corpus the recipient may not have, and on a downloader revision that could
     # yield different text for the same requested count -- silently misaligning
     # prompts against completions.
-    run.save_json("prompts", {"prompts": prompts, "source": source})
+    run.save_json("prompts", {"prompts": prompts, "source": source,
+                              "harm_label": harm_label})
     run.save_json("completion_nll", {k: v.tolist() for k, v in nll.items()})
     run.save_json("behavioural_ladder", behavioural)
     run.save_json("dprime_model_labels", dprime)
     run.save_json("labels", {
         "fp16_refused": [bool(x) for x in fp16_refused],
         "source": source,
+        "harm_label": harm_label,
         "agreement_with_hh": agreement,
     })
     run.write_manifest()

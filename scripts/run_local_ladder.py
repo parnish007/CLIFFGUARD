@@ -83,6 +83,13 @@ GGUF_STEM = "qwen2.5-1.5b-instruct"
 GGUF_LADDER = ["fp16", "q8_0", "q6_k", "q5_k_m", "q4_k_m", "q3_k_m", "q2_k"]
 RTN_BITS = [8, 7, 6, 5, 4, 3, 2]
 
+# How the checkpoint is placed. None means one device, via .to("cuda"), which is
+# what every result so far used and what fits models up to about 32B on an 80 GB
+# card. "auto" shards across visible GPUs and is required above that: a 70B
+# checkpoint is 141 GB of fp16 weights before the quantization transients, so it
+# does not fit any single device sold today. Set by --device-map on the runners.
+DEVICE_MAP: Any = None
+
 FloatArray = Any
 
 
@@ -131,6 +138,83 @@ def load_prompts(n: int) -> tuple[list[str], list[str]]:
         print(f"WARNING: only {len(harmful)} refused / {len(benign)} benign unique prompts "
               f"available (asked for {n} each)")
     return harmful, benign
+
+
+def load_labelled_prompts(
+    path: Path, n_per_class: int | None = None
+) -> tuple[list[str], list[str], list[str]]:
+    """A prompt corpus that knows which of its prompts are harmful.
+
+    Returns (prompts, sources, harm_labels), aligned. `harm_labels` is what the
+    Fold A corpus cannot supply and what the 2x2 needs: on a harmful prompt a
+    lost refusal is a safety regression, and on a benign prompt a gained refusal
+    is an over-refusal. Without the label those two are the same number.
+
+    `n_per_class` counts PER HARM CLASS, matching what `--n` means on the Fold A
+    path, where `load_prompts(250)` yields 250 harmful and 250 benign. The two
+    routes previously disagreed: the same `--n 250` produced 500 prompts through
+    Fold A and 250 through a labelled suite, so a run described in a manifest as
+    n=250 could be either size depending on a flag elsewhere. Nothing crashed,
+    which is what made it worth fixing.
+
+    The two classes are INTERLEAVED after each is capped, and that is not
+    cosmetic either. These suites are written class-ordered -- XSTest lists its
+    250 safe prompts before its 200 unsafe ones -- so taking the first n of the
+    file gives a single-class corpus for any n below 250: not a crash, but every
+    over-refusal count computed on prompts of which none was harmful. Round-robin
+    keeps each class's own order, keeps the result deterministic, and keeps the
+    prefix property that makes two runs at different n comparable.
+
+    A single-class suite (AdvBench is all harmful) interleaves to itself, so
+    nothing is reordered where there is nothing to balance, and `n_per_class`
+    caps the one class it has.
+
+    Prompts are deduplicated because a repeat inside one run is the same prompt
+    counted twice, which narrows every interval without adding information.
+
+    Built by scripts/download_eval_suites.py.
+    """
+    import itertools
+    if not path.exists():
+        raise SystemExit(
+            f"no labelled corpus at {path}.\n"
+            "Run: python scripts/download_eval_suites.py --download")
+
+    by_class: dict[str, list[tuple[str, str, str]]] = {"harmful": [], "benign": []}
+    seen: set[str] = set()
+    for line_number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        prompt = str(row.get("prompt", "")).strip()
+        label = row.get("harm_label")
+        if not prompt or prompt in seen:
+            continue
+        if label not in ("harmful", "benign"):
+            raise SystemExit(
+                f"{path}:{line_number} has harm_label={label!r}. Every prompt "
+                "must be labelled harmful or benign; an unlabelled corpus is the "
+                "one this path exists to replace.")
+        seen.add(prompt)
+        by_class[label].append((prompt, str(row.get("source", path.stem)), label))
+
+    if n_per_class is not None:
+        for label in by_class:
+            by_class[label] = by_class[label][:n_per_class]
+    interleaved = [
+        row
+        for pair in itertools.zip_longest(by_class["harmful"], by_class["benign"])
+        for row in pair
+        if row is not None
+    ]
+
+    if len(interleaved) < 4:
+        raise SystemExit(f"{path}: only {len(interleaved)} usable prompts")
+    prompts = [r[0] for r in interleaved]
+    sources = [r[1] for r in interleaved]
+    labels = [r[2] for r in interleaved]
+    return prompts, sources, labels
 
 
 # ---------------------------------------------------------------------------
@@ -306,11 +390,14 @@ def host_memory() -> tuple[float, float]:
     be decoration.
     """
     def _read(path: str, key: str) -> float:
+        # Everything here is caught, including a malformed line. This function
+        # only reports; a kernel that lays /proc out differently must not be
+        # able to end a run that is otherwise working.
         try:
             for line in Path(path).read_text(encoding="utf-8").splitlines():
                 if line.startswith(key):
                     return float(line.split()[1]) / 1e6      # kB -> GB
-        except OSError:
+        except (OSError, ValueError, IndexError, UnicodeDecodeError):
             pass
         return float("nan")
 
@@ -410,19 +497,25 @@ def gguf_filename(quant: str) -> str:
 
 
 def load_fp16_model() -> Any:
-    """from_pretrained with the transformers 4.x/5.x dtype kwarg difference absorbed."""
+    """from_pretrained with the transformers 4.x/5.x dtype kwarg difference absorbed.
+
+    With DEVICE_MAP set the model is sharded at load time and NOT moved
+    afterwards: calling .to() on a sharded model either fails or silently
+    collapses it onto one device, which is the opposite of what was asked for.
+    """
     import torch
     from transformers import AutoModelForCausalLM
 
+    extra = {} if DEVICE_MAP is None else {"device_map": DEVICE_MAP}
     try:
         model = AutoModelForCausalLM.from_pretrained(
-            MODEL_ID, dtype=torch.float16, low_cpu_mem_usage=True
+            MODEL_ID, dtype=torch.float16, low_cpu_mem_usage=True, **extra
         )
     except TypeError:
         model = AutoModelForCausalLM.from_pretrained(
-            MODEL_ID, torch_dtype=torch.float16, low_cpu_mem_usage=True
+            MODEL_ID, torch_dtype=torch.float16, low_cpu_mem_usage=True, **extra
         )
-    return model.to("cuda")
+    return model if DEVICE_MAP is not None else model.to("cuda")
 
 
 def load_deployed_model(repo: str) -> Any:

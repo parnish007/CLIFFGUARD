@@ -173,6 +173,10 @@ def main() -> int:  # noqa: C901 - linear experiment script
     ap.add_argument("--max-new-tokens", type=int, default=192)
     ap.add_argument("--batch-size", type=int, default=16)
     ap.add_argument("--cache", type=Path, default=Path("artifacts/sector_cache"))
+    ap.add_argument("--device-map", default=None,
+                    help="'auto' shards the checkpoint across visible GPUs. "
+                         "Needed above ~32B: a 70B fp16 checkpoint is 141 GB "
+                         "and fits no single card. Leave unset for one device.")
     ap.add_argument("--label", default="sector-ladder-gsm8k")
     ap.add_argument("--smoke", action="store_true")
     args = ap.parse_args()
@@ -181,7 +185,8 @@ def main() -> int:  # noqa: C901 - linear experiment script
     from transformers import AutoTokenizer
 
     sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]
-    ladder.MODEL_ID = args.model          # loaders read the module global
+    ladder.MODEL_ID = args.model
+    ladder.DEVICE_MAP = args.device_map          # loaders read the module global
     args.cache = args.cache / "".join(
         c if (c.isalnum() or c in "-_.") else "-" for c in args.model
     )
@@ -268,7 +273,8 @@ def main() -> int:  # noqa: C901 - linear experiment script
         reference.eval()
         for name in absent:
             nll[name] = score_nll(
-                reference, tokenizer, completions[name], args.batch_size, name)
+                reference, tokenizer, completions[name], args.batch_size, name,
+                max_length=max(256, args.max_new_tokens + 16))
         del reference
         release_host_memory("nll-reference")
         merged = {**cached, **nll}
