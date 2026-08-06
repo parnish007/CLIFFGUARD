@@ -49,7 +49,11 @@ from scripts.run_behavioural_ladder import (
     has_refusal_marker,
 )
 import scripts.run_local_ladder as ladder
-from scripts.run_local_ladder import load_fp16_model, load_prompts
+from scripts.run_local_ladder import (
+    load_fp16_model,
+    load_prompts,
+    read_json_cache,
+)
 
 FloatArray = Any
 
@@ -337,8 +341,8 @@ def main() -> int:
     judged: dict[str, list[str]] = {}
     for scheme in schemes:
         cache = args.run / "results" / f"judge_{fingerprint}_{scheme}.json"
-        if cache.exists():
-            cached = json.loads(cache.read_text(encoding="utf-8"))
+        cached = read_json_cache(cache)
+        if cached is not None:
             if len(cached) == len(prompts):
                 judged[scheme] = cached
                 print(f"[{scheme}] cache hit")

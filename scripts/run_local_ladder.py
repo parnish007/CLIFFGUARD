@@ -357,6 +357,54 @@ def release_host_memory(tag: str = "") -> None:
               f"available {available:.2f} GB", flush=True)
 
 
+def _quarantine(path: Path, reason: str) -> None:
+    """Move an unusable cache file aside so the next read misses instead of dying."""
+    spoiled = path.with_suffix(path.suffix + ".corrupt")
+    try:
+        path.replace(spoiled)
+        print(f"[cache] {path.name} is unreadable ({reason}); moved to "
+              f"{spoiled.name} and will be regenerated", flush=True)
+    except OSError as exc:                             # noqa: BLE001
+        print(f"[cache] {path.name} is unreadable ({reason}) and could not be "
+              f"moved aside ({exc}); regenerating anyway", flush=True)
+
+
+def read_json_cache(path: Path) -> Any | None:
+    """Cached JSON, or None when the file cannot be trusted.
+
+    Caches are written to Drive as each scheme finishes, which is what makes an
+    interrupted session resumable -- and it is also what makes a half-written
+    file possible, since a disconnect can land in the middle of a write.
+
+    `json.loads` on a truncated file raises, and the retry logic re-reads the
+    same cache on every attempt, so one bad file would turn a resumable run into
+    three identical failures followed by a give-up. Treating an unreadable cache
+    as a missing one costs the time to regenerate that one scheme and nothing
+    else, which is the cheaper mistake by a wide margin.
+
+    The file is moved aside rather than deleted, so what went wrong is still
+    there to look at.
+    """
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
+        _quarantine(path, f"{type(exc).__name__}: {exc}")
+        return None
+
+
+def read_npy_cache(path: Path) -> FloatArray | None:
+    """Cached array, or None when the file cannot be trusted. See read_json_cache."""
+    if not path.exists():
+        return None
+    try:
+        return np.load(path)
+    except (ValueError, OSError, EOFError) as exc:
+        _quarantine(path, f"{type(exc).__name__}: {exc}")
+        return None
+
+
 def gguf_filename(quant: str) -> str:
     return f"{GGUF_STEM}-{quant}.gguf"
 

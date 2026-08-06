@@ -122,17 +122,29 @@ python scripts/build_paper_tables.py                     # -> docs/paper/tables/
 cd docs/paper && latexmk -pdf cliff_artifact.tex
 ```
 
-Both analysis scripts take `--include` and `--exclude`, globs on the run
-directory name. They exist because a second round of runs lands in the same
-`artifacts/runs/` tree, and every analysis here **stops rather than choose**
-between two runs describing the same model — which one won would otherwise
-depend on directory order. Name the round you mean:
+Both take `--include` and `--exclude`, globs on the run directory name, because
+a second round of runs lands in the same `artifacts/runs/` tree and every
+analysis here **stops rather than choose** between two runs describing the same
+model — which one won would otherwise depend on directory order. To reproduce
+the published numbers from round one alone:
 
 ```bash
 python scripts/review_reanalysis.py --exclude '*r2-*' --gsm8k <test.jsonl>
-python scripts/review_reanalysis.py --include '*r2-*' --gsm8k <test.jsonl> \
-       --n-items 496 --out docs/paper/review_stats_round2.json
 ```
+
+**Round two is analysed by a different script.** `review_reanalysis.py` fits a
+ladder, and round two does not produce one: it writes two runs of Qwen2.5-3B, a
+deployed AWQ/GPTQ run with no RTN rungs at all, and two ladders three rungs
+long. Those pose paired comparisons, not dose-response questions:
+
+```bash
+python scripts/analyse_round2.py --gsm8k <test.jsonl>
+```
+
+It reads both rounds deliberately — the 256-token result is only interpretable
+against round one's 48-token run on the same prompts — and keys everything by
+run label, so two runs of one model are a normal situation rather than an
+ambiguity.
 
 To regenerate the measurements themselves:
 
@@ -172,11 +184,13 @@ answer, in file order.
 | `scripts/run_local_ladder.py` | Weight/probe ladder |
 | `scripts/analyse_probe_transfer.py` | Frozen vs refit probe |
 | `scripts/reanalyse_runs.py` | Re-label stored completions with the composite gate |
-| `scripts/review_reanalysis.py` | All inferential statistics |
+| `scripts/review_reanalysis.py` | All inferential statistics for the ladder |
+| `scripts/analyse_round2.py` | Paired tests for the round-2 arms: 1.5B regrade, 256-token budget, AWQ/GPTQ, GSM8K at 496 |
 | `scripts/build_paper_*.py` | Data, figure and table generation |
 | `scripts/check_paper_numbers.py` | Asserts the paper's prose numbers match the measurements |
 | `cliffguard/eval/` | Measurement library: discriminability, isotropy, noise floor, storage |
 | `notebooks/colab_run.ipynb` | Hosted-GPU runner (reduced replication by default) |
+| `notebooks/colab_round2.ipynb` | Round-2 hosted-GPU runner: Drive-backed caches, resumable steps |
 | `tests/` | pytest suite |
 | `artifacts/runs/` | Immutable run directories (gitignored) |
 

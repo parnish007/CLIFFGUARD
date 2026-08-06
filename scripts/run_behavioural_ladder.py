@@ -59,6 +59,8 @@ from scripts.run_local_ladder import (
     load_fp16_model,
     load_prompts,
     load_rtn_model,
+    read_json_cache,
+    read_npy_cache,
     release_host_memory,
     rtn_bits_per_parameter,
 )
@@ -420,11 +422,17 @@ def main() -> int:  # noqa: C901 - linear experiment script
     def run_scheme(name: str, loader: Any) -> None:
         cache_text = args.cache / f"completions_{name}_n{len(prompts)}_t{args.max_new_tokens}.json"
         cache_acts = args.cache / f"acts_{name}_L{args.layer}_n{len(prompts)}.npy"
-        if cache_text.exists() and cache_acts.exists():
-            print(f"[{name}] cache hit", flush=True)
-            completions[name] = json.loads(cache_text.read_text(encoding="utf-8"))
-            activations[name] = np.load(cache_acts)
-            return
+        cached_texts = read_json_cache(cache_text)
+        cached_acts = read_npy_cache(cache_acts)
+        if cached_texts is not None and cached_acts is not None:
+            if len(cached_texts) == len(prompts) and len(cached_acts) == len(prompts):
+                print(f"[{name}] cache hit", flush=True)
+                completions[name] = cached_texts
+                activations[name] = cached_acts
+                return
+            print(f"[{name}] cache holds {len(cached_texts)} completions and "
+                  f"{len(cached_acts)} activations for {len(prompts)} prompts; "
+                  "regenerating", flush=True)
 
         started = time.time()
         print(f"[{name}] loading ...", flush=True)
@@ -480,9 +488,9 @@ def main() -> int:  # noqa: C901 - linear experiment script
     nll_cache = args.cache / f"nll_n{len(prompts)}_t{args.max_new_tokens}.json"
     nll: dict[str, FloatArray] = {}
     cached: dict[str, FloatArray] = {}
-    if nll_cache.exists():
-        cached = {k: np.asarray(v, dtype=np.float64)
-                  for k, v in json.loads(nll_cache.read_text(encoding="utf-8")).items()}
+    raw_nll = read_json_cache(nll_cache)
+    if raw_nll is not None:
+        cached = {k: np.asarray(v, dtype=np.float64) for k, v in raw_nll.items()}
         # The cache key is prompt count and token budget, neither of which
         # mentions WHICH schemes were scored. Adding a scheme -- a --deployed
         # checkpoint against a cache written by an earlier RTN-only run at the

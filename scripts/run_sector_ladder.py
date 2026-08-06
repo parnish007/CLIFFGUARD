@@ -51,6 +51,7 @@ import scripts.run_local_ladder as ladder
 from scripts.run_local_ladder import (
     load_fp16_model,
     load_rtn_model,
+    read_json_cache,
     release_host_memory,
     rtn_bits_per_parameter,
 )
@@ -131,8 +132,8 @@ def reusable_prefix(
             continue
         if n_source <= n:
             continue
-        texts = json.loads(path.read_text(encoding="utf-8"))
-        if len(texts) < n:
+        texts = read_json_cache(path)
+        if texts is None or len(texts) < n:
             continue
         print(f"[{scheme}] reusing the first {n} of {len(texts)} completions "
               f"from {path.name}", flush=True)
@@ -208,10 +209,17 @@ def main() -> int:  # noqa: C901 - linear experiment script
 
     for name in schemes:
         cache = args.cache / f"gsm8k_{name}_n{len(prompts)}_t{args.max_new_tokens}.json"
-        if cache.exists():
+        cached_texts = read_json_cache(cache)
+        if cached_texts is not None and len(cached_texts) == len(prompts):
             print(f"[{name}] cache hit", flush=True)
-            completions[name] = json.loads(cache.read_text(encoding="utf-8"))
+            completions[name] = cached_texts
             continue
+        if cached_texts is not None:
+            # The name says how many completions this file holds. If the file
+            # disagrees, the name is the thing to distrust: pairing a short list
+            # against the full question set would silently misalign every row.
+            print(f"[{name}] cache holds {len(cached_texts)} completions for "
+                  f"{len(prompts)} prompts; regenerating", flush=True)
         prefix = reusable_prefix(args.cache, name, len(prompts),
                                  args.max_new_tokens, args.batch_size)
         if prefix is not None:
@@ -245,9 +253,9 @@ def main() -> int:  # noqa: C901 - linear experiment script
     nll_cache = args.cache / f"nll_gsm8k_n{len(prompts)}_t{args.max_new_tokens}.json"
     nll: dict[str, Any] = {}
     cached: dict[str, Any] = {}
-    if nll_cache.exists():
-        cached = {k: np.asarray(v, dtype=np.float64)
-                  for k, v in json.loads(nll_cache.read_text(encoding="utf-8")).items()}
+    raw_nll = read_json_cache(nll_cache)
+    if raw_nll is not None:
+        cached = {k: np.asarray(v, dtype=np.float64) for k, v in raw_nll.items()}
         # Keyed by question count and token budget, not by scheme list. A run
         # that adds a rung hits this file and then dies on a KeyError further
         # down, so take only what the cache actually covers.
