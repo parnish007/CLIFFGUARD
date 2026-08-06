@@ -68,18 +68,18 @@ argue that a large part of that report is an artifact of how refusal is scored,
 and we introduce \textbf{CliffGuard}, a degeneration-aware paired protocol that
 separates three outcomes a conventional phrase-matching pipeline collapses into
 two: refusal, compliance, and degenerate output. Applying it to a
-round-to-nearest ladder from 8 down to 2 bits per parameter, with 500 paired
-prompts per rung and a 7B judge behind the degeneracy gate, reverses the expected
-direction of the effect. Within the band where output stays coherent,
+round-to-nearest ladder from 8.5 down to 2.5 stored bits per parameter, with 500
+paired prompts per rung and a 7B judge behind the degeneracy gate, reverses the
+expected direction of the effect. Within the band where output stays coherent,
 quantization makes both models tested \emph{more} likely to decline --- where
 declining is the judge's class of refusing, deflecting, redirecting or warning,
 which we characterise rather than assume --- at $1.15$ points of that class per
 bit removed (95\% CI $[0.75, 1.55]$, prompt-level cluster bootstrap). Under the
 7B judge this reaches significance at 4.5 bits on both models ($p_{14}=0.021$ and
-$0.011$), but re-grading the identical completions with four graders from three
-other families does \emph{not} reproduce it: three of the four agree on the
-direction, none reaches significance, and pairwise agreement with the 7B judge is
-64.9--89.3\%. We withdraw the significance claim and report only the direction. A
+$0.011$), but re-grading the identical completions with three graders from two
+other families does \emph{not} reproduce it: three of the four resulting
+model~$\times$~grader comparisons agree on the direction, none reaches
+significance, and pairwise agreement with the 7B judge is 64.9--78.4\%. We withdraw the significance claim and report only the direction. A
 dependent variable that moves by a factor of thirty with the choice of grader is
 this paper's own thesis applied to itself. Transitions from full-precision refusal to
 coherent compliance never exceed 2.2\%, and a simultaneous one-sided 95\% bound
@@ -147,9 +147,10 @@ established this and withdraws the claim it defeats.
         largest shift, at 3.5 bits. Its full-precision $d'$ is only
         $0.74$ on Qwen2.5-3B, so what it retains there is weak to begin with
         (\S\ref{sec:probe}).
-  \item Re-grading the identical completions with four graders from three other
-        families reproduces the \emph{direction} on three of four and the
-        significance on none, at 64.9--89.3\% pairwise agreement with the 7B
+  \item Re-grading the identical completions with three graders from two other
+        families reproduces the \emph{direction} on three of the four
+        model~$\times$~grader comparisons and the significance on none, at
+        64.9--78.4\% pairwise agreement with the 7B
         judge (\S\ref{sec:refusal}). We withdraw the significance claim. This is
         the paper's own thesis applied to itself, and it is why the word
         ``significant'' appears nowhere above.
@@ -482,9 +483,9 @@ independent graders.} Under the 7B judge, at 4.5 bits Qwen2.5-3B newly refuses 3
 prompts it previously answered against 11 in the opposite direction
 ($p_{14}=0.021$, $p_{7}=0.011$); Phi-3.5-mini shows 21 against 4
 ($p_{14}=0.011$, $p_{7}=0.005$). Both survive correction over every model
-$\times$ rung cell in the study. Neither survives re-grading by four graders from
-three other families --- the subject of the next box, and the reason we carry the
-direction of this shift rather than its significance.
+$\times$ rung cell in the study. Neither survives re-grading by independent
+graders --- the subject of the next box, and the reason we carry the direction
+of this shift rather than its significance.
 \end{keybox}
 
 \begin{caveatbox}
@@ -527,10 +528,20 @@ that model's ladder.
 \begin{caveatbox}
 \textbf{The result does not replicate under independent graders, and this is the
 most important finding in the paper.} We re-graded the stored completions with
-four graders from three families other than the one under test: Llama-3.3-70B
-(Groq), Llama-3.1-70B (NVIDIA), and two Claude models. Every grader saw the same
-prompts, the same completions, the same template and the same degeneracy gate, so
-a difference is a grader difference and nothing else.
+three graders from two families other than the one under test: Llama-3.3-70B
+(Groq), Claude, and Claude Haiku. Between them they cover four model
+$\times$ grader comparisons. Every grader saw the same prompts, the same
+completions, the same template and the same degeneracy gate, so a difference is
+a grader difference and nothing else.
+
+A fourth grader was attempted and is not counted here. Llama-3.1-70B (NVIDIA)
+agreed with the 7B judge on 89.3\% of the 375 completions it returned, but its
+sweep did not cover both full precision and the 4.5-bit rung, so it supports no
+paired comparison at all. We exclude it rather than quote its agreement
+alongside the others, because 89.3\% is the most flattering number in the set and
+it comes from the grader that finished least of the work. Three further sweeps
+(Gemini 2.0 Flash on both models, and Llama-3.3-70B on Phi-3.5-mini) returned
+between 4 and 10 completions and are not reported.
 
 \begin{center}\tabfont
 \begin{tabular}{llrrrr}
@@ -551,9 +562,10 @@ Claude Haiku             & Phi-3.5-mini & 64.9\% &  5 &  4 & 1.000 \\
 Three of the four independent graders put the shift in the same direction ---
 toward refusal --- so the \emph{sign} is not an artifact of one model. But the
 \emph{magnitude} collapses, and not one of them reaches significance. Pairwise
-agreement with the 7B judge runs 64.9--89.3\%, which is far too low for a
-dependent variable: at 70\% agreement on a 500-prompt paired comparison, grader
-disagreement alone moves more prompts than the effect being measured.
+agreement with the 7B judge runs 64.9--78.4\% across these four comparisons,
+which is far too low for a dependent variable: at 70\% agreement on a 500-prompt
+paired comparison, grader disagreement alone moves more prompts than the effect
+being measured.
 
 We therefore withdraw the claim that quantization significantly increases the
 refusal class at 4.5 bits. What survives is weaker and still worth reporting: a
@@ -583,7 +595,12 @@ headline by a factor of thirty.
   \input{tables/tab_judge_agreement}
   \caption{Second-judge agreement and reproduction. Every grader saw the same
   prompts, completions, template and degeneracy gate as the 7B judge, so a
-  difference is attributable to the grader alone.}
+  difference is attributable to the grader alone. Restricted to sweeps that
+  returned at least 400 graded completions: a partial sweep cannot support a
+  paired comparison, and reporting its agreement anyway would let the least
+  complete grader set the range. Four sweeps are excluded on that rule, and one
+  of them --- Llama-3.1-70B at 89.3\% on 375 completions --- is the highest
+  agreement observed anywhere in the set.}
   \label{tab:judges}
 \end{table}
 
@@ -959,8 +976,8 @@ uniformly flat: Qwen2.5-3B sits at 95.3\% at 4.5 bits, and the split-to-split
 spread there, $[86, 104]$, is wide. The claim is that the probe
 moves little, not that it does not move. Second, the coherent band is
 model-specific, and for Phi-3.5-mini it extends to 3.5 bits, where retention has
-already fallen to 63\%. So the probe is \emph{not} flat across the whole drift
-band of every model; what holds on all three is the 8.5--4.5 range. Below 4 bits
+already fallen to 57\%. So the probe is \emph{not} flat across the whole drift
+band of every model; what holds on both is the 8.5--4.5 range. Below 4 bits
 the probe collapses along with the model (Qwen2.5-3B to 42\% at 3.5 bits).
 \end{caveatbox}
 
@@ -969,7 +986,7 @@ the probe collapses along with the model (Qwen2.5-3B to 42\% at 3.5 bits).
 there while the refusal decision drifts on both models and
 arithmetic falls by seven points, 38\% of its baseline. It then falls, and where
 it falls differs by model: on Qwen2.5-3B the drop coincides with degeneration,
-but on Phi-3.5-mini retention is already 63\% at 3.5 bits, a rung our detector
+but on Phi-3.5-mini retention is already 57\% at 3.5 bits, a rung our detector
 calls degenerate for only 0.6\% of completions and where the refusal shift is
 largest (41 prompts newly refused against 1 in the other direction). So the probe
 is not simply a degeneration detector either; the
@@ -982,11 +999,21 @@ preserves refusal geometry should not be read as evidence that compression
 preserves refusal behaviour.
 \end{keybox}
 
-One caveat applies to this section specifically. The probe's classes come from
-the full-precision model's marker-derived refusal decision rather than from the
-7B judge, so its labels and those of \S\ref{sec:refusal} are not identical. The
-comparison should be read as two measurements of the same ladder, not as two
-views of one label set.
+One consequence of fitting on the judge's labels is worth stating, because it
+cuts against the section. Every figure here inherits whatever the judge gets
+wrong: the probe's positive class is the set of prompts the 7B judge called
+refusal at full precision, so a systematic grading error becomes a systematic
+error in what the probe is asked to separate. That is the price of putting both
+arms on one target, and it is the right price to pay --- fitting the probe on
+marker-derived classes instead, as an earlier version did, compares two systems
+aimed at different things and cannot establish a dissociation at all. We report
+the marker-label variant alongside it in the released statistics for contrast.
+The two agree where the paper's claim lives --- both are near-flat over
+8.5--4.5 bits, 95--100\% under the judge's labels and 96--100\% under the
+marker list --- and diverge below it, where Phi-3.5-mini's 3.5-bit retention
+reads 57\% against 63\% and Qwen2.5-3B's reads 42\% against 34\%. Two targets
+give two answers once the model starts breaking, which is a reason to fix the
+target rather than to average them.
 
 % ─────────────────────────────────────────────────────────────────────────────
 \section{Discussion}
@@ -1092,8 +1119,9 @@ test this here.
         counts as refusal by construction. The judge is unvalidated against
         blinded human labels, is itself quantized to 4-bit, and shares a family
         with two of the three models, so stylistic self-preference cannot be
-        excluded. We report its agreement with four phrase lists, not its
-        accuracy. A stratified blinded human sample across models, rungs,
+        excluded. We report its agreement with four phrase lists and three
+        independent graders, not its accuracy against anything. A stratified
+        blinded human sample across models, rungs,
         languages and disagreement cases is the next thing this work needs.
   \item \textbf{The headline does not replicate across graders, and every
         quantity derived from the judge inherits that.} Four graders from three

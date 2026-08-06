@@ -286,6 +286,68 @@ CHECKS: tuple[Check, ...] = (
 )
 
 
+class UniqueCheck(NamedTuple):
+    """A quantity the paper must state ONE value for, wherever it states it.
+
+    Every check above asks whether the right number appears somewhere. None asks
+    whether a *wrong* number for the same quantity appears somewhere else, and
+    that gap was not hypothetical: Phi-3.5-mini's 3.5-bit probe retention was
+    written as 57% in two places and 63% in two others. Both figures are real --
+    57% is the judge-label variant the section reports, 63% the marker-label
+    variant an earlier revision used -- so the paper quietly carried numbers from
+    two different estimands under one name, and the "expected 57 in context"
+    check passed the whole time because 57 was indeed present.
+
+    `pattern` captures the number in group 1. Every occurrence must agree with
+    the recomputed value.
+    """
+
+    label: str
+    value: Callable[[dict[str, Any]], str]
+    pattern: str
+
+
+MIN_GRADED = 400          # matches build_paper_tables and build_paper_figures
+
+
+def _agreement_range(agreement: dict[str, Any]) -> str:
+    """Agreement span over the sweeps large enough to support a comparison.
+
+    The floor is the whole point. Quoting the range over every sweep pulled the
+    upper end to 89.3%, from a grader that returned 375 completions, never
+    covered both rungs, and therefore contributed no paired result -- the most
+    flattering number in the set, produced by the least complete work.
+    """
+    values = [b["agreement"] for models in agreement.values()
+              for b in models.values()
+              if b.get("n_compared", 0) >= MIN_GRADED]
+    return f"{100 * min(values):.1f}--{100 * max(values):.1f}"
+
+
+UNIQUE_CHECKS: tuple[UniqueCheck, ...] = (
+    UniqueCheck(
+        "Phi 3.5 retention stated consistently",
+        lambda s: f"{100 * _probe_row(s, 'Phi-3.5-mini', 3.5)['retained_mean']:.0f}",
+        r"(?:retention (?:is|has)\s+already\s+(?:fallen\s+to\s+)?|fallen\s+to\s+)(\d+)\\?%",
+    ),
+    UniqueCheck(
+        "Qwen 4.5 retention stated consistently",
+        lambda s: f"{100 * _probe_row(s, 'Qwen2.5-3B', 4.5)['retained_mean']:.1f}",
+        r"Qwen2\.5-3B\s+sits\s+at\s+([\d.]+)\\?%\s+at\s+4\.5\s+bits",
+    ),
+    UniqueCheck(
+        "probe band floor stated consistently",
+        lambda s: f"{100 * min(r['retained_mean'] for b in s['probe'].values() for r in b['rows'] if 4.5 <= r['bits'] <= 8.5):.0f}",
+        r"(?:retains|retention[^.]{0,40}?)\s*(?:is\s+near-flat\s+at\s+)?(\d+)--100\\?%",
+    ),
+    UniqueCheck(
+        "judge agreement range stated consistently",
+        lambda s: s["_agreement_range"],
+        r"agreement with the 7B judge (?:is|runs)\s+([\d.]+--[\d.]+)\\?%",
+    ),
+)
+
+
 class DocCheck(NamedTuple):
     """A headline number that also appears outside the manuscript.
 
@@ -381,9 +443,17 @@ def main() -> int:
                     default=Path("docs/paper/review_stats.json"))
     ap.add_argument("--data", type=Path,
                     default=Path("docs/paper/data.json"))
+    ap.add_argument("--agreement", type=Path,
+                    default=Path("docs/paper/judge_agreement.json"))
     args = ap.parse_args()
 
     stats = json.loads(args.stats.read_text(encoding="utf-8"))
+    # Folded in so the uniqueness checks read one object. The agreement range is
+    # recomputed here rather than stored, because the floor that defines it is a
+    # decision this file has to be able to state.
+    if args.agreement.exists():
+        stats["_agreement_range"] = _agreement_range(
+            json.loads(args.agreement.read_text(encoding="utf-8")))
     data = json.loads(args.data.read_text(encoding="utf-8"))
     text = live_tex(args.tex.read_text(encoding="utf-8"))
 
@@ -407,6 +477,25 @@ def main() -> int:
                             f"/{check.pattern(value)}/")
 
     print()
+    for unique in UNIQUE_CHECKS:
+        value = unique.value(stats)
+        found = re.findall(unique.pattern, text)
+        wrong = sorted({f for f in found if f != value})
+        status = ("NOT STATED" if not found
+                  else f"CONTRADICTED by {wrong}" if wrong
+                  else f"ok ({len(found)}x)")
+        print(f"{unique.label:34s} {value:16s} {status}")
+        if not found:
+            failures.append(f"  {unique.label}: no occurrence matched "
+                            f"/{unique.pattern}/; the claim may have been "
+                            "reworded out of the checker's reach")
+        elif wrong:
+            failures.append(
+                f"  {unique.label}: the paper states {wrong} as well as "
+                f"{value!r} for one quantity. Both may be real numbers from "
+                "different estimands, which is worse than a typo, not better.")
+
+    print()
     for doc in DOC_CHECKS:
         if not doc.path.exists():
             continue
@@ -423,8 +512,9 @@ def main() -> int:
         print("\n".join(failures))
         return 1
     print(f"\nall {len(CHECKS) + len(DATA_CHECKS) + len(DOC_CHECKS)} "
-          f"quoted quantities match "
-          f"{args.stats} in context")
+          f"quoted quantities match {args.stats} in context, and "
+          f"{len(UNIQUE_CHECKS)} of them are stated consistently everywhere "
+          "they appear")
     return 0
 
 

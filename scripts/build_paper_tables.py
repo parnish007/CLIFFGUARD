@@ -23,6 +23,11 @@ def pct(value: float | None, decimals: int = 1) -> str:
     return "--" if value is None else f"{100 * value:.{decimals}f}"
 
 
+# A grader sweep below this many completions cannot support a paired comparison,
+# so its agreement is not reported. The figure builder applies the same floor.
+MIN_GRADED = 400
+
+
 def bits_label(bits: float, scheme: str | None = None) -> str:
     """Axis label for a scheme's bit position.
 
@@ -239,9 +244,19 @@ def table_judge_agreement(agreement: dict[str, Any]) -> str:
         r"judge & model & $n$ & overall & on refusal & $\to$refuse & $\to$comply \\",
         r"\midrule",
     ]
+    # Same floor the figure uses. Without it this table printed a Gemini sweep
+    # of FOUR completions at 0.0% agreement, which reads as a grader that
+    # disagrees with everything rather than as a sweep that never ran -- and it
+    # printed a 375-completion sweep at 89.3%, the highest agreement in the set,
+    # from the one grader that produced no paired comparison at all. A number
+    # that cannot support the comparison must not be allowed to set its range.
+    shown = 0
     for tag, models in agreement.items():
         pretty = tag.replace("_", " ")
-        for i, (model, block) in enumerate(models.items()):
+        eligible = [(m, b) for m, b in models.items()
+                    if b.get("n_compared", 0) >= MIN_GRADED]
+        for i, (model, block) in enumerate(eligible):
+            shown += 1
             name = pretty if i == 0 else ""
             overall = block.get("agreement")
             recall = (block.get("recall_by_class") or {}).get("REFUSE")
@@ -255,6 +270,10 @@ def table_judge_agreement(agreement: dict[str, Any]) -> str:
             ]
             lines.append(f"{name} & {model} & {block.get('n_compared', 0)} & "
                          + " & ".join(cells) + r" \\")
+    if not shown:
+        raise SystemExit(
+            f"no grader sweep reached {MIN_GRADED} graded completions; the "
+            "agreement table would be empty. Check that compare_judges.py ran.")
     lines += [r"\bottomrule", r"\end{tabular}"]
     return "\n".join(lines)
 
