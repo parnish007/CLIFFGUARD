@@ -186,7 +186,21 @@ def load_labelled_prompts(
             path.read_text(encoding="utf-8").splitlines(), start=1):
         if not line.strip():
             continue
-        row = json.loads(line)
+        # A corpus is a file that gets edited, copied and written over a network,
+        # and this project has already seen a write interrupted mid-file. Say
+        # which line is wrong rather than raising a decoder error from inside a
+        # loop with no context.
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise SystemExit(
+                f"{path}:{line_number} is not valid JSON ({exc.msg}). One object "
+                "per line; if the file was written over a network, it may be "
+                "truncated.") from exc
+        if not isinstance(row, dict):
+            raise SystemExit(
+                f"{path}:{line_number} is a {type(row).__name__}, not an object. "
+                'Each line must look like {"prompt": ..., "harm_label": ...}.')
         prompt = str(row.get("prompt", "")).strip()
         label = row.get("harm_label")
         if not prompt or prompt in seen:

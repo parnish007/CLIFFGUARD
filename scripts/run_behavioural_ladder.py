@@ -524,7 +524,6 @@ def main() -> int:  # noqa: C901 - linear experiment script
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    schemes: list[str] = ["FP16"]
     completions: dict[str, list[str]] = {}
     activations: dict[str, FloatArray] = {}
 
@@ -584,69 +583,90 @@ def main() -> int:  # noqa: C901 - linear experiment script
         activations[name] = acts
         print(f"[{name}] generated in {time.time() - started:.0f}s", flush=True)
 
-    run_scheme("FP16", load_fp16_model)
+    # Every scheme is named and validated BEFORE the first model loads.
+    #
+    # These checks used to sit inside the loops that run the schemes, which meant
+    # the check for the Nth scheme only happened after N-1 models had been loaded
+    # and generated from. A duplicate label or a missing --gguf-repo would then
+    # surface hours into a run, having spent the GPU time that made it expensive
+    # to discover. A configuration error is knowable at argument-parse time and
+    # should cost nothing.
+    plan: list[tuple[str, Any]] = [("FP16", load_fp16_model)]
+    deployed_meta: dict[str, Any] = {}
+
+    def claim(label: str, origin: str) -> None:
+        taken = {name for name, _ in plan}
+        if label in taken:
+            raise SystemExit(
+                f"{origin} names the scheme {label!r}, which is already in this "
+                f"run ({sorted(taken)}). Labels key every completion file, every "
+                "cache entry and every table row, so a duplicate would overwrite "
+                "a scheme rather than add one.")
+
     for bits in args.bits:
         name = f"RTN_{bits}B"
-        schemes.append(name)
-        run_scheme(name, (lambda b: lambda: load_rtn_model(b, args.group, [])[0])(bits))
+        claim(name, f"--bits {bits}")
+        plan.append((name, (lambda b: lambda: load_rtn_model(b, args.group, [])[0])(bits)))
 
     # A pre-quantized checkpoint is already quantized, so it is a SCHEME, not a
     # model to apply RTN to. Pointing --model at an AWQ repo and passing --bits
     # would quantize it twice and measure something that does not exist. It is
     # paired against the same FP16 base as every RTN rung, so the comparison is
     # the same paired one; only the quantizer differs.
-    deployed_meta: dict[str, Any] = {}
     for spec in args.deployed:
         if "=" not in spec:
             raise SystemExit(
                 f"--deployed expects LABEL=REPO, got {spec!r}. The label names "
                 "the scheme in every output; the repo is the checkpoint.")
         label, repo = spec.split("=", 1)
-        if label in schemes:
-            raise SystemExit(
-                f"--deployed label {label!r} collides with an RTN rung or an "
-                "earlier deployed scheme. Labels key every completion file and "
-                "every table row, so a duplicate would overwrite a rung.")
-        schemes.append(label)
-        deployed_meta[label] = {"repo": repo,
-                                "quantization_config": deployed_quantization_config(repo)}
-        run_scheme(label, (lambda r: lambda: load_deployed_model(r))(repo))
+        if not label or not repo:
+            raise SystemExit(f"--deployed {spec!r} has an empty label or repo")
+        claim(label, f"--deployed {spec}")
+        plan.append((label, (lambda r: lambda: load_deployed_model(r))(repo)))
+        deployed_meta[label] = {"repo": repo, "quantization_config": None}
 
-    # bitsandbytes NF4 on the same checkpoint. Worth its own flag rather than a
+    # bitsandbytes NF4 on the same checkpoint. Its own flag rather than a
     # --deployed repo because it is constructed at load time from the FP16
     # weights, like RTN and unlike AWQ, so there is no pre-quantized checkpoint
     # to point at. It is also the quantizer most people actually run: every
     # `load_in_4bit=True` and every QLoRA workflow is this.
     if args.nf4:
-        if "NF4" in schemes:
-            raise SystemExit("NF4 is already a scheme in this run")
-        schemes.append("NF4")
+        claim("NF4", "--nf4")
+        plan.append(("NF4", load_nf4_model))
         deployed_meta["NF4"] = {"repo": args.model, "quantization_config": {
             "method": "bitsandbytes-nf4", "bits": 4,
             "double_quant": False, "compute_dtype": "float16"}}
-        run_scheme("NF4", load_nf4_model)
 
     # GGUF k-quants, the llama.cpp ladder. These vary block structure and
     # per-tensor type assignment as well as width, which is exactly why the
     # paper's own ladder is RTN -- but it is also what people deploy, so the
-    # direction has to be checked against them. Named GGUF_<QUANT> to match the
-    # convention in run_local_ladder, and kept off the RTN ordinal axis by
+    # direction has to be checked against them. Kept off the RTN ordinal axis by
     # bits_of, which returns NaN for anything that is not an RTN rung.
     for quant in args.gguf:
-        label = f"GGUF_{quant.upper()}"
-        if label in schemes:
-            raise SystemExit(f"{label} is already a scheme in this run")
         if not (args.gguf_repo and args.gguf_stem):
             raise SystemExit(
                 "--gguf needs --gguf-repo and --gguf-stem: the file is named "
                 "<stem>-<quant>.gguf inside the repo, and neither can be "
                 "guessed from the model id.")
-        schemes.append(label)
+        label = f"GGUF_{quant.upper()}"
+        claim(label, f"--gguf {quant}")
+        plan.append((label, (lambda q: lambda: load_gguf_model(q))(quant)))
         deployed_meta[label] = {
             "repo": args.gguf_repo,
             "quantization_config": {"method": "gguf", "quant": quant,
                                     "file": f"{args.gguf_stem}-{quant}.gguf"}}
-        run_scheme(label, (lambda q: lambda: load_gguf_model(q))(quant))
+
+    schemes = [name for name, _ in plan]
+    print(f"schemes: {schemes}")
+
+    # Only now, with the whole plan validated, does anything touch a GPU. The
+    # deployed checkpoints' declared configs are read here too, since that is a
+    # network call and belongs with the loads rather than the validation.
+    for label, meta in deployed_meta.items():
+        if meta["quantization_config"] is None:
+            meta["quantization_config"] = deployed_quantization_config(meta["repo"])
+    for name, loader in plan:
+        run_scheme(name, loader)
 
     # ---- degeneracy scoring, all schemes under ONE reference model -------
     print("\n=== scoring every completion under the FP16 reference ===")

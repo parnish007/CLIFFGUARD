@@ -149,3 +149,24 @@ def test_source_falls_back_to_the_file_stem(tmp_path) -> None:
     path = _corpus(tmp_path, rows, name="advbench.jsonl")
     _, sources, _ = load_labelled_prompts(path, None)
     assert set(sources) == {"advbench"}
+
+
+def test_malformed_json_line_names_the_line(tmp_path) -> None:
+    """A corpus gets edited and copied over networks, and this project has
+    already seen a write interrupted mid-file. A decoder error raised from
+    inside a loop says nothing about where to look."""
+    path = tmp_path / "s.jsonl"
+    path.write_text(
+        json.dumps({"prompt": "a", "harm_label": "harmful"}) + "\n{not json\n",
+        encoding="utf-8")
+    with pytest.raises(SystemExit, match=r"s\.jsonl:2 is not valid JSON"):
+        load_labelled_prompts(path, 10)
+
+
+def test_json_line_that_is_not_an_object_is_refused(tmp_path) -> None:
+    path = tmp_path / "s.jsonl"
+    path.write_text(
+        json.dumps({"prompt": "a", "harm_label": "harmful"}) + '\n"a bare string"\n',
+        encoding="utf-8")
+    with pytest.raises(SystemExit, match=r"s\.jsonl:2 is a str, not an object"):
+        load_labelled_prompts(path, 10)
