@@ -298,6 +298,65 @@ def target_linears(model: Any) -> list[tuple[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
+def host_memory() -> tuple[float, float]:
+    """(resident GB for this process, available GB on the machine).
+
+    Read from /proc, so it is Linux-only and returns (nan, nan) elsewhere. That
+    is the platform the long ladders run on; on a laptop the numbers would only
+    be decoration.
+    """
+    def _read(path: str, key: str) -> float:
+        try:
+            for line in Path(path).read_text(encoding="utf-8").splitlines():
+                if line.startswith(key):
+                    return float(line.split()[1]) / 1e6      # kB -> GB
+        except OSError:
+            pass
+        return float("nan")
+
+    return _read("/proc/self/status", "VmRSS:"), _read("/proc/meminfo", "MemAvailable:")
+
+
+def release_host_memory(tag: str = "") -> None:
+    """Give freed heap back to the OS between model loads, and say what is left.
+
+    A ladder loads and discards one model per rung. `del model` followed by
+    `torch.cuda.empty_cache()` returns the GPU allocation, but the host side has
+    a different allocator: glibc keeps freed arenas mapped for reuse rather than
+    handing them back, so resident memory ratchets upward across rungs even
+    though nothing is leaked in the Python sense. On a hosted runtime with a
+    fixed memory ceiling, one of the later loads is the one that crosses it, and
+    the process is killed with SIGKILL -- no traceback, no exception, exit code
+    -9. That is how the 1.5B GSM8K ladder died after six of eight schemes.
+
+    `malloc_trim(0)` asks glibc for the arenas back. It is guarded rather than
+    assumed because the symbol does not exist on Windows or under musl, and a
+    missing allocator detail must not end a run.
+
+    The memory figures are printed because the next failure should be
+    diagnosable from the log alone: a run that climbs half a gigabyte per rung
+    is a different problem from one that sits flat and then dies.
+    """
+    import ctypes
+
+    gc.collect()
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:                                  # noqa: BLE001
+        pass
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except (OSError, AttributeError):
+        pass                                           # not glibc; nothing to trim
+    rss, available = host_memory()
+    if rss == rss:                                     # NaN check without numpy
+        print(f"[mem{' ' + tag if tag else ''}] host RSS {rss:.2f} GB, "
+              f"available {available:.2f} GB", flush=True)
+
+
 def gguf_filename(quant: str) -> str:
     return f"{GGUF_STEM}-{quant}.gguf"
 
@@ -339,6 +398,41 @@ def load_deployed_model(repo: str) -> Any:
             repo, torch_dtype=torch.float16, device_map={"": 0},
             low_cpu_mem_usage=True
         )
+
+
+def deployed_quantization_config(repo: str) -> dict[str, Any]:
+    """What a pre-quantized checkpoint says about its own quantization.
+
+    Recorded so a deployed scheme is described by the checkpoint rather than by
+    its label. "AWQ_4B" is a name we chose; `bits=4, group_size=128` is what the
+    file asserts, and the two can disagree.
+
+    The stored bits per parameter is reported on the same accounting the RTN
+    rungs use -- code bits plus the per-group fp16 scale and zero -- so the two
+    families are at least measured the same way. It is NOT a position on the RTN
+    ordinal axis: that axis holds one quantizer family with bit-width as the
+    only thing varying, and AWQ changes the algorithm as well. Analysis keeps
+    these schemes off the ladder fit; this figure exists to be quoted in a
+    table, not regressed on.
+    """
+    from transformers import AutoConfig
+
+    try:
+        raw = getattr(AutoConfig.from_pretrained(repo), "quantization_config", None)
+    except Exception as exc:                           # noqa: BLE001
+        return {"error": f"{type(exc).__name__}: {exc}"}
+    if raw is None:
+        return {"error": "checkpoint declares no quantization_config"}
+    cfg = dict(raw) if isinstance(raw, dict) else dict(getattr(raw, "__dict__", {}) or {})
+    out: dict[str, Any] = {
+        k: v for k, v in cfg.items()
+        if isinstance(v, (str, int, float, bool)) or v is None
+    }
+    bits = out.get("bits") or out.get("w_bit")
+    group = out.get("group_size") or out.get("q_group_size")
+    if isinstance(bits, int) and isinstance(group, int) and group > 0:
+        out["bits_per_param_stored"] = float(bits) + 32.0 / float(group)
+    return out
 
 
 def load_nf4_model() -> Any:
@@ -411,6 +505,7 @@ def load_rtn_model(
     model = load_fp16_model()
     sigma: dict[str, float] = {}
     wanted = set(eta_weight_names)
+    original = quantized = None      # bound even if the model has no target Linears
     with torch.no_grad():
         for name, module in target_linears(model):
             weight_name = f"{name}.weight"
@@ -428,6 +523,11 @@ def load_rtn_model(
                 sigma[weight_name] = projected_perturbation_variance(fp, qz, direction)
                 del fp, qz
             module.weight.data = quantized
+        # Both names still hold the last matrix once the loop ends, and
+        # `original` holds a tensor nothing else references now that the module
+        # points at `quantized`. One matrix is not the OOM, but it is free to
+        # drop and it keeps the post-quantization memory reading honest.
+        del original, quantized
     return model, sigma
 
 

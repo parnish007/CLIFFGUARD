@@ -30,7 +30,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import gc
 import json
 from pathlib import Path
 import re
@@ -52,6 +51,7 @@ import scripts.run_local_ladder as ladder
 from scripts.run_local_ladder import (
     load_fp16_model,
     load_rtn_model,
+    release_host_memory,
     rtn_bits_per_parameter,
 )
 
@@ -95,6 +95,49 @@ def extract_predicted(completion: str) -> float | None:
 def is_correct(completion: str, gold: float, tolerance: float = 1e-4) -> bool:
     predicted = extract_predicted(completion)
     return predicted is not None and abs(predicted - gold) <= tolerance
+
+
+def reusable_prefix(
+    cache_dir: Path, scheme: str, n: int, max_new_tokens: int, batch_size: int
+) -> list[str] | None:
+    """A longer run's completions, truncated to this run's first `n` questions.
+
+    `load_gsm8k(n)` walks the test split in order and stops at n, so the
+    questions of a short run are a PREFIX of a long one's. A ladder that already
+    generated 1319 completions therefore contains the 500-question answer, and
+    regenerating it costs an hour of GPU time for text that is already on disk.
+
+    The reuse is exact only when the batch boundaries line up. Generation is
+    batched and each batch is padded to its own longest member, so an item's
+    output depends on which items share its batch. Batches are formed at fixed
+    offsets of `batch_size` from zero, so the first `n` items sit in identical
+    batches in both runs whenever `n` is a whole multiple of `batch_size` -- and
+    do not otherwise. A partial final batch is refused rather than accepted with
+    a note, because "approximately the same completions" is not something a
+    paired comparison can absorb.
+
+    One caveat that cannot be checked from here: if the source run hit the CUDA
+    OOM fallback it re-batched at a smaller size, and those items were generated
+    under different padding. That path prints when it fires, so it is visible in
+    the source run's log rather than silent.
+    """
+    if n % batch_size:
+        return None
+    pattern = f"gsm8k_{scheme}_n*_t{max_new_tokens}.json"
+    for path in sorted(cache_dir.glob(pattern)):
+        try:
+            n_source = int(path.stem.split("_n")[1].split("_t")[0])
+        except (IndexError, ValueError):
+            continue
+        if n_source <= n:
+            continue
+        texts = json.loads(path.read_text(encoding="utf-8"))
+        if len(texts) < n:
+            continue
+        print(f"[{scheme}] reusing the first {n} of {len(texts)} completions "
+              f"from {path.name}", flush=True)
+        return texts[:n]
+    return None
 
 
 def load_gsm8k(n: int) -> tuple[list[str], list[float]]:
@@ -169,6 +212,12 @@ def main() -> int:  # noqa: C901 - linear experiment script
             print(f"[{name}] cache hit", flush=True)
             completions[name] = json.loads(cache.read_text(encoding="utf-8"))
             continue
+        prefix = reusable_prefix(args.cache, name, len(prompts),
+                                 args.max_new_tokens, args.batch_size)
+        if prefix is not None:
+            cache.write_text(json.dumps(prefix, indent=1), encoding="utf-8")
+            completions[name] = prefix
+            continue
         started = time.time()
         print(f"[{name}] loading ...", flush=True)
         if name == "FP16":
@@ -182,28 +231,41 @@ def main() -> int:  # noqa: C901 - linear experiment script
             model, tokenizer, prompts, args.max_new_tokens, args.batch_size, name
         )
         del model
-        gc.collect()
-        torch.cuda.empty_cache()
+        # Cached BEFORE the memory release, so a scheme that finishes and is
+        # then killed on the next model load still leaves its work behind. Every
+        # completed scheme on disk is one fewer model a restart has to load,
+        # which is what lets a run that was OOM-killed converge on a retry.
         cache.write_text(json.dumps(texts, indent=1), encoding="utf-8")
+        release_host_memory(name)
         completions[name] = texts
         print(f"[{name}] done in {time.time() - started:.0f}s", flush=True)
 
     # Degeneracy on the same footing as the refusal arm: one FP16 reference.
     print("\n=== scoring completions under the FP16 reference ===")
     nll_cache = args.cache / f"nll_gsm8k_n{len(prompts)}_t{args.max_new_tokens}.json"
+    nll: dict[str, Any] = {}
+    cached: dict[str, Any] = {}
     if nll_cache.exists():
-        nll = {k: np.asarray(v, dtype=np.float64)
-               for k, v in json.loads(nll_cache.read_text(encoding="utf-8")).items()}
-        print("cache hit")
-    else:
+        cached = {k: np.asarray(v, dtype=np.float64)
+                  for k, v in json.loads(nll_cache.read_text(encoding="utf-8")).items()}
+        # Keyed by question count and token budget, not by scheme list. A run
+        # that adds a rung hits this file and then dies on a KeyError further
+        # down, so take only what the cache actually covers.
+        nll = {k: v for k, v in cached.items() if k in schemes}
+        print(f"cache hit for {len(nll)}/{len(schemes)} schemes")
+    absent = [name for name in schemes if name not in nll]
+    if absent:
+        print(f"scoring {len(absent)} scheme(s) not in the cache: {absent}")
         reference = load_fp16_model()
         reference.eval()
-        nll = {n: score_nll(reference, tokenizer, completions[n], args.batch_size, n)
-               for n in schemes}
+        for name in absent:
+            nll[name] = score_nll(
+                reference, tokenizer, completions[name], args.batch_size, name)
         del reference
-        gc.collect()
-        torch.cuda.empty_cache()
-        nll_cache.write_text(json.dumps({k: v.tolist() for k, v in nll.items()}), encoding="utf-8")
+        release_host_memory("nll-reference")
+        merged = {**cached, **nll}
+        nll_cache.write_text(
+            json.dumps({k: v.tolist() for k, v in merged.items()}), encoding="utf-8")
 
     finite_fp16 = nll["FP16"][np.isfinite(nll["FP16"])]
     threshold = float(np.median(finite_fp16) * DEGENERACY_NLL_MULTIPLE)

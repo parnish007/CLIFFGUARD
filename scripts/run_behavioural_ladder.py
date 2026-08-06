@@ -40,7 +40,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import gc
 import json
 from pathlib import Path
 import sys
@@ -55,10 +54,12 @@ from cliffguard.eval.discriminability import held_out_d_prime
 from cliffguard.eval.storage import new_run, record_corpus, record_environment
 import scripts.run_local_ladder as ladder
 from scripts.run_local_ladder import (
+    deployed_quantization_config,
     load_deployed_model,
     load_fp16_model,
     load_prompts,
     load_rtn_model,
+    release_host_memory,
     rtn_bits_per_parameter,
 )
 
@@ -436,11 +437,12 @@ def main() -> int:  # noqa: C901 - linear experiment script
         )
         acts = collect_activations(model, tokenizer, prompts, args.layer)
         del model
-        gc.collect()
-        torch.cuda.empty_cache()
-
+        # Written BEFORE the memory release, so a rung that finishes generating
+        # and is then killed on the next load still leaves its work on disk.
+        # This is what makes a restart resume instead of starting over.
         cache_text.write_text(json.dumps(texts, indent=1), encoding="utf-8")
         np.save(cache_acts, acts)
+        release_host_memory(name)
         completions[name] = texts
         activations[name] = acts
         print(f"[{name}] generated in {time.time() - started:.0f}s", flush=True)
@@ -456,34 +458,54 @@ def main() -> int:  # noqa: C901 - linear experiment script
     # would quantize it twice and measure something that does not exist. It is
     # paired against the same FP16 base as every RTN rung, so the comparison is
     # the same paired one; only the quantizer differs.
+    deployed_meta: dict[str, Any] = {}
     for spec in args.deployed:
         if "=" not in spec:
             raise SystemExit(
                 f"--deployed expects LABEL=REPO, got {spec!r}. The label names "
                 "the scheme in every output; the repo is the checkpoint.")
         label, repo = spec.split("=", 1)
+        if label in schemes:
+            raise SystemExit(
+                f"--deployed label {label!r} collides with an RTN rung or an "
+                "earlier deployed scheme. Labels key every completion file and "
+                "every table row, so a duplicate would overwrite a rung.")
         schemes.append(label)
+        deployed_meta[label] = {"repo": repo,
+                                "quantization_config": deployed_quantization_config(repo)}
         run_scheme(label, (lambda r: lambda: load_deployed_model(r))(repo))
 
     # ---- degeneracy scoring, all schemes under ONE reference model -------
     print("\n=== scoring every completion under the FP16 reference ===")
     nll_cache = args.cache / f"nll_n{len(prompts)}_t{args.max_new_tokens}.json"
+    nll: dict[str, FloatArray] = {}
+    cached: dict[str, FloatArray] = {}
     if nll_cache.exists():
-        nll = {k: np.asarray(v, dtype=np.float64)
-               for k, v in json.loads(nll_cache.read_text(encoding="utf-8")).items()}
-        print("cache hit")
-    else:
+        cached = {k: np.asarray(v, dtype=np.float64)
+                  for k, v in json.loads(nll_cache.read_text(encoding="utf-8")).items()}
+        # The cache key is prompt count and token budget, neither of which
+        # mentions WHICH schemes were scored. Adding a scheme -- a --deployed
+        # checkpoint against a cache written by an earlier RTN-only run at the
+        # same n and token budget -- hits this file and then dies on a KeyError
+        # several screens later. Score only what is genuinely missing.
+        nll = {k: v for k, v in cached.items() if k in schemes}
+        print(f"cache hit for {len(nll)}/{len(schemes)} schemes")
+    absent = [name for name in schemes if name not in nll]
+    if absent:
+        print(f"scoring {len(absent)} scheme(s) not in the cache: {absent}")
         reference = load_fp16_model()
         reference.eval()
-        nll = {
-            name: score_nll(reference, tokenizer, completions[name], args.batch_size, name)
-            for name in schemes
-        }
+        for name in absent:
+            nll[name] = score_nll(
+                reference, tokenizer, completions[name], args.batch_size, name)
         del reference
-        gc.collect()
-        torch.cuda.empty_cache()
+        release_host_memory("nll-reference")
+        # Merge rather than replace: a scheme scored by an earlier run at this
+        # same n and token budget is still valid, and dropping it would force a
+        # re-score the next time that scheme is asked for.
+        merged = {**cached, **nll}
         nll_cache.write_text(
-            json.dumps({k: v.tolist() for k, v in nll.items()}), encoding="utf-8"
+            json.dumps({k: v.tolist() for k, v in merged.items()}), encoding="utf-8"
         )
 
     finite_fp16 = nll["FP16"][np.isfinite(nll["FP16"])]
@@ -542,10 +564,21 @@ def main() -> int:  # noqa: C901 - linear experiment script
             "n_unsafe": int(unsafe.sum()),
             "n_conservative": int(conservative.sum()),
             "median_nll": float(np.median(finite)) if finite.size else float("inf"),
+            # A deployed checkpoint is not at 16 bits and is not on the RTN
+            # ordinal axis either. Recording 16.0 for it -- which this line used
+            # to do -- puts an AWQ scheme at full precision in every table built
+            # from the run. Its own declared budget goes in `bits_per_param`,
+            # and `on_rtn_axis` is what the ladder fit reads: the drift law
+            # varies bit-width within ONE quantizer family, and AWQ changes the
+            # algorithm at the same time.
             "bits_per_param": (
-                rtn_bits_per_parameter(int(name.split("_")[1][:-1]), args.group)
-                if name.startswith("RTN") else 16.0
+                16.0 if name == "FP16"
+                else rtn_bits_per_parameter(int(name.split("_")[1][:-1]), args.group)
+                if name.startswith("RTN") else
+                deployed_meta.get(name, {}).get("quantization_config", {})
+                .get("bits_per_param_stored", float("nan"))
             ),
+            "on_rtn_axis": name == "FP16" or name.startswith("RTN"),
         }
         b = behavioural[name]
         print(f"{name:10s} {b['refusal_rate']:7.3f} {b['compliance_rate']:7.3f} "
@@ -582,6 +615,14 @@ def main() -> int:  # noqa: C901 - linear experiment script
         extra={
             "stage": "behavioural_ladder", "layer": args.layer, "n_prompts": len(prompts),
             "bits": args.bits, "group": args.group, "seed": args.seed,
+            # The authoritative scheme list. Downstream tools used to rebuild it
+            # from `bits` as ["FP16"] + RTN rungs, which is right for a plain
+            # ladder and silently wrong for any run carrying --deployed
+            # checkpoints: with --bits empty that reconstruction yields ["FP16"]
+            # alone, so the judge graded nothing and the comparison the run
+            # existed to make never appeared.
+            "schemes": schemes,
+            "deployed": deployed_meta,
             "max_new_tokens": args.max_new_tokens, "batch_size": args.batch_size,
             "decoding": "greedy (do_sample=False)",
             "refusal_markers": list(REFUSAL_MARKERS), "classify_window": CLASSIFY_WINDOW,

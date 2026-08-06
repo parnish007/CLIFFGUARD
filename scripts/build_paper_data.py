@@ -25,7 +25,7 @@ from scipy.stats import beta
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.reanalyse_runs import analyse, load_run
+from scripts.reanalyse_runs import analyse, load_run, select_runs
 
 # Local runs used the 1.5B model; the hosted run added these two.
 MODEL_LABELS = {
@@ -44,25 +44,39 @@ def clopper_pearson(k: int, n: int, confidence: float = 0.95) -> tuple[float, fl
     return low, high
 
 
-def bits_of(scheme: str, group: int = 64) -> float:
-    """Stored bits per parameter for a scheme name.
+# Scheme prefixes that sit on the ordinal bit-width axis: one quantizer family,
+# one group size, bit-width the only thing that varies. That is what makes the
+# axis a dose and the drift slope a slope. RTN is the shipped ladder; SAL is the
+# same code path with AWQ-style scaling, run as its own ladder rather than mixed
+# into one.
+_ORDINAL_PREFIXES = ("RTN_", "SAL_")
 
-    NF4 and GGUF rungs appear in some local runs and are not on the RTN ordinal
-    axis, so they get NaN rather than a fabricated position.
+
+def bits_of(scheme: str, group: int = 64) -> float:
+    """Position on the RTN ordinal axis, or NaN for schemes that have none.
+
+    NF4, GGUF k-quants and deployed AWQ/GPTQ checkpoints all have a known bit
+    budget, and none of them belongs on this axis: each changes the quantization
+    ALGORITHM as well as the bit-width, so a line drawn through them is not a
+    dose-response curve. They get NaN, and every fit filters on `isfinite`.
+
+    The name alone used to decide this -- anything matching `<word>_<digits>B`
+    was accepted -- which silently placed `AWQ_4B` at 4.5 bits, one rung of the
+    RTN ladder, and let a different quantizer into the drift fit.
     """
     if scheme == "FP16":
         return 16.0
+    if not scheme.startswith(_ORDINAL_PREFIXES):
+        return float("nan")
     parts = scheme.split("_")
     if len(parts) < 2 or not parts[1][:-1].isdigit():
         return float("nan")
     return float(int(parts[1][:-1])) + 32.0 / group
 
 
-def collect_behavioural(runs: Path) -> dict[str, Any]:
+def collect_behavioural(runs: list[Path]) -> dict[str, Any]:
     out: dict[str, Any] = {}
-    for run_dir in sorted(runs.iterdir()):
-        if not run_dir.is_dir():
-            continue
+    for run_dir in runs:
         run = load_run(run_dir)
         if run is None:
             continue
@@ -101,9 +115,9 @@ def collect_behavioural(runs: Path) -> dict[str, Any]:
     return out
 
 
-def collect_sector(runs: Path) -> dict[str, Any]:
+def collect_sector(runs: list[Path]) -> dict[str, Any]:
     out: dict[str, Any] = {}
-    for run_dir in sorted(runs.iterdir()):
+    for run_dir in runs:
         f = run_dir / "results" / "sector_gsm8k.json"
         if not f.exists():
             continue
@@ -136,9 +150,9 @@ def collect_sector(runs: Path) -> dict[str, Any]:
     return out
 
 
-def collect_transfer(runs: Path) -> dict[str, Any]:
+def collect_transfer(runs: list[Path]) -> dict[str, Any]:
     out: dict[str, Any] = {}
-    for run_dir in sorted(runs.iterdir()):
+    for run_dir in runs:
         f = run_dir / "results" / "probe_transfer.json"
         if not f.exists():
             continue
@@ -163,15 +177,23 @@ def main() -> int:
     ap.add_argument("--out", type=Path, default=Path("docs/paper/data.json"))
     ap.add_argument("--min-n", type=int, default=150,
                     help="drop smoke runs; the paper quotes full-size runs only")
+    ap.add_argument("--include", default=None,
+                    help="glob on the run directory NAME; only matching runs are read")
+    ap.add_argument("--exclude", default=None,
+                    help="glob on the run directory NAME to skip, e.g. '*r2-*'")
     args = ap.parse_args()
 
-    behavioural = {k: v for k, v in collect_behavioural(args.runs).items()
+    # Two rounds of runs share one artifacts tree, and a later directory
+    # overwrites an earlier one for the same model. Which round the paper is
+    # built from has to be said, not inferred from sort order.
+    runs = select_runs(args.runs, args.include, args.exclude)
+    behavioural = {k: v for k, v in collect_behavioural(runs).items()
                    if v.get("n_prompts", 0) >= args.min_n}
-    sector = {k: v for k, v in collect_sector(args.runs).items()
+    sector = {k: v for k, v in collect_sector(runs).items()
               if v.get("n", 0) >= args.min_n}
     # Transfer runs carry no sample size of their own; keep only models that
     # survived the behavioural filter so the paper never mixes a smoke run in.
-    transfer = {k: v for k, v in collect_transfer(args.runs).items()
+    transfer = {k: v for k, v in collect_transfer(runs).items()
                 if k in behavioural or k in sector}
     payload = {"behavioural": behavioural, "sector": sector, "transfer": transfer}
     args.out.parent.mkdir(parents=True, exist_ok=True)

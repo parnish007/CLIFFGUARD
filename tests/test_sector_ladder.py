@@ -8,6 +8,8 @@ exactly the confound this ladder exists to avoid.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from scripts.run_sector_ladder import (
@@ -15,6 +17,7 @@ from scripts.run_sector_ladder import (
     extract_predicted,
     is_correct,
     parse_number,
+    reusable_prefix,
 )
 
 
@@ -121,3 +124,66 @@ def test_parse_number_accepts_common_forms(raw: str, expected: float) -> None:
 def test_parse_number_rejects_non_numeric() -> None:
     assert parse_number("abc") is None
     assert parse_number("") is None
+
+
+# ---------------------------------------------------------------------------
+# reusing a longer run's completions
+# ---------------------------------------------------------------------------
+#
+# `load_gsm8k(n)` walks the test split in order and stops at n, so a short run's
+# questions are a prefix of a long one's and the completions are already on
+# disk. Reuse is only sound when the batch boundaries line up: generation pads
+# each batch to its own longest member, so an item's output depends on which
+# items share its batch, and batches start at fixed offsets of `batch_size`.
+# Verified against the GPU: truncating a 32-question cache to 16 at batch 4
+# reproduces a freshly generated 16-question run exactly, character for
+# character, on all three schemes.
+
+
+def _cache_with(tmp_path, scheme: str, n: int, tokens: int, texts: list[str]):
+    path = tmp_path / f"gsm8k_{scheme}_n{n}_t{tokens}.json"
+    path.write_text(json.dumps(texts), encoding="utf-8")
+    return path
+
+
+def test_reuses_a_longer_run_when_batches_align(tmp_path) -> None:
+    _cache_with(tmp_path, "FP16", 32, 192, [f"answer {i}" for i in range(32)])
+    got = reusable_prefix(tmp_path, "FP16", 16, 192, batch_size=4)
+    assert got == [f"answer {i}" for i in range(16)]
+
+
+def test_refuses_when_the_final_batch_would_be_partial(tmp_path) -> None:
+    """18 is not a multiple of 4, so items 16 and 17 would sit in a batch of two
+    here and a batch of four in the source. Approximately the same completions
+    is not something a paired comparison can absorb."""
+    _cache_with(tmp_path, "FP16", 32, 192, [f"answer {i}" for i in range(32)])
+    assert reusable_prefix(tmp_path, "FP16", 18, 192, batch_size=4) is None
+
+
+def test_refuses_a_source_that_is_not_longer(tmp_path) -> None:
+    _cache_with(tmp_path, "FP16", 16, 192, [f"answer {i}" for i in range(16)])
+    assert reusable_prefix(tmp_path, "FP16", 16, 192, batch_size=4) is None
+    assert reusable_prefix(tmp_path, "FP16", 32, 192, batch_size=4) is None
+
+
+def test_does_not_cross_token_budgets(tmp_path) -> None:
+    """A 48-token completion is not the first 48 tokens of a 256-token one; the
+    model stops where it stops. Different budgets are different measurements."""
+    _cache_with(tmp_path, "FP16", 32, 48, [f"answer {i}" for i in range(32)])
+    assert reusable_prefix(tmp_path, "FP16", 16, 256, batch_size=4) is None
+
+
+def test_does_not_cross_schemes(tmp_path) -> None:
+    _cache_with(tmp_path, "RTN_4B", 32, 192, [f"answer {i}" for i in range(32)])
+    assert reusable_prefix(tmp_path, "FP16", 16, 192, batch_size=4) is None
+
+
+def test_returns_none_when_nothing_is_cached(tmp_path) -> None:
+    assert reusable_prefix(tmp_path, "FP16", 16, 192, batch_size=4) is None
+
+
+def test_ignores_a_truncated_cache_file(tmp_path) -> None:
+    """The filename claims 32 completions; the file holds 8. Trusting the name
+    would pair the first eight answers against sixteen questions."""
+    _cache_with(tmp_path, "FP16", 32, 192, [f"answer {i}" for i in range(8)])
+    assert reusable_prefix(tmp_path, "FP16", 16, 192, batch_size=4) is None

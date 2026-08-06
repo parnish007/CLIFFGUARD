@@ -71,9 +71,13 @@ def rung_axis(ax: Any, rows: list[dict[str, Any]]) -> list[int]:
     """
     positions = list(range(len(rows)))
     ax.set_xticks(positions)
-    ax.set_xticklabels(
-        ["FP16" if r["bits"] >= 16 else f"{r['bits']:.1f}" for r in rows]
-    )
+    ax.set_xticklabels([
+        # A deployed checkpoint has no position on this axis and carries NaN;
+        # its scheme name is the honest tick label.
+        r.get("scheme", "?") if r["bits"] != r["bits"]
+        else "FP16" if r["bits"] >= 16 else f"{r['bits']:.1f}"
+        for r in rows
+    ])
     ax.set_xlabel("stored bits / parameter")
     ax.set_xlim(-0.4, len(rows) - 0.6)
     return positions

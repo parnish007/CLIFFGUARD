@@ -58,7 +58,7 @@ from scipy.stats import beta, binomtest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.build_paper_data import MODEL_LABELS, bits_of, clopper_pearson
-from scripts.reanalyse_runs import analyse, load_run
+from scripts.reanalyse_runs import analyse, load_run, select_runs
 from scripts.run_behavioural_ladder import has_refusal_marker, is_degenerate
 from scripts.run_sector_ladder import extract_gold, is_correct
 
@@ -152,7 +152,7 @@ def label_matrix(run: dict[str, Any], gate: str) -> dict[str, np.ndarray]:
     return out
 
 
-def marker_label_matrix(model: str, runs: Path, gate: str) -> dict[str, np.ndarray]:
+def marker_label_matrix(model: str, runs: list[Path], gate: str) -> dict[str, np.ndarray]:
     """Per-prompt labels from the TIGHT phrase list, under a chosen gate.
 
     Needed so the phrase list and the judge can be compared at a common gate.
@@ -162,9 +162,7 @@ def marker_label_matrix(model: str, runs: Path, gate: str) -> dict[str, np.ndarr
     from scripts.classify_completions_judge import MARKER_VARIANTS
 
     tight = MARKER_VARIANTS["tight (as shipped)"]
-    for run_dir in sorted(runs.iterdir()):
-        if not run_dir.is_dir():
-            continue
+    for run_dir in runs:
         run = load_run(run_dir)
         if run is None or not run["judge_raw"]:
             continue
@@ -247,10 +245,21 @@ def drift_analysis(
         for scheme in labels:
             if scheme == "FP16":
                 continue
+            # The fit is a dose-response over ONE quantizer family. A deployed
+            # AWQ or GPTQ checkpoint has a bit budget but no position on this
+            # axis, because it varies the algorithm too; bits_of gives it NaN,
+            # and admitting a NaN here would poison the slope for every rung.
+            if not np.isfinite(bits_of(scheme)):
+                continue
             degenerate = float((labels[scheme] == "degenerate").mean())
             if degenerate < COHERENT_MAX_DEGENERATE:
                 band.append(scheme)
         band.sort(key=lambda s: bits_of(s))
+        if len(band) < 2:
+            raise SystemExit(
+                f"{model}: {len(band)} coherent rung(s) on the RTN axis; a slope "
+                "needs at least two. Check that the run carries the RTN ladder "
+                "and not only deployed checkpoints.")
         bands[model] = band
         x = [bits_of(s) for s in band]
         y = [100 * rates[s] for s in band]
@@ -330,7 +339,7 @@ def drift_analysis(
 # ---------------------------------------------------------------------------
 
 
-def gsm8k_paired(runs: Path, gsm8k_path: Path, n_items: int) -> dict[str, Any]:
+def gsm8k_paired(runs: list[Path], gsm8k_path: Path, n_items: int) -> dict[str, Any]:
     raw = gsm8k_path.read_bytes()
     rows = [json.loads(line) for line in
             raw.decode("utf-8").splitlines() if line.strip()]
@@ -356,7 +365,7 @@ def gsm8k_paired(runs: Path, gsm8k_path: Path, n_items: int) -> dict[str, Any]:
             "n_items": len(golds),
         }
     }
-    for run_dir in sorted(runs.iterdir()):
+    for run_dir in runs:
         sector = run_dir / "results" / "sector_gsm8k.json"
         if not sector.exists():
             continue
@@ -427,7 +436,7 @@ def gsm8k_paired(runs: Path, gsm8k_path: Path, n_items: int) -> dict[str, Any]:
     return out
 
 
-def gate_ablation(runs: Path) -> dict[str, Any]:
+def gate_ablation(runs: list[Path]) -> dict[str, Any]:
     """How much each degeneracy rule carries, and how fragile its threshold is.
 
     The gate is four handcrafted thresholds with no human-labelled validation
@@ -449,19 +458,20 @@ def gate_ablation(runs: Path) -> dict[str, Any]:
     )
 
     out: dict[str, Any] = {}
-    for run_dir in sorted(runs.iterdir()):
-        if not run_dir.is_dir():
-            continue
+    for run_dir in runs:
         run = load_run(run_dir)
         if run is None or not run["judge_raw"]:
             continue
         model = MODEL_LABELS.get(run["manifest"].get("model_id", "?"))
         if model is None or len(run["completions"]["FP16"]) < 150:
             continue
-        threshold = analyse(run)["threshold"]
+        # Hoisted: this used to be recomputed four times per run, and every call
+        # re-labels every completion of every scheme.
+        result = analyse(run)
+        threshold = result["threshold"]
 
         rows = []
-        for scheme in analyse(run)["schemes"]:
+        for scheme in result["schemes"]:
             texts, values = run["completions"][scheme], run["nll"][scheme]
             fires = {"nll": 0, "trigram": 0, "token_share": 0, "alpha": 0}
             any_fires = only = 0
@@ -507,7 +517,9 @@ def gate_ablation(runs: Path) -> dict[str, Any]:
                     kept += any(v2 for k2, v2 in hits.items() if k2 != drop)
                 row[f"without_{drop}"] = kept / n
             rows.append(row)
-        rows.sort(key=lambda r: -r["bits"])
+        # NaN compares false against everything, so it has no stable place in a
+        # plain sort. Off-axis schemes are sent to the end explicitly.
+        rows.sort(key=lambda r: (not np.isfinite(r["bits"]), -r["bits"]))
 
         # Threshold sensitivity: does the coherent band survive a 20% nudge to
         # every threshold at once, in the direction that admits more text?
@@ -524,8 +536,8 @@ def gate_ablation(runs: Path) -> dict[str, Any]:
         sensitivity = {}
         for name, cfg in (("loose", loose), ("strict", strict)):
             band = []
-            for scheme in analyse(run)["schemes"]:
-                if scheme == "FP16":
+            for scheme in result["schemes"]:
+                if scheme == "FP16" or not np.isfinite(bits_of(scheme)):
                     continue
                 texts, values = run["completions"][scheme], run["nll"][scheme]
                 degenerate = 0
@@ -544,12 +556,13 @@ def gate_ablation(runs: Path) -> dict[str, Any]:
                       "coherent_band_as_shipped": sorted(
                           r["bits"] for r in rows
                           if r["scheme"] != "FP16"
+                          and np.isfinite(r["bits"])
                           and r["degenerate"] < COHERENT_MAX_DEGENERATE)}
     return out
 
 
 def refusal_class_audit(
-    composite: dict[str, dict[str, np.ndarray]], runs: Path, scheme: str
+    composite: dict[str, dict[str, np.ndarray]], runs: list[Path], scheme: str
 ) -> dict[str, Any]:
     """Describe what the judge's refusal class contains, in numbers.
 
@@ -561,8 +574,8 @@ def refusal_class_audit(
     out: dict[str, Any] = {}
     for model, labels in composite.items():
         run = None
-        for run_dir in sorted(runs.iterdir()):
-            candidate = load_run(run_dir) if run_dir.is_dir() else None
+        for run_dir in runs:
+            candidate = load_run(run_dir)
             if (candidate is not None and candidate["judge_raw"]
                     and MODEL_LABELS.get(candidate["manifest"].get("model_id", "?"))
                     == model
@@ -599,7 +612,7 @@ def refusal_class_audit(
 # ---------------------------------------------------------------------------
 
 
-def marker_decomposition(runs: Path) -> dict[str, Any]:
+def marker_decomposition(runs: list[Path]) -> dict[str, Any]:
     """Why adding refusal markers can RAISE the apparent flip rate.
 
     The review read the marker-variant table as a compliance rate and concluded
@@ -618,7 +631,7 @@ def marker_decomposition(runs: Path) -> dict[str, Any]:
     from scripts.classify_completions_judge import MARKER_VARIANTS
 
     out: dict[str, Any] = {}
-    for run_dir in sorted(runs.iterdir()):
+    for run_dir in runs:
         run = load_run(run_dir)
         if run is None or not run["judge_raw"]:
             continue
@@ -668,7 +681,7 @@ def marker_decomposition(runs: Path) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def probe_retention(runs: Path, n_splits: int,
+def probe_retention(runs: list[Path], n_splits: int,
                     label_source: str = "judge") -> dict[str, Any]:
     """Fraction of FP16 d' the FROZEN FP16 direction retains, per scheme.
 
@@ -689,7 +702,7 @@ def probe_retention(runs: Path, n_splits: int,
     from scripts.analyse_probe_transfer import margins
 
     out: dict[str, Any] = {}
-    for run_dir in sorted(runs.iterdir()):
+    for run_dir in runs:
         acts_dir = run_dir / "activations"
         labels_file = run_dir / "results" / "labels.json"
         if not acts_dir.is_dir() or not labels_file.exists():
@@ -784,7 +797,24 @@ def main() -> int:
     ap.add_argument("--n-items", type=int, default=200)
     ap.add_argument("--out", type=Path,
                     default=Path("docs/paper/review_stats.json"))
+    ap.add_argument("--include", default=None,
+                    help="glob on the run directory NAME; only matching runs are "
+                         "analysed. Use '*r2-*' to analyse the second round alone.")
+    ap.add_argument("--exclude", default=None,
+                    help="glob on the run directory NAME to skip. Use '*r2-*' to "
+                         "reproduce the paper's primary numbers from round one.")
     args = ap.parse_args()
+
+    # One selection, applied everywhere. Several analyses below refuse to run
+    # when two directories describe the same model, because which one won would
+    # otherwise depend on directory order -- and after a second round of runs
+    # that is the normal state of the tree, not an exceptional one. The filter
+    # is how a caller says which round they mean.
+    runs = select_runs(args.runs, args.include, args.exclude)
+    print(f"selected {len(runs)} run director{'y' if len(runs) == 1 else 'ies'} "
+          f"under {args.runs}"
+          + (f" (include {args.include!r})" if args.include else "")
+          + (f" (exclude {args.exclude!r})" if args.exclude else ""))
 
     rng = np.random.default_rng(SEED)
     payload: dict[str, Any] = {
@@ -795,9 +825,7 @@ def main() -> int:
     # ---- behavioural -----------------------------------------------------
     composite: dict[str, dict[str, np.ndarray]] = {}
     nll_only: dict[str, dict[str, np.ndarray]] = {}
-    for run_dir in sorted(args.runs.iterdir()):
-        if not run_dir.is_dir():
-            continue
+    for run_dir in runs:
         run = load_run(run_dir)
         if run is None or not run["judge_raw"]:
             continue
@@ -817,6 +845,18 @@ def main() -> int:
         nll_only[model] = label_matrix(run, "nll")
 
     print(f"behavioural models: {sorted(composite)}")
+    if not composite:
+        # Without this the first thing to fail is drift_analysis, on a
+        # StopIteration from `next(iter({}))` -- a traceback that says nothing
+        # about the cause, which is always one of these three.
+        raise SystemExit(
+            f"no behavioural run under {args.runs} passed all three filters: a "
+            "judge verdict file, at least 150 prompts, and a model_id listed in "
+            f"MODEL_LABELS ({sorted(MODEL_LABELS.values())}). "
+            + (f"The --include/--exclude filter selected {len(runs)} "
+               "director(y/ies); widen it if that is the reason."
+               if (args.include or args.exclude) else
+               "Check that the judge step ran."))
 
     # Every model x quantized-rung cell enters the family over which the
     # "no rung exceeds" claim is quantified.
@@ -876,9 +916,9 @@ def main() -> int:
     # NLL-gated phrase list and called the difference a grader effect. That
     # confounds two factors. Crossing them separates the contributions, and
     # they turn out to dominate in different regimes.
-    marker_composite = {m: marker_label_matrix(m, args.runs, "composite")
+    marker_composite = {m: marker_label_matrix(m, runs, "composite")
                         for m in composite}
-    marker_nll = {m: marker_label_matrix(m, args.runs, "nll") for m in composite}
+    marker_nll = {m: marker_label_matrix(m, runs, "nll") for m in composite}
     crossed: dict[str, Any] = {}
     for model in composite:
         crossed_rows: list[dict[str, Any]] = []
@@ -906,27 +946,27 @@ def main() -> int:
     payload["gate_by_grader"] = crossed
 
     # ---- how much each degeneracy rule carries ---------------------------
-    payload["gate_ablation"] = gate_ablation(args.runs)
+    payload["gate_ablation"] = gate_ablation(runs)
 
     # ---- what the judge's refusal class actually contains ----------------
     payload["refusal_class_audit"] = refusal_class_audit(
-        composite, args.runs, "RTN_4B")
+        composite, runs, "RTN_4B")
 
     # ---- why the marker-list flip rate is not monotone in the list -------
-    payload["marker_decomposition"] = marker_decomposition(args.runs)
+    payload["marker_decomposition"] = marker_decomposition(runs)
 
     # ---- drift -----------------------------------------------------------
     payload["drift"] = drift_analysis(composite, rng)
 
     # ---- GSM8K -----------------------------------------------------------
-    payload["gsm8k"] = gsm8k_paired(args.runs, args.gsm8k, args.n_items)
+    payload["gsm8k"] = gsm8k_paired(runs, args.gsm8k, args.n_items)
 
     # ---- probe retention, with the dispersion the manuscript omitted ------
     # Both label sources: "judge" shares a target with the behavioural arm,
     # "marker" reproduces the original estimand so the two can be compared.
-    payload["probe"] = probe_retention(args.runs, args.splits, "judge")
+    payload["probe"] = probe_retention(runs, args.splits, "judge")
     payload["probe_marker_labels"] = probe_retention(
-        args.runs, args.splits, "marker")
+        runs, args.splits, "marker")
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(payload, indent=2), encoding="utf-8")

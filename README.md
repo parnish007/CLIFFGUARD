@@ -29,7 +29,7 @@ per rung, graded by a 7B judge behind a degeneracy gate:
 | **Refusal drift** | Lower precision produces **more** refusal: **1.15 points per bit removed**, 95% CI [0.75, 1.55]. **The direction replicates across graders; the significance does not** — see below |
 | **Refusal→compliance** | Never above **2.2%**; simultaneous 95% upper bound **4.62%** across all 14 model×rung cells |
 | **Phrase-list scoring** | Reports up to **38.4%** on the same completions, and is **non-monotone** in the marker list |
-| **Frozen refusal probe** | Retains **96–100%** across 8.5–4.5 bits, spanning both models' significant 4.5-bit shifts; already 63% at Phi's significant 3.5-bit shift |
+| **Frozen refusal probe** | Retains **96–100%** across 8.5–4.5 bits, spanning both models' 4.5-bit shifts; already 63% at Phi's largest shift, 3.5 bits |
 | **Capability** | Collapses at a bit-width differing by a **full bit** between model families |
 
 Three regimes, not one cliff:
@@ -120,6 +120,18 @@ python scripts/review_reanalysis.py --gsm8k <test.jsonl> # runs -> review_stats.
 python scripts/build_paper_figures.py                    # -> docs/paper/figures/
 python scripts/build_paper_tables.py                     # -> docs/paper/tables/
 cd docs/paper && latexmk -pdf cliff_artifact.tex
+```
+
+Both analysis scripts take `--include` and `--exclude`, globs on the run
+directory name. They exist because a second round of runs lands in the same
+`artifacts/runs/` tree, and every analysis here **stops rather than choose**
+between two runs describing the same model — which one won would otherwise
+depend on directory order. Name the round you mean:
+
+```bash
+python scripts/review_reanalysis.py --exclude '*r2-*' --gsm8k <test.jsonl>
+python scripts/review_reanalysis.py --include '*r2-*' --gsm8k <test.jsonl> \
+       --n-items 496 --out docs/paper/review_stats_round2.json
 ```
 
 To regenerate the measurements themselves:

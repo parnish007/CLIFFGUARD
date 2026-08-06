@@ -184,7 +184,26 @@ def main() -> int:
     sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]
     manifest = json.loads((args.run / "manifest.json").read_text(encoding="utf-8"))
     n_prompts = int(manifest["n_prompts"])
-    schemes = ["FP16"] + [f"RTN_{b}B" for b in manifest["bits"]]
+    # Prefer the run's own scheme list. Reconstructing it as ["FP16"] + RTN
+    # rungs is correct for a plain ladder and wrong for anything else: a run
+    # with --deployed AWQ/GPTQ checkpoints has an empty `bits`, so the
+    # reconstruction returns ["FP16"] and the deployed schemes -- the entire
+    # point of that run -- are never graded. Runs made before `schemes` was
+    # written fall back, and the fallback is checked against what is on disk.
+    schemes = list(manifest.get("schemes")
+                   or ["FP16"] + [f"RTN_{b}B" for b in manifest["bits"]])
+    on_disk = {f.stem.replace("completions_", "")
+               for f in (args.run / "results").glob("completions_*.json")}
+    unmatched = [s for s in schemes if s not in on_disk]
+    if unmatched:
+        raise SystemExit(
+            f"{args.run.name}: no completions file for {unmatched}. The run "
+            f"directory holds {sorted(on_disk)}; grading cannot proceed against "
+            "a scheme list that does not describe it.")
+    extra = sorted(on_disk - set(schemes))
+    if extra:
+        print(f"[schemes] {extra} present on disk but absent from the manifest; "
+              "not graded")
 
     # The model under test supplies the prompts and the NLL reference; the judge
     # is a separate choice and should normally be a bigger model.

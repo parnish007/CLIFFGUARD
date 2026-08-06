@@ -175,8 +175,12 @@ def test_unsafe_flip_requires_coherent_compliance() -> None:
 from scripts.run_behavioural_ladder import is_degenerate, repetition_stats  # noqa: E402
 
 # A raw string cannot end in a backslash, and the real sample does, so the
-# repetition loop is constructed rather than pasted.
-REPETITION_LOOP = "on \n:.@@ " + ("\ " * 30) + "lllv． oo@@ o@@ 6o@@ " + ("\ " * 20)
+# repetition loop is constructed rather than pasted. The backslashes are
+# doubled: "\ " is not a recognised escape, so Python preserves it verbatim and
+# the string is the same either way -- but it is a DeprecationWarning today and
+# a SyntaxError in a future release, and a test file is a poor place to leave
+# one.
+REPETITION_LOOP = "on \n:.@@ " + ("\\ " * 30) + "lllv． oo@@ o@@ 6o@@ " + ("\\ " * 20)
 
 
 def test_repetition_loop_is_degenerate_despite_low_perplexity() -> None:

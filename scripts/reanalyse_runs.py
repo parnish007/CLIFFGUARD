@@ -50,6 +50,13 @@ def load_run(run: Path) -> dict[str, Any] | None:
         # directory are not broken, only older. Say so rather than dropping them
         # silently -- an earlier version returned None here, and the 1.5B
         # behavioural run disappeared from the paper without any message.
+        #
+        # A GSM8K sector run is a different matter: it never writes that file,
+        # because its degeneracy reference lives in the ladder cache. Warning
+        # "re-run this" about a run that is complete and correct sends the
+        # reader to fix something that is not broken, so it is excluded here.
+        if (results / "sector_gsm8k.json").exists():
+            return None
         if (run / "manifest.json").exists() and any(results.glob("completions_*.json")):
             print(f"[skip] {run.name}: no results/completion_nll.json "
                   "(pre-dates that output; re-run or pass the cached NLL)")
@@ -77,13 +84,52 @@ def load_run(run: Path) -> dict[str, Any] | None:
     }
 
 
+def select_runs(root: Path, include: str | None = None,
+                exclude: str | None = None) -> list[Path]:
+    """Run directories under `root`, filtered by glob on the directory NAME.
+
+    Two rounds of runs live side by side in one artifacts tree, and several
+    analyses refuse to proceed when two of them describe the same model --
+    correctly, since which one won would otherwise depend on directory order.
+    That refusal needs an answer, and the answer has to be the caller's: the
+    round-2 runs measure different things (a longer token budget, a different
+    quantizer), so merging them is wrong and picking one silently is worse.
+
+    `--exclude '*r2-*'` reproduces the paper's primary numbers; `--include
+    '*r2-*'` analyses the second round on its own.
+    """
+    import fnmatch
+
+    out = []
+    for path in sorted(root.iterdir()):
+        if not path.is_dir():
+            continue
+        if include and not fnmatch.fnmatch(path.name, include):
+            continue
+        if exclude and fnmatch.fnmatch(path.name, exclude):
+            continue
+        out.append(path)
+    return out
+
+
 def ordered_schemes(completions: dict[str, list[str]]) -> list[str]:
-    """FP16 first, then RTN rungs by descending bit-width."""
+    """FP16 first, then RTN rungs by descending bit-width, then everything else.
+
+    The trailing group is deployed checkpoints -- AWQ, GPTQ -- which are scored
+    as extra schemes against the same FP16 baseline. They used to be dropped
+    here, because the filter was `startswith("RTN_")`; the run generated their
+    completions, the judge never saw them, and no table ever showed them. They
+    are ordered last rather than by bit-width because they do not sit on the RTN
+    ordinal axis: that axis varies bit-width within one quantizer family, and a
+    deployed checkpoint changes the algorithm at the same time.
+    """
     rungs = sorted(
         (s for s in completions if s.startswith("RTN_")),
         key=lambda s: -int(s.split("_")[1][:-1]),
     )
-    return (["FP16"] if "FP16" in completions else []) + rungs
+    other = sorted(s for s in completions
+                   if s != "FP16" and not s.startswith("RTN_"))
+    return (["FP16"] if "FP16" in completions else []) + rungs + other
 
 
 def analyse(run: dict[str, Any]) -> dict[str, Any]:
@@ -149,12 +195,14 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("runs", type=Path)
     ap.add_argument("--out", type=Path, default=None)
+    ap.add_argument("--include", default=None,
+                    help="glob on the run directory NAME, e.g. '*r2-*'")
+    ap.add_argument("--exclude", default=None,
+                    help="glob on the run directory NAME to skip")
     args = ap.parse_args()
 
     report: dict[str, Any] = {}
-    for run_dir in sorted(args.runs.iterdir()):
-        if not run_dir.is_dir():
-            continue
+    for run_dir in select_runs(args.runs, args.include, args.exclude):
         run = load_run(run_dir)
         if run is None:
             continue

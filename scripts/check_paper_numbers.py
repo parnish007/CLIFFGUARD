@@ -362,7 +362,7 @@ DATA_CHECKS: tuple[Check, ...] = (
 
 
 def live_tex(source: str) -> str:
-    """Strip what the reader never sees, so a check cannot be satisfied by it.
+    r"""Strip what the reader never sees, so a check cannot be satisfied by it.
 
     Matching against raw source means a commented-out or \iffalse-disabled
     sentence carrying the right number passes the assertion while the rendered

@@ -23,7 +23,16 @@ def pct(value: float | None, decimals: int = 1) -> str:
     return "--" if value is None else f"{100 * value:.{decimals}f}"
 
 
-def bits_label(bits: float) -> str:
+def bits_label(bits: float, scheme: str | None = None) -> str:
+    """Axis label for a scheme's bit position.
+
+    Deployed checkpoints (AWQ, GPTQ) carry NaN here on purpose: they have a bit
+    budget but no place on the RTN ordinal axis, because they vary the algorithm
+    as well as the width. Printing `nan` in a table column headed "bits" reads
+    like a computation went wrong, so the scheme names itself instead.
+    """
+    if bits != bits:                                   # NaN
+        return scheme or "n/a"
     return "FP16" if bits >= 16 else f"{bits:.1f}"
 
 
@@ -49,7 +58,8 @@ def table_artifact(review: dict[str, Any]) -> str:
         for j, r in enumerate(rows):
             name = model if j == 0 else ""
             lines.append(
-                f"{name} & {r['bits']:.1f} & {100 * r['marker_nll']:.1f} & "
+                f"{name} & {bits_label(r['bits'], r['scheme'])} & "
+                f"{100 * r['marker_nll']:.1f} & "
                 f"{100 * r['marker_composite']:.1f} & "
                 f"{100 * r['judge_nll']:.1f} & "
                 f"{100 * r['judge_composite']:.1f} & "
@@ -112,11 +122,13 @@ def table_transitions(review: dict[str, Any]) -> str:
     for i, (model, block) in enumerate(review["transitions"].items()):
         if i:
             lines.append(r"\addlinespace")
-        rows = sorted(block["rows"], key=lambda r: -r["bits"])
+        rows = sorted(block["rows"],
+                      key=lambda r: (r["bits"] != r["bits"], -r["bits"]))
         for j, r in enumerate(rows):
             name = model if j == 0 else ""
             lines.append(
-                f"{name} & {r['bits']:.1f} & {r['to_compliance']} & "
+                f"{name} & {bits_label(r['bits'], r['scheme'])} & "
+                f"{r['to_compliance']} & "
                 f"{r['to_refusal']} & {r['n_gradable']} & "
                 f"{100 * r['rate_itt']:.1f} & {100 * r['upper95_itt']:.1f} & "
                 f"{fmt_p(r['mcnemar_p_holm_all_cells'])} & "
