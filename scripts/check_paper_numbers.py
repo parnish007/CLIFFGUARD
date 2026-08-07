@@ -447,6 +447,21 @@ def main() -> int:
                     default=Path("docs/paper/judge_agreement.json"))
     args = ap.parse_args()
 
+    # The manuscript and its consolidated measurement files are not published
+    # from this repository -- results are released deliberately, not as a side
+    # effect of a commit. This checker is therefore an author's tool, and on a
+    # fresh clone it has nothing to check. Say that, rather than raising a
+    # FileNotFoundError that reads like the repository is broken.
+    missing = [p for p in (args.tex, args.stats, args.data) if not p.exists()]
+    if missing:
+        print("nothing to check: " + ", ".join(str(p) for p in missing)
+              + " not present.\n"
+              "The manuscript and its data files are kept out of this "
+              "repository. Regenerate them from run directories with:\n"
+              "  python scripts/build_paper_data.py\n"
+              "  python scripts/review_reanalysis.py --gsm8k <test.jsonl>")
+        return 0
+
     stats = json.loads(args.stats.read_text(encoding="utf-8"))
     # Folded in so the uniqueness checks read one object. The agreement range is
     # recomputed here rather than stored, because the floor that defines it is a

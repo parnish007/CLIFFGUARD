@@ -71,10 +71,22 @@ def test_readme_avoids_the_unlicensed_safety_vocabulary() -> None:
         'never "harmful compliance"', "")
 
 
-def test_readme_points_at_the_paper_and_the_claims_ledger() -> None:
+def test_readme_points_at_the_claims_ledger() -> None:
+    """The ledger is the entry point now.
+
+    This used to also require a link to docs/paper/cliff_artifact.pdf. That file
+    is deliberately not published from this repository -- results are released
+    on purpose, not as a side effect of a commit -- so requiring a link to it
+    would mean requiring a dead one.
+    """
     text = README.read_text(encoding="utf-8")
-    assert "docs/paper/cliff_artifact.pdf" in text
     assert "docs/claims_and_evidence.md" in text
+
+
+def test_readme_does_not_link_the_unpublished_manuscript() -> None:
+    """A link into docs/paper/ is dead for everyone who clones this."""
+    text = README.read_text(encoding="utf-8")
+    assert "](docs/paper/" not in text
 
 
 def test_readme_reproduction_commands_name_real_scripts() -> None:

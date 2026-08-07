@@ -1,9 +1,14 @@
 # Claims and Evidence
 
 One page stating exactly what is claimed, what the evidence is, and what is not
-claimed. The paper is [`paper/cliff_artifact.pdf`](paper/cliff_artifact.tex);
-every number below is generated into `paper/review_stats.json` or
-`paper/data.json` by the script named beside it.
+claimed.
+
+The manuscript itself is not published from this repository, and neither are the
+consolidated measurement files: `docs/paper/` is untracked, because results are
+released deliberately rather than as a side effect of a commit. Every number
+below is generated into `paper/review_stats.json` or `paper/data.json` by the
+script named beside it, and `scripts/check_paper_numbers.py` re-derives the
+load-bearing ones and fails if the prose disagrees.
 
 **Measurement scope for the whole table.** Round-to-nearest, group 64, applied to
 transformer-block linear layers; embeddings and output head at FP16. 500 paired

@@ -1,11 +1,11 @@
 <div align="center">
 
 [← README](../README.md) &nbsp;|&nbsp;
-[What is it](what_is_it.md) &nbsp;|&nbsp;
-[Architecture](architecture.md) &nbsp;|&nbsp;
-[Math](math.md) &nbsp;|&nbsp;
-[Setup](setup.md) &nbsp;|&nbsp;
-[Engineering Ref](engineering_reference.md)
+[Docs index](README.md) &nbsp;|&nbsp;
+**Setup** &nbsp;|&nbsp;
+[RTX 3050](setup_3050.md) &nbsp;|&nbsp;
+[Colab](setup_colab.md) &nbsp;|&nbsp;
+[Claims ledger](claims_and_evidence.md)
 
 </div>
 
@@ -278,7 +278,7 @@ This downloads Anthropic-HH-RLHF and OpenAssistant-OASST1 (the Fold A benign cal
 
 **Folds B/C — adversarial corpus:**
 
-The adversarial corpus requires assembly from multiple sources (blueprint §12.6): JailbreakBench, AdvBench-50, ArtPrompt, and synthetic cliff-exploiters (A7 prompts generated per the BCN-2 protocol). Phase B corpus assembly is currently manual — `scripts/download_fold_a.py` handles only Fold A. See `cliffguard/eval/attack_corpus.py` for the corpus schema and `docs/preregistration.md` for required corpus sizes.
+The adversarial corpus requires assembly from multiple sources (blueprint §12.6): JailbreakBench, AdvBench-50, ArtPrompt, and synthetic cliff-exploiters (A7 prompts generated per the BCN-2 protocol). Phase B corpus assembly is currently manual — `scripts/download_fold_a.py` handles only Fold A. That corpus belongs to the superseded gate-stack design, which no result in the paper depends on and which is not published here.
 
 **Folds D/E — held out:**
 
@@ -317,6 +317,6 @@ Run `uv sync` first — a dependency may have been added. Then
 
 [← Back to README](../README.md) &nbsp;·&nbsp;
 [Open an issue](https://github.com/YOUR_USERNAME/CLIFFGUARD/issues) &nbsp;·&nbsp;
-[preregistration.md](preregistration.md)
+the claims ledger
 
 </div>
