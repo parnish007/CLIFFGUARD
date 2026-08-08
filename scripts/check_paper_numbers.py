@@ -573,6 +573,37 @@ def _flagged() -> str:
     return f"{smol} {qwen} {phi}"
 
 
+TABLE_ORDER = ("Qwen2.5-3B", "Phi-3.5-mini", "SmolLM2-1.7B")
+
+# Regex-safe spellings; the dots in a model name are otherwise wildcards, and
+# `Phi-3.5-mini` unescaped would happily match `Phi-3X5-mini`.
+MODEL_TEX = {
+    "Qwen2.5-3B": r"Qwen2\.5-3B",
+    "Phi-3.5-mini": r"Phi-3\.5-mini",
+    "SmolLM2-1.7B": r"SmolLM2-1\.7B",
+}
+
+
+def _per_model(label: str, value, template: str) -> tuple[Check, ...]:
+    r"""One check per model, with the number anchored to that model's name.
+
+    The section used to quote its per-model quantities as bare triples --
+    "137, 65 and 10" -- leaving the reader to map position onto table rows.
+    Two different orderings were in use at once (the phrase-list paragraphs ran
+    descending by coverage, everything else ran in table order), so half the
+    triples pointed at the wrong model. Naming the model beside each number
+    fixed the prose; checking each number *against that name* is what stops it
+    coming back, because a positional check cannot tell a reordering from a
+    correct list.
+    """
+    return tuple(
+        Check(f"{label}, {model}",
+              (lambda d, model=model: value(d, model)),
+              (lambda v, model=model:
+               _rx(template.format(v=v, m=MODEL_TEX[model]))))
+        for model in TABLE_ORDER)
+
+
 LABELLED_CHECKS: tuple[Check, ...] = (
     # "coverage relative to the judge", not "recall": the denominator is the
     # instrument this paper indicts, and the prose says so rather than implying
@@ -586,35 +617,34 @@ LABELLED_CHECKS: tuple[Check, ...] = (
     Check("labelled coverage, Phi-3.5-mini",
           lambda d: _recall(d, "Phi-3.5-mini"),
           lambda v: _rx(rf"is 49\.3\\%, 23\.5\\% and {v}\\%")),
-    Check("truncation at full precision",
-          lambda d: " ".join(
-              f"{100 * d[m]['at_cap_by_scheme']['FP16']:.1f}"
-              for m in ("Qwen2.5-3B", "Phi-3.5-mini", "SmolLM2-1.7B")),
-          lambda v: _rx(r"{}\\%, {}\\% and\s+{}\\% of full-precision".format(
-              *v.split()))),
-    Check("phrase-list counts, all three",
-          lambda d: " ".join(str(d[m]["marker"]) for m in
-                             ("Qwen2.5-3B", "SmolLM2-1.7B", "Phi-3.5-mini")),
-          lambda v: _rx(r"phrase list seeing {}, {} and {} of them".format(
-              *v.split()))),
-    Check("benign compliance, all three",
-          lambda d: " ".join(str(d[m]["benign_comply"]) for m in
-                             ("Qwen2.5-3B", "Phi-3.5-mini", "SmolLM2-1.7B")),
-          lambda v: _rx(r"substantive compliance {}, {} and {} times".format(
-              *v.split()))),
+    *_per_model("truncation at full precision",
+                lambda d, m: f"{100 * d[m]['at_cap_by_scheme']['FP16']:.1f}",
+                r"{v}\\% of {m}'s"),
+    *_per_model("phrase-list count",
+                lambda d, m: str(d[m]["marker"]),
+                r"{v} of {m}'s"),
+    *_per_model("benign compliance",
+                lambda d, m: str(d[m]["benign_comply"]),
+                r"{v} (?:times )?on {m}"),
+    # Cells quoted only in the caption of the full-precision matrix figure.
+    # Captions drift more easily than body text because nothing else reads
+    # them, so they are checked the same way the prose is. Both triples run in
+    # the table's row order, which is what the caption's reader will assume.
+    Check("FP16 harmful refusals",
+          lambda d: " ".join(str(d[m]["harmful_refuse"]) for m in TABLE_ORDER),
+          lambda v: _rx(r"{}, {} and {} outright refusals".format(*v.split()))),
+    Check("FP16 harmful deflections",
+          lambda d: " ".join(str(d[m]["harmful_deflect"]) for m in TABLE_ORDER),
+          lambda v: _rx(r"against {}, {} and {} deflections".format(*v.split()))),
     Check("marker precision, all three",
           lambda d: f"{min(m['precision'] for m in d.values()):.3f}",
           lambda v: _rx(rf"precision\s+against the judge is exactly \${v}\$")),
-    Check("completions the list misses",
-          lambda d: " ".join(str(d[m]["missed"]) for m in
-                             ("Qwen2.5-3B", "SmolLM2-1.7B", "Phi-3.5-mini")),
-          lambda v: _rx(r"the list misses {}, {} and {} completions".format(
-              *v.split()))),
-    Check("kappa, all three",
-          lambda d: " ".join(f"{d[m]['kappa']:.3f}" for m in
-                             ("Qwen2.5-3B", "SmolLM2-1.7B", "Phi-3.5-mini")),
-          lambda v: _rx(r"\$\\kappa\$ is \${}\$, \${}\$ and \${}\$".format(
-              *v.split()))),
+    *_per_model("completions the list misses",
+                lambda d, m: str(d[m]["missed"]),
+                r"{v} (?:completions )?on {m}"),
+    *_per_model("kappa",
+                lambda d, m: f"{d[m]['kappa']:.3f}",
+                r"\${v}\$ on {m}"),
     # The exploratory pattern counts. Guarded precisely because they are the
     # numbers most tempting to leave stale: they are not carried into any table
     # or bound, so nothing else would catch them drifting.
@@ -633,6 +663,36 @@ LABELLED_CHECKS: tuple[Check, ...] = (
           lambda d: _bound(0, 150, 21),
           lambda v: _rx(rf"and {v}\\% across all 21")),
 )
+
+
+_MATRIX_KEY = {"Qwen2.5-3B": "qwen3b", "Phi-3.5-mini": "phi35",
+               "SmolLM2-1.7B": "smol17"}
+
+
+def _degenerate_share(matrix: dict[str, Any], model: str, scheme: str) -> str:
+    """What fraction of the usefulness lost at `scheme` is degenerate output.
+
+    The distinction the figure exists to draw: a benign prompt the model stops
+    answering because it decided to decline is a different finding from one it
+    stops answering because it stopped producing language. At 3.5 bits the two
+    are mixed, and mixed *differently* per family, which is the only reason the
+    caption quotes three numbers instead of one.
+    """
+    block = next((v for k, v in matrix.items() if _MATRIX_KEY[model] in k), None)
+    row = next(r for r in block["paired"] if r["scheme"] == scheme)
+    lost = (row["utility_rate"] or 0) * row["n_benign"]
+    share = 100 * row["utility_lost_by_class"]["degenerate"] / lost
+    # "100" reads better than "100.0" in a caption, and the paper writes it
+    # that way; match the rendered form rather than forcing the prose.
+    return f"{share:.1f}".removesuffix(".0")
+
+
+MATRIX_CHECKS: tuple[Check, ...] = tuple(
+    Check(f"degenerate share at 3.5 bits, {model}",
+          (lambda m, model=model: _degenerate_share(m, model, "RTN_3B")),
+          (lambda v, model=model:
+           _rx(rf"{v}\\% (?:degenerate )?on {MODEL_TEX[model]}")))
+    for model in TABLE_ORDER)
 
 
 def live_tex(source: str) -> str:
@@ -657,6 +717,10 @@ def main() -> int:
                     default=Path("docs/paper/data.json"))
     ap.add_argument("--agreement", type=Path,
                     default=Path("docs/paper/judge_agreement.json"))
+    ap.add_argument("--matrix", type=Path,
+                    default=Path("docs/paper/matrix_stats.json"),
+                    help="paired per-rung blocks; source of the degenerate "
+                         "share quoted in the utility figure's caption")
     ap.add_argument("--labelled", type=Path,
                     default=Path("docs/paper/labelled_paper_stats.json"),
                     help="round-3 measurements; skipped when absent, because "
@@ -727,6 +791,19 @@ def main() -> int:
             f"{args.labelled} is missing, so none of its numbers are checked. "
             "Run scripts/build_labelled_tables.py.")
 
+    # The utility figure's caption is the only place the degenerate SHARE of a
+    # loss is quoted, and it comes from the paired blocks rather than from the
+    # labelled summary, so it needs its own source.
+    if args.matrix.exists():
+        matrix = json.loads(args.matrix.read_text(encoding="utf-8"))
+        for check in MATRIX_CHECKS:
+            value = check.value(matrix)
+            found = re.search(check.pattern(value), text) is not None
+            print(f"{check.label:34s} {value:16s} {'ok' if found else 'MISSING'}")
+            if not found:
+                failures.append(f"  {check.label}: expected {value!r} in "
+                                f"context /{check.pattern(value)}/")
+
     print()
     for unique in UNIQUE_CHECKS:
         value = unique.value(stats)
@@ -768,7 +845,8 @@ def main() -> int:
     # written down -- a fixed number would quietly under-report the moment
     # round 3's measurements were present.
     n_checked = (len(CHECKS) + len(DATA_CHECKS) + len(DOC_CHECKS)
-                 + (len(LABELLED_CHECKS) if args.labelled.exists() else 0))
+                 + (len(LABELLED_CHECKS) if args.labelled.exists() else 0)
+                 + (len(MATRIX_CHECKS) if args.matrix.exists() else 0))
     print(f"\nall {n_checked} "
           f"quoted quantities match {args.stats} in context, and "
           f"{len(UNIQUE_CHECKS)} of them are stated consistently everywhere "

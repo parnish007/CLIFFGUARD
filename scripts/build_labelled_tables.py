@@ -103,11 +103,17 @@ def measure(results: Path) -> dict[str, Any]:
         "harmful_deflect": cell("harmful", "deflection"),
         "benign_comply": cell("benign", "compliance"),
         "benign_deflect": cell("benign", "deflection"),
+        # The refusal column is not in the table, which reports only the two
+        # cells the safety question turns on. It is quoted in the caption of
+        # the full-precision matrix figure, so it is emitted here rather than
+        # read off a rendered PNG.
+        "harmful_refuse": cell("harmful", "refusal"),
+        "benign_refuse": cell("benign", "refusal"),
     }
 
 
-def at_cap_by_scheme(results: Path, tokenizer_id: str,
-                     budget: int) -> dict[str, float]:
+def at_cap_by_scheme(results: Path, tokenizer_id: str, budget: int,
+                     cached: dict[str, float] | None = None) -> dict[str, float]:
     """Fraction of completions that ran into the budget, per scheme.
 
     Stored rather than recomputed at plot time so that the figure and the prose
@@ -115,8 +121,23 @@ def at_cap_by_scheme(results: Path, tokenizer_id: str,
     threshold as a stand-in for token length; it disagreed with the prose by
     tens of points at the collapsed rungs, which is exactly the drift these
     generated artefacts exist to prevent.
+
+    This is the one quantity here that needs each model's own tokenizer, and so
+    the one that cannot be recomputed in an environment without `transformers`
+    -- which includes the machine this manuscript is usually edited on. Rather
+    than fail the whole build, or worse substitute a character proxy, reuse the
+    value already recorded in the stats file and say so. Refusing to carry a
+    cached value forward is only correct if the alternative is recomputing it;
+    here the alternative is having no number at all.
     """
-    from transformers import AutoTokenizer
+    try:
+        from transformers import AutoTokenizer
+    except ImportError:
+        if cached is None:
+            raise
+        print("  ! transformers unavailable; keeping the recorded "
+              "at_cap_by_scheme for this model")
+        return cached
 
     tok = AutoTokenizer.from_pretrained(tokenizer_id)
     out: dict[str, float] = {}
@@ -170,12 +191,20 @@ def main() -> int:
             "labelled XSTest runs; unzip the Colab archive at the repository "
             "root first.")
 
+    # Read back before overwriting, so the tokenizer-dependent measurement can
+    # survive a rebuild on a machine that cannot recompute it.
+    stats_path = repo / "docs/paper/labelled_paper_stats.json"
+    previous: dict[str, Any] = {}
+    if stats_path.exists():
+        previous = json.loads(stats_path.read_text(encoding="utf-8"))
+
     rows = {}
     for name, run in RUNS.items():
         results = repo / args.runs / run / "results"
         row = measure(results)
         row["at_cap_by_scheme"] = at_cap_by_scheme(
-            results, TOKENIZER_OF[name], row["max_new_tokens"])
+            results, TOKENIZER_OF[name], row["max_new_tokens"],
+            cached=previous.get(name, {}).get("at_cap_by_scheme"))
         rows[name] = row
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "tab_labelled.tex").write_text(table(rows), encoding="utf-8")
@@ -183,9 +212,8 @@ def main() -> int:
 
     # The same numbers as JSON, so `check_paper_numbers.py` can verify the prose
     # against them rather than against a value retyped into the manuscript.
-    stats = repo / "docs/paper/labelled_paper_stats.json"
-    stats.write_text(json.dumps(rows, indent=2), encoding="utf-8")
-    print(f"  {stats}")
+    stats_path.write_text(json.dumps(rows, indent=2), encoding="utf-8")
+    print(f"  {stats_path}")
     return 0
 
 

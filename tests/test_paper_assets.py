@@ -185,6 +185,29 @@ def test_the_paper_never_claims_the_graders_were_unanimous() -> None:
 
 
 @needs_paper
+def test_the_paper_does_not_plot_the_number_it_promises_not_to_plot() -> None:
+    """The in-sample pivot count stays out of the manuscript's figures.
+
+    The paper says of that count: "we therefore do not carry it into any table,
+    figure or bound in this manuscript". It is a rate estimated in-sample from a
+    regular expression fitted in-sample on the same completions, which is the
+    kind of quantity the paper spends its length objecting to -- so plotting it
+    would not merely break a promise, it would commit the error being argued
+    against.
+
+    The figure exists, and is embedded in the local write-up where it is
+    labelled a queue for adjudication. That is why the orphan check above
+    passes and why this test is needed: nothing else distinguishes "used
+    deliberately elsewhere" from "about to be pasted into the paper".
+    """
+    assert "fig_labelled_unadjudicated" not in live_tex(), (
+        "the manuscript includes the pattern-flagged withheld figure, but it "
+        "states that this count is not carried into any figure. Either remove "
+        "the figure or remove the claim -- and the claim is the load-bearing "
+        "one.")
+
+
+@needs_paper
 def test_every_cross_reference_resolves() -> None:
     text = live_tex()
     labels = set(re.findall(r"\\label\{([^}]+)\}", text))
