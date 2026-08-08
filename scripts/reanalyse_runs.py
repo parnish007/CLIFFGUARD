@@ -61,7 +61,20 @@ def load_run(run: Path) -> dict[str, Any] | None:
             print(f"[skip] {run.name}: no results/completion_nll.json "
                   "(pre-dates that output; re-run or pass the cached NLL)")
         return None
-    manifest = json.loads((run / "manifest.json").read_text(encoding="utf-8"))
+    # A run directory is written in stages: completions, prompts, the NLL file,
+    # then the manifest. The check above uses the NLL file as the "is this a
+    # behavioural run" marker, which leaves a window of a few writes where the
+    # NLL exists and the manifest does not -- and a session reclaimed inside that
+    # window would make every later analysis die on FileNotFoundError instead of
+    # skipping an obviously incomplete run. Resuming an interrupted session is
+    # the normal case here, so the window gets handled rather than argued about.
+    manifest_file = run / "manifest.json"
+    if not manifest_file.exists():
+        print(f"[skip] {run.name}: has results but no manifest.json, so it was "
+              "interrupted while being written. Re-run it; nothing here can "
+              "interpret a run without its provenance.")
+        return None
+    manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
     nll = {k: np.asarray(v, dtype=np.float64)
            for k, v in json.loads(nll_file.read_text(encoding="utf-8")).items()}
     completions = {

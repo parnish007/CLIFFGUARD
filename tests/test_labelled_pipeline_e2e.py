@@ -283,3 +283,27 @@ def test_two_judge_caches_for_one_scheme_stop_the_analysis(
     combined = proc.stdout + proc.stderr
     assert "more than one judge cache" in combined
     assert "directory order" in combined
+
+
+def test_a_run_interrupted_mid_write_is_skipped_not_crashed_on(
+        run_dir: Path, tmp_path: Path) -> None:
+    """Resuming an interrupted session is the normal case, so the half-written
+    directory it leaves must not take the analysis down with it.
+
+    A run is written in stages -- completions, prompts, NLL, then manifest. The
+    loader uses the NLL file to decide "this is a behavioural run", which leaves
+    a window where the NLL exists and the manifest does not. A session reclaimed
+    inside that window used to make every later analysis die on
+    FileNotFoundError rather than skip an obviously incomplete run.
+    """
+    run = next(run_dir.iterdir())
+    (run / "manifest.json").unlink()
+
+    proc = subprocess.run(
+        [sys.executable, "scripts/analyse_matrix.py", "--runs", str(run_dir),
+         "--min-n", "10", "--out", str(tmp_path / "m.json")],
+        cwd=REPO, capture_output=True, text=True)
+    combined = proc.stdout + proc.stderr
+    assert "Traceback" not in combined, f"crashed instead of skipping:\n{combined}"
+    assert "no manifest.json" in combined
+    assert "interrupted" in combined
