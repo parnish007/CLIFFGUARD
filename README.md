@@ -10,7 +10,7 @@ and evidence that the reported safety cliff is largely an artifact of how refusa
 [![ruff](https://img.shields.io/badge/ruff-passing-orange?style=flat-square)](https://docs.astral.sh/ruff/)
 [![License MIT](https://img.shields.io/badge/License-MIT-lightgrey?style=flat-square)](LICENSE)
 
-**[Claims ledger](docs/claims_and_evidence.md) · [Reproduce](#reproducing-the-paper) · [Setup](docs/setup.md)**
+**[Methodology](docs/methodology.md) · [Claims ledger](docs/claims_and_evidence.md) · [Reproduce](#reproducing-the-paper) · [Setup](docs/setup.md)**
 
 </div>
 
@@ -338,7 +338,7 @@ are kept locally and excluded from the published tree rather than deleted.
 
 ## Status
 
-![Tests](https://img.shields.io/badge/tests-363_passing-brightgreen?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-428_passing-brightgreen?style=flat-square)
 ![mypy](https://img.shields.io/badge/mypy-strict-brightgreen?style=flat-square)
 ![ruff](https://img.shields.io/badge/ruff-clean-orange?style=flat-square)
 ![Paper](https://img.shields.io/badge/paper-27pp,_zero_overfull-blue?style=flat-square)

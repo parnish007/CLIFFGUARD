@@ -2,7 +2,6 @@
 
 [← Docs index](README.md) &nbsp;|&nbsp;
 [Setup](setup.md) &nbsp;|&nbsp;
-[6 GB guide](setup_3050.md) &nbsp;|&nbsp;
 [Colab](setup_colab.md)
 
 </div>

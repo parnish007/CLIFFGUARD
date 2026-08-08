@@ -11,9 +11,9 @@
 
 | document | what it is for |
 |---|---|
+| [`methodology.md`](methodology.md) | **The single reference.** What is measured and why, the protocol constants, decisions we reversed (so they are not re-litigated), invariants, and debugging by symptom. |
 | [`claims_and_evidence.md`](claims_and_evidence.md) | Every claim, its evidence, and — as importantly — the claims that are **not** made. Start here if you want to know what this project asserts. |
-| [`setup.md`](setup.md) | Device setup, and which guide to follow for your hardware. |
-| [`setup_3050.md`](setup_3050.md) | End to end on a 6 GB consumer GPU: the machine most of this was measured on. |
+| [`setup.md`](setup.md) | Which setup guide you want, and how to re-analyse stored runs with no GPU. |
 | [`setup_local_gpu.md`](setup_local_gpu.md) | What actually stops a local run, measured: host RAM, not VRAM. Includes the working torch/transformers pin. |
 | [`setup_colab.md`](setup_colab.md) | Hosted T4, for the 3B/3.8B models and the 7B judge, which do not fit 6 GB. |
 | [`second_judge.md`](second_judge.md) | Adding an independent grader, and why the paper's headline needed one. |
