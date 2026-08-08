@@ -30,8 +30,10 @@ from __future__ import annotations
 import datetime
 import hashlib
 import json
+import os
 import platform
 import subprocess
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -41,7 +43,14 @@ import numpy.typing as npt
 
 FloatArray = npt.NDArray[np.float64]
 
-ARTIFACTS_ROOT = Path("artifacts")
+# Where runs are written. Overridable by environment because on a hosted runtime
+# the working directory is deleted when the session ends: on Colab the clone
+# lives in /content and Drive is mounted elsewhere, so a run directory written
+# relative to the repository is gone the moment the runtime is reclaimed --
+# after the GPU time that produced it has been spent. Pointing this at Drive
+# makes a run durable at the instant it is written, which is what lets an
+# over-running session be resumed rather than repeated.
+ARTIFACTS_ROOT = Path(os.environ.get("CLIFFGUARD_ARTIFACTS") or "artifacts")
 RUNS_ROOT = ARTIFACTS_ROOT / "runs"
 INDEX_FILE = RUNS_ROOT / "INDEX.md"
 
@@ -59,6 +68,44 @@ def git_sha(short: bool = True) -> str:
         return out.strip().split()[0]
     except Exception:
         return "nogit"
+
+
+def _atomic_write(path: Path, emit: Any) -> None:
+    """Write via a sibling temporary and rename, so a kill leaves no half-file.
+
+    Run directories are written on Google Drive when the pipeline runs in Colab,
+    and the whole point of that placement is that a session which exceeds its
+    runtime can be resumed. A plain write truncates first and fills afterwards,
+    so a kill in that window leaves a file that exists and is a prefix of the one
+    intended -- the worst possible state, because every downstream reader treats
+    presence as completeness. Renaming over the destination is a single
+    filesystem operation: a reader sees the old file or the new one.
+
+    `emit` is handed an open binary handle so both `np.save` and a plain byte
+    write go through the same path. The temporary is a sibling of the
+    destination because a rename across filesystems is not atomic, and on Colab
+    the system temp directory is a different filesystem from Drive.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.tmp{os.getpid()}")
+    try:
+        with open(tmp, "wb") as handle:
+            emit(handle)
+            handle.flush()
+            os.fsync(handle.fileno())
+        for attempt in range(5):
+            try:
+                tmp.replace(path)
+                return
+            except OSError:
+                # Windows refuses a rename while anything holds the destination
+                # open -- an indexer or a virus scanner, transiently. Retry
+                # rather than lose the write.
+                if attempt == 4:
+                    raise
+                time.sleep(0.2 * (attempt + 1))
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def sha256_text(text: str) -> str:
@@ -102,7 +149,7 @@ class RunDir:
     def save_array(self, kind: str, name: str, arr: FloatArray) -> Path:
         """Persist an array and record its shape and hash in the manifest."""
         p = self.sub(kind) / f"{name}.npy"
-        np.save(p, arr)
+        _atomic_write(p, lambda h: np.save(h, arr))
         self.manifest.setdefault("arrays", {})[f"{kind}/{name}"] = {
             "shape": list(arr.shape),
             "dtype": str(arr.dtype),
@@ -112,12 +159,14 @@ class RunDir:
 
     def save_json(self, name: str, payload: dict[str, Any]) -> Path:
         p = self.sub("results") / f"{name}.json"
-        p.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+        blob = json.dumps(payload, indent=2, default=str).encode("utf-8")
+        _atomic_write(p, lambda h: h.write(blob))
         return p
 
     def write_manifest(self) -> Path:
         p = self.path / "manifest.json"
-        p.write_text(json.dumps(self.manifest, indent=2, default=str), encoding="utf-8")
+        blob = json.dumps(self.manifest, indent=2, default=str).encode("utf-8")
+        _atomic_write(p, lambda h: h.write(blob))
         return p
 
     # -- index -------------------------------------------------------------

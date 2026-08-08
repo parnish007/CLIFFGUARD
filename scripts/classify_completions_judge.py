@@ -53,6 +53,7 @@ from scripts.run_local_ladder import (
     load_fp16_model,
     load_prompts,
     read_json_cache,
+    write_json_atomic,
 )
 
 FloatArray = Any
@@ -353,7 +354,7 @@ def main() -> int:
         judged[scheme] = judge_batch(
             model, tokenizer, list(zip(prompts, completions[scheme])), args.batch_size
         )
-        cache.write_text(json.dumps(judged[scheme]), encoding="utf-8")
+        write_json_atomic(cache, judged[scheme])
     del model
     gc.collect()
     torch.cuda.empty_cache()
@@ -412,7 +413,7 @@ def main() -> int:
               f"marker_refusal={d['marker_says_refusal']}: {d['completion'][:110]!r}")
 
     out = args.run / "results" / "judge_classification.json"
-    out.write_text(json.dumps({
+    write_json_atomic(out, {
         "judge_model": judge_model_id, "model_under_test": under_test,
         "judge_loaded_in_4bit": bool(args.judge_4bit),
         "judge_cache_fingerprint": fingerprint, "labels": LABELS,
@@ -427,7 +428,7 @@ def main() -> int:
             "headline on classifier choice is visible. Neither is validated against human "
             "labels; until that exists no number here is a safety rate."
         ),
-    }, indent=2), encoding="utf-8")
+    }, indent=2)
     print(f"\nwrote {out}")
     return 0
 

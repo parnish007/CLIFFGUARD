@@ -45,7 +45,9 @@ import argparse
 import gc
 import hashlib
 import json
+import os
 from pathlib import Path
+import shutil
 import sys
 import time
 from typing import Any, Callable
@@ -504,6 +506,80 @@ def read_npy_cache(path: Path) -> FloatArray | None:
     except (ValueError, OSError, EOFError) as exc:
         _quarantine(path, f"{type(exc).__name__}: {exc}")
         return None
+
+
+def _replace_atomically(tmp: Path, path: Path) -> None:
+    """os.replace, with the one Windows failure mode that needs a retry absorbed.
+
+    POSIX rename over an existing file is atomic. Windows `MoveFileEx` with
+    REPLACE_EXISTING -- which is what os.replace uses -- is atomic too, but it
+    fails with a sharing violation if anything holds the destination open. That
+    is a real possibility on a machine with a file indexer or antivirus, and it
+    is transient. Retry briefly, then fall back to a non-atomic copy rather than
+    losing an hour of GPU work over a scanner that will let go in a moment.
+    """
+    for attempt in range(5):
+        try:
+            tmp.replace(path)
+            return
+        except OSError:
+            if attempt == 4:
+                break
+            time.sleep(0.2 * (attempt + 1))
+    shutil.copyfile(tmp, path)                          # last resort, not atomic
+    tmp.unlink(missing_ok=True)
+
+
+def write_json_atomic(path: Path, payload: Any, **dumps_kwargs: Any) -> None:
+    """Write JSON so that an interrupted write cannot leave a half-file behind.
+
+    Caches are written to Google Drive as each scheme finishes, and that is the
+    whole basis of resuming an over-running session. A plain `write_text` is not
+    one operation: it truncates, then writes, then flushes. A disconnect, an OOM
+    kill or a runtime timeout landing anywhere in that window leaves a file that
+    exists, is shorter than it should be, and will be read on the next attempt.
+
+    `read_json_cache` already quarantines such a file rather than dying on it, so
+    the failure is survivable -- but survivable is not the same as prevented. It
+    still costs the GPU time to regenerate the scheme, and on Drive the truncated
+    file may also have been synced. Writing to a sibling temporary and renaming
+    means the destination is either the previous complete file or the new
+    complete file, never a prefix of either.
+
+    The temporary is a sibling rather than in the system temp directory, because
+    a rename across filesystems is not atomic and Drive is a different filesystem
+    from /tmp on every Colab runtime.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.tmp{os.getpid()}")
+    try:
+        with open(tmp, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, **dumps_kwargs)
+            handle.flush()
+            os.fsync(handle.fileno())
+        _replace_atomically(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def write_npy_atomic(path: Path, array: FloatArray) -> None:
+    """np.save through the same temporary-then-rename path. See write_json_atomic.
+
+    np.save appends `.npy` when the name lacks it, so the temporary is given the
+    suffix explicitly; otherwise the rename would look for a file numpy did not
+    write.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.tmp{os.getpid()}.npy")
+    try:
+        with open(tmp, "wb") as handle:
+            np.save(handle, array)
+            handle.flush()
+            os.fsync(handle.fileno())
+        _replace_atomically(tmp, path if path.suffix == ".npy"
+                            else path.with_suffix(".npy"))
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def gguf_filename(quant: str) -> str:

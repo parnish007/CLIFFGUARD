@@ -48,7 +48,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import numpy.typing as npt
-from scipy.stats import norm
+from scipy.stats import norm, rankdata
 
 FloatArray = npt.NDArray[np.float64]
 
@@ -182,11 +182,17 @@ def empirical_auc(
         raise ValueError("both score arrays must be non-empty")
     pos = pos_scores if fires_high else -pos_scores
     neg = neg_scores if fires_high else -neg_scores
-    # Rank-based U: mean over all pairs of 1[pos > neg] + 0.5 * 1[pos == neg].
-    comparisons = pos[:, None] - neg[None, :]
-    wins = float(np.sum(comparisons > 0.0))
-    ties = float(np.sum(comparisons == 0.0))
-    return (wins + 0.5 * ties) / float(pos.size * neg.size)
+    # U is the mean over all pairs of 1[pos > neg] + 0.5 * 1[pos == neg], but it
+    # is computed from ranks rather than from the pairs themselves. The explicit
+    # outer difference is an n x m float64 array: at 20,000 against 20,000 that
+    # is 3.0 GB for a statistic that needs none, and it raised MemoryError on a
+    # 16 GB machine. Mid-ranks give exactly the same value -- averaging tied
+    # ranks is what puts the 0.5 on ties -- in O((n+m) log(n+m)) time and linear
+    # space.
+    ranks = rankdata(np.concatenate([pos, neg]))
+    rank_sum = float(ranks[: pos.size].sum())
+    u = rank_sum - pos.size * (pos.size + 1) / 2.0
+    return u / float(pos.size * neg.size)
 
 
 def gaussianity_gap(

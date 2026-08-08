@@ -66,6 +66,8 @@ from scripts.run_local_ladder import (
     read_npy_cache,
     release_host_memory,
     rtn_bits_per_parameter,
+    write_json_atomic,
+    write_npy_atomic,
 )
 
 FloatArray = Any
@@ -576,8 +578,8 @@ def main() -> int:  # noqa: C901 - linear experiment script
         # Written BEFORE the memory release, so a rung that finishes generating
         # and is then killed on the next load still leaves its work on disk.
         # This is what makes a restart resume instead of starting over.
-        cache_text.write_text(json.dumps(texts, indent=1), encoding="utf-8")
-        np.save(cache_acts, acts)
+        write_json_atomic(cache_text, texts, indent=1)
+        write_npy_atomic(cache_acts, acts)
         release_host_memory(name)
         completions[name] = texts
         activations[name] = acts
@@ -699,9 +701,7 @@ def main() -> int:  # noqa: C901 - linear experiment script
         # same n and token budget is still valid, and dropping it would force a
         # re-score the next time that scheme is asked for.
         merged = {**cached, **nll}
-        nll_cache.write_text(
-            json.dumps({k: v.tolist() for k, v in merged.items()}), encoding="utf-8"
-        )
+        write_json_atomic(nll_cache, {k: v.tolist() for k, v in merged.items()})
 
     finite_fp16 = nll["FP16"][np.isfinite(nll["FP16"])]
     nll_threshold = float(np.median(finite_fp16) * DEGENERACY_NLL_MULTIPLE)
