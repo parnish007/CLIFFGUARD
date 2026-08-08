@@ -43,6 +43,53 @@ def test_every_code_cell_parses(notebook: dict) -> None:
             pytest.fail(f"code cell {i} does not parse: {exc}")
 
 
+def test_no_cell_uses_a_name_a_later_cell_defines(notebook: dict) -> None:
+    """Run-all order is the only order a Colab user runs.
+
+    A cell that reads a constant the config cell has not set yet raises
+    NameError on the first execution -- and this notebook already had that,
+    with the preflight checking JUDGE_MODEL two cells before it was assigned.
+    That is the cheapest possible bug to catch and the most annoying to hit,
+    because it fails after the pip install and the Drive mount.
+
+    Deliberately approximate: it walks names rather than executing, so it
+    over-approximates what a cell defines (both branches of an `if`, every
+    loop target). Over-approximating means it cannot produce a false alarm,
+    only miss one, which is the right direction for a guard nobody will debug.
+    """
+    # The `builtins` module, not `__builtins__`: inside an imported module the
+    # latter is the namespace dict rather than the module, so dir() on it
+    # returns dict methods and every `print` looks unbound.
+    import builtins as _builtins
+
+    bound: set[str] = set(dir(_builtins)) | {"__builtins__", "__name__"}
+    problems: list[str] = []
+    for i, src in enumerate(_cells(notebook)):
+        tree = ast.parse(src)
+        loaded: set[str] = set()
+        stored: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name):
+                (loaded if isinstance(node.ctx, ast.Load) else stored).add(node.id)
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                for alias in node.names:
+                    stored.add((alias.asname or alias.name).split(".")[0])
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                   ast.ClassDef)):
+                stored.add(node.name)
+            elif isinstance(node, ast.ExceptHandler) and node.name:
+                stored.add(node.name)
+            elif isinstance(node, ast.arg):
+                stored.add(node.arg)
+            elif isinstance(node, ast.Global):
+                stored.update(node.names)
+        unbound = sorted(loaded - stored - bound)
+        if unbound:
+            problems.append(f"cell {i} uses {unbound} before any cell binds them")
+        bound |= stored
+    assert not problems, "\n".join(problems)
+
+
 def test_the_notebook_only_names_scripts_that_exist(notebook: dict) -> None:
     """A renamed script is a two-second failure here and an hour's failure there."""
     named = set()
