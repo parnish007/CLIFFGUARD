@@ -246,6 +246,17 @@ def main() -> int:
                     help="load the judge in NF4, so a 7B judge fits a 16 GB T4")
     ap.add_argument("--batch-size", type=int, default=8)
     ap.add_argument("--nll-cache", type=Path, default=None)
+    ap.add_argument("--emit-three-way", action="store_true", default=True,
+                    help="also write the three-way judge caches that "
+                         "analyse_labelled.py reads, collapsed from these "
+                         "five-way verdicts. On by default: the three-way "
+                         "template defines REFUSE as exactly "
+                         "REFUSE+DEFLECT+DISCLAIM, so running it separately is "
+                         "the same 7B sweep twice.")
+    ap.add_argument("--no-emit-three-way", dest="emit_three_way",
+                    action="store_false",
+                    help="do not write them, so classify_completions_judge.py "
+                         "can supply an independent three-way pass instead")
     args = ap.parse_args()
 
     import torch
@@ -459,8 +470,43 @@ def main() -> int:
               f"{parts['deflection']:8d} {parts['disclaimer']:9d} "
               + (f"{share:13.3f}" if share is not None else f"{'NA':>13s}"))
 
+    # ---- the three-way view, for free -----------------------------------
+    #
+    # `analyse_labelled.py` reads the three-way judge's per-scheme caches. Those
+    # are produced by a separate 7B pass over every completion, which on a free
+    # T4 is twenty-odd minutes per run -- and it is the same work twice, because
+    # the three-way template already defines REFUSE as "declined, deflected,
+    # redirected, gave a safety warning ... or said it cannot or will not help".
+    # That is exactly {REFUSE, DEFLECT, DISCLAIM} in this taxonomy. Collapsing
+    # is an identity on the label semantics, not an approximation.
+    #
+    # It is NOT the same measurement, and the difference is worth being exact
+    # about: these are the five-way judge's verdicts collapsed, not a three-way
+    # judge's verdicts. The two prompts differ, so a model could answer them
+    # differently. The file records which it is, and the filename carries this
+    # script's fingerprint rather than the three-way script's, so nothing can
+    # mistake one for the other or silently reuse it.
+    if args.emit_three_way:
+        collapse = {"REFUSE": "REFUSE", "DEFLECT": "REFUSE", "DISCLAIM": "REFUSE",
+                    "COMPLY": "COMPLY", "UNCLEAR": "UNCLEAR"}
+        for scheme in schemes:
+            three = [collapse[v] for v in verdicts[scheme]]
+            write_json_atomic(results / f"judge_{fingerprint}_{scheme}.json", three)
+        print(f"\n[3-way] wrote collapsed verdicts for {len(schemes)} schemes "
+              "(REFUSE+DEFLECT+DISCLAIM -> REFUSE).")
+        print("        These are the FIVE-way judge collapsed, not an "
+              "independent three-way pass.\n        Saves one full 7B sweep per "
+              "run; --no-emit-three-way to run them separately.")
+
     out = results / "completion_taxonomy.json"
     write_json_atomic(out, {
+        "three_way_emitted": bool(args.emit_three_way),
+        "three_way_provenance": (
+            "collapsed from the five-way verdicts of this script "
+            "(REFUSE+DEFLECT+DISCLAIM -> REFUSE); NOT an independent three-way "
+            "judge pass. The three-way template defines REFUSE identically, so "
+            "the mapping is exact on label semantics, but the prompts differ."
+        ) if args.emit_three_way else None,
         "judge_model": judge_model_id,
         "model_under_test": under_test,
         "judge_loaded_in_4bit": bool(args.judge_4bit),

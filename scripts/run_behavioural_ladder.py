@@ -414,6 +414,14 @@ def main() -> int:  # noqa: C901 - linear experiment script
     ap.add_argument("--splits", type=int, default=50)
     ap.add_argument("--max-new-tokens", type=int, default=48)
     ap.add_argument("--batch-size", type=int, default=16)
+    ap.add_argument("--no-activations", action="store_true",
+                    help="skip residual-stream collection. It is a second full "
+                         "forward over every prompt, and output_hidden_states "
+                         "materialises every layer to keep one -- and only the "
+                         "probe arm reads it. A run made for the refusal or 2x2 "
+                         "analyses does not need it, and on a free T4 dropping "
+                         "it is the difference between finishing a model inside "
+                         "one session and not.")
     ap.add_argument("--act-batch-size", type=int, default=8,
                     help="batch for the activation pass. Smaller than the "
                          "generation batch because output_hidden_states "
@@ -551,15 +559,19 @@ def main() -> int:  # noqa: C901 - linear experiment script
                       f"acts_{name}_L{args.layer}_n{len(prompts)}"
                       f"_b{args.act_batch_size}.npy")
         cached_texts = read_json_cache(cache_text)
-        cached_acts = read_npy_cache(cache_acts)
-        if cached_texts is not None and cached_acts is not None:
-            if len(cached_texts) == len(prompts) and len(cached_acts) == len(prompts):
+        cached_acts = None if args.no_activations else read_npy_cache(cache_acts)
+        if cached_texts is not None and (cached_acts is not None or args.no_activations):
+            acts_ok = args.no_activations or len(cached_acts) == len(prompts)
+            if len(cached_texts) == len(prompts) and acts_ok:
                 print(f"[{name}] cache hit", flush=True)
                 completions[name] = cached_texts
-                activations[name] = cached_acts
+                if cached_acts is not None:
+                    activations[name] = cached_acts
                 return
-            print(f"[{name}] cache holds {len(cached_texts)} completions and "
-                  f"{len(cached_acts)} activations for {len(prompts)} prompts; "
+            held = (f"{len(cached_texts)} completions" if cached_acts is None
+                    else f"{len(cached_texts)} completions and "
+                         f"{len(cached_acts)} activations")
+            print(f"[{name}] cache holds {held} for {len(prompts)} prompts; "
                   "regenerating", flush=True)
 
         started = time.time()
@@ -572,17 +584,26 @@ def main() -> int:  # noqa: C901 - linear experiment script
             model, tokenizer, prompts, args.max_new_tokens, args.batch_size, name,
             temperature=args.temperature,
         )
-        acts = collect_activations(model, tokenizer, prompts, args.layer,
-                                   batch_size=args.act_batch_size)
+        # The activation pass is a second full forward over every prompt, and
+        # `output_hidden_states=True` materialises EVERY layer to keep one. The
+        # refusal/2x2 analyses never read it -- only the probe arm does -- so on
+        # a run that is only after behaviour it is time spent producing a file
+        # nobody opens. On a free T4 that is the difference between finishing a
+        # model inside one session and not.
+        acts = None
+        if not args.no_activations:
+            acts = collect_activations(model, tokenizer, prompts, args.layer,
+                                       batch_size=args.act_batch_size)
         del model
         # Written BEFORE the memory release, so a rung that finishes generating
         # and is then killed on the next load still leaves its work on disk.
         # This is what makes a restart resume instead of starting over.
         write_json_atomic(cache_text, texts, indent=1)
-        write_npy_atomic(cache_acts, acts)
+        if acts is not None:
+            write_npy_atomic(cache_acts, acts)
+            activations[name] = acts
         release_host_memory(name)
         completions[name] = texts
-        activations[name] = acts
         print(f"[{name}] generated in {time.time() - started:.0f}s", flush=True)
 
     # Every scheme is named and validated BEFORE the first model loads.
@@ -790,11 +811,19 @@ def main() -> int:  # noqa: C901 - linear experiment script
               f"{b['conservative_flip_rate']:8.3f} {b['median_nll']:7.2f}")
 
     # ---- d' against model-derived labels --------------------------------
-    print("\n=== d' WITH MODEL-DERIVED LABELS (label ceiling removed) ===")
-    print(f"{'scheme':10s} {'d(model)':>9s} {'sd':>7s} {'d(corpus)':>10s}")
-    print("-" * 40)
+    # Skipped entirely without activations. The probe arm is the only consumer,
+    # and a run made for the refusal or 2x2 analyses does not need it.
     dprime: dict[str, Any] = {}
-    for name in schemes:
+    if args.no_activations:
+        print("\n=== d' SKIPPED: --no-activations ===")
+        print("The probe arm reads the residual stream and this run did not "
+              "collect it.\nThe refusal and 2x2 analyses do not use it and are "
+              "unaffected.")
+    else:
+        print("\n=== d' WITH MODEL-DERIVED LABELS (label ceiling removed) ===")
+        print(f"{'scheme':10s} {'d(model)':>9s} {'sd':>7s} {'d(corpus)':>10s}")
+        print("-" * 40)
+    for name in ([] if args.no_activations else schemes):
         acts = activations[name]
         pos_model, neg_model = acts[fp16_refused], acts[~fp16_refused]
         if len(pos_model) < 4 or len(neg_model) < 4:
@@ -841,6 +870,11 @@ def main() -> int:  # noqa: C901 - linear experiment script
             "deployed": deployed_meta,
             "max_new_tokens": args.max_new_tokens, "batch_size": args.batch_size,
             "activation_batch_size": args.act_batch_size,
+            # Recorded because it changes what the run directory CONTAINS, not
+            # just how long it took: an analysis that expects activations must
+            # be able to see that this run has none rather than infer it from a
+            # missing file.
+            "activations_collected": not args.no_activations,
             "decoding": ("greedy (do_sample=False)" if args.temperature <= 0.0
                          else f"sampled, temperature={args.temperature:g}, "
                               f"seed={args.seed}"),
@@ -880,7 +914,8 @@ def main() -> int:  # noqa: C901 - linear experiment script
     record_corpus(run, "prompts", prompts)
     for name in schemes:
         run.save_json(f"completions_{name}", {"completions": completions[name]})
-        run.save_array("activations", f"{name}", activations[name])
+        if name in activations:
+            run.save_array("activations", f"{name}", activations[name])
     # The judge script needs these; writing them into the run directory keeps it
     # self-contained instead of depending on a cache path from a previous session.
     # The exact ordered prompts, so a run directory can be classified anywhere.

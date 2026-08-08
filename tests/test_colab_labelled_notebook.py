@@ -135,11 +135,13 @@ def built(notebook: dict, tmp_path: Path):
         "CACHE_ROOT": tmp_path / "cache", "RUNS_ROOT": runs_root,
         "JOURNAL": tmp_path / "journal.json",
         "MODELS": [("qwen3b", "Qwen/Qwen2.5-3B-Instruct"),
-                   ("phi35", "microsoft/Phi-3.5-mini-instruct")],
-        "SUITES": ["xstest", "harmbench"],
+                   ("phi35", "microsoft/Phi-3.5-mini-instruct"),
+                   ("smol17", "HuggingFaceTB/SmolLM2-1.7B-Instruct")],
+        "CORPUS": "paired-strongreject-xstest",
         "JUDGE_MODEL": "Qwen/Qwen2.5-7B-Instruct", "JUDGE_4BIT": True,
-        "N_PER_CLASS": 200, "BITS": [8, 4], "MAX_NEW": 48,
+        "N_PER_CLASS": 150, "BITS": [8, 4], "MAX_NEW": 48,
         "BATCH": 8, "JUDGE_BATCH": 4, "DEADLINE_HOURS": 3.5,
+        "gen_min": 30.0, "judge_min": 15.0,
     }
     # The cell's import line would shadow the recording subclass.
     source = _pipeline_cell(notebook).replace(
@@ -148,14 +150,23 @@ def built(notebook: dict, tmp_path: Path):
     return recorded, runs_root, namespace
 
 
-def test_every_model_and_suite_gets_a_ladder_and_both_graders(built) -> None:
+def test_every_model_gets_a_ladder_and_exactly_one_grading_pass(built) -> None:
+    """Two steps per model, not three.
+
+    The five-way grader also emits the three-way labels, because the three-way
+    template defines REFUSE as exactly REFUSE+DEFLECT+DISCLAIM. A second grading
+    step would be the same 7B sweep twice, which on a free T4 is the difference
+    between fitting in a session and not.
+    """
     steps, _, ns = built
     names = [s.name for s in steps]
     for model_key, _ in ns["MODELS"]:
-        for suite in ns["SUITES"]:
-            label = f"lab-{model_key}-{suite}"
-            for prefix in ("ladder", "judge3", "taxonomy"):
-                assert f"{prefix}-{label}" in names, f"missing {prefix}-{label}"
+        label = f"lab-{model_key}-{ns['CORPUS']}"
+        assert f"ladder-{label}" in names
+        assert f"grade-{label}" in names
+    grading = [n for n in names if n.startswith(("grade-", "judge3-", "taxonomy-"))]
+    assert len(grading) == len(ns["MODELS"]), (
+        f"expected one grading step per model, got {grading}")
     assert names[0] == "suites"
     assert names[-2:] == ["analyse-labelled", "analyse-matrix"]
 
@@ -166,16 +177,13 @@ def test_a_grader_never_precedes_the_ladder_it_grades(built) -> None:
     steps, _, ns = built
     names = [s.name for s in steps]
     for model_key, _ in ns["MODELS"]:
-        for suite in ns["SUITES"]:
-            label = f"lab-{model_key}-{suite}"
-            ladder = names.index(f"ladder-{label}")
-            assert ladder < names.index(f"judge3-{label}")
-            assert ladder < names.index(f"taxonomy-{label}")
+        label = f"lab-{model_key}-{ns['CORPUS']}"
+        assert names.index(f"ladder-{label}") < names.index(f"grade-{label}")
 
 
-def test_two_suites_never_share_a_cache_directory(built) -> None:
-    """Same model, same n, same token budget: the cache filenames would collide
-    and the second suite would silently read the first suite's completions."""
+def test_two_models_never_share_a_cache_directory(built) -> None:
+    """Same corpus, same n, same token budget: the cache filenames would collide
+    and the second model would silently read the first model's completions."""
     steps, _, _ = built
     caches = []
     for step in steps:
@@ -195,18 +203,21 @@ def test_each_ladder_gets_its_own_prompt_file_and_label(built) -> None:
         argv = step.resolve_argv()
         prompts = argv[argv.index("--prompts") + 1]
         label = argv[argv.index("--label") + 1]
-        assert Path(prompts).name.replace(".jsonl", "") in ns["SUITES"]
+        assert Path(prompts).name.replace(".jsonl", "") == ns["CORPUS"]
         assert label not in seen, f"two ladders share the label {label}"
         seen.add(label)
+        assert "--no-activations" in argv, (
+            "the residual stream is a second full forward over every prompt and "
+            "nothing downstream reads it")
 
 
 def test_grader_commands_resolve_against_a_run_directory_made_earlier(built) -> None:
     steps, runs_root, ns = built
-    label = f"lab-{ns['MODELS'][0][0]}-{ns['SUITES'][0]}"
+    label = f"lab-{ns['MODELS'][0][0]}-{ns['CORPUS']}"
     (runs_root / f"20260101-000000_abc1234_{label}").mkdir()
 
     for step in steps:
-        if step.name in (f"judge3-{label}", f"taxonomy-{label}"):
+        if step.name == f"grade-{label}":
             argv = step.resolve_argv()
             assert argv[1].startswith("scripts/")
             assert label in argv[2], f"{step.name} points at {argv[2]}"
@@ -218,8 +229,8 @@ def test_grader_commands_resolve_against_a_run_directory_made_earlier(built) -> 
 def test_a_grader_whose_ladder_never_ran_fails_loudly(built) -> None:
     """Silently grading nothing is the failure this project has already had."""
     steps, _, ns = built
-    label = f"lab-{ns['MODELS'][0][0]}-{ns['SUITES'][0]}"
-    step = next(s for s in steps if s.name == f"taxonomy-{label}")
+    label = f"lab-{ns['MODELS'][0][0]}-{ns['CORPUS']}"
+    step = next(s for s in steps if s.name == f"grade-{label}")
     with pytest.raises(FileNotFoundError, match=label):
         step.resolve_argv()
 

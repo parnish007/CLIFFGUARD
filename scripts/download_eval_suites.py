@@ -227,6 +227,99 @@ def build(suite: str, out_dir: Path) -> dict[str, Any]:
             "counts": counts, "provenance": provenance, "sha256_16": digest}
 
 
+# Paired corpora, each a harmful suite joined to a benign one.
+#
+# The 2x2 needs both prompt classes in ONE run, because the comparison is paired
+# against that run's own FP16 baseline. Only XSTest carries both, so every other
+# suite would otherwise need a run of its own that can fill only half the table.
+# Joining them is not a convenience: it is what lets a single ladder produce a
+# complete matrix, and it costs one ladder instead of two.
+#
+# The pairs are chosen so the two halves come from DIFFERENT authors wherever
+# possible. XSTest's own halves were built together as matched contrasts, which
+# makes them a good control and a poor test of generalisation; harmbench against
+# or-bench-hard shares nothing but the task.
+PAIRS: dict[str, tuple[str, str]] = {
+    "paired-harmbench-orbench": ("harmbench", "or-bench-hard"),
+    "paired-advbench-orbench": ("advbench", "or-bench-hard"),
+    "paired-strongreject-xstest": ("strongreject", "xstest"),
+}
+
+
+def build_pair(name: str, out_dir: Path) -> dict[str, Any]:
+    """Join a harmful suite and a benign one into a single labelled corpus.
+
+    Both source files must already exist. Only the prompts of the wanted class
+    are taken from each side, so pairing StrongREJECT with XSTest contributes
+    XSTest's benign half and none of its harmful half -- otherwise the harmful
+    class would be a mixture of two sources while the benign class was one, and
+    a difference between the classes could be a difference between authors.
+
+    Order is interleaved by the loader at read time, not here, so the file stays
+    a plain concatenation and its provenance is obvious on inspection.
+    """
+    harmful_suite, benign_suite = PAIRS[name]
+    rows: list[dict[str, str]] = []
+    # Deduplication in `build` is per suite. Across two suites it has never run,
+    # and the collision it would miss is the worst one available here: the same
+    # text present in both halves, carrying opposite labels. Every count that
+    # followed would be computed on a corpus that contradicts itself, and
+    # nothing would raise. Cheap to prevent, so prevented.
+    seen: dict[str, str] = {}
+    collisions: list[str] = []
+    for suite, wanted in ((harmful_suite, HARMFUL), (benign_suite, BENIGN)):
+        path = out_dir / f"{suite}.jsonl"
+        if not path.exists():
+            raise SystemExit(
+                f"{name} needs {path}, which has not been downloaded. Fetch the "
+                f"component suites first: --download --suites {harmful_suite} "
+                f"{benign_suite}")
+        kept = 0
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            if row.get("harm_label") != wanted:
+                continue
+            prompt = row["prompt"]
+            if prompt in seen:
+                if seen[prompt] != wanted:
+                    collisions.append(prompt)
+                continue
+            seen[prompt] = wanted
+            # Keep where it came from. `source` is overwritten with the suite
+            # and `suite_id` renumbered for this corpus, so without this the
+            # original identifier -- the only handle back to the publisher's own
+            # numbering -- would be lost.
+            row["origin_suite_id"] = row.get("suite_id", "")
+            row["source"] = suite
+            row["suite_id"] = f"{name}:{len(rows)}"
+            rows.append(row)
+            kept += 1
+        if not kept:
+            raise SystemExit(
+                f"{name}: {suite} contributed no {wanted} prompts. The pairing "
+                "would produce a single-class corpus, which cannot fill the 2x2.")
+
+    if collisions:
+        raise SystemExit(
+            f"{name}: {len(collisions)} prompt(s) appear in BOTH halves with "
+            f"opposite labels, e.g. {collisions[0][:90]!r}. The corpus would "
+            "contradict itself and every count computed from it would be "
+            "meaningless. The two suites disagree and a human has to decide "
+            "which is right.")
+
+    path = out_dir / f"{name}.jsonl"
+    digest = _write(path, rows)
+    counts = {BENIGN: sum(r["harm_label"] == BENIGN for r in rows),
+              HARMFUL: sum(r["harm_label"] == HARMFUL for r in rows)}
+    return {"suite": name, "path": str(path), "n": len(rows),
+            "n_dropped_duplicate": 0, "counts": counts,
+            "provenance": f"{harmful_suite} (harmful) + {benign_suite} (benign)",
+            "components": [harmful_suite, benign_suite],
+            "sha256_16": digest}
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description=__doc__,
@@ -236,6 +329,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--suites", nargs="*", default=sorted(SUITES),
                     choices=sorted(SUITES), metavar="SUITE")
     ap.add_argument("--out-dir", type=Path, default=_OUT_DIR)
+    ap.add_argument("--pairs", nargs="*", default=sorted(PAIRS),
+                    choices=sorted(PAIRS), metavar="PAIR",
+                    help="paired harmful+benign corpora to assemble after "
+                         "fetching. Each gives a complete 2x2 from ONE ladder; "
+                         "pass none to skip.")
     args = ap.parse_args(argv)
 
     if not args.download:
@@ -274,6 +372,21 @@ def main(argv: list[str] | None = None) -> int:
 
     if not manifest:
         raise SystemExit("no suite could be built; check network access")
+
+    # Pairs are assembled from the files just written, so a suite that failed
+    # above simply removes the pairs that needed it rather than failing the run.
+    have = {e["suite"] for e in manifest}
+    for pair in args.pairs:
+        needs = set(PAIRS[pair])
+        if not needs <= have:
+            print(f"[{pair}] skipped: needs {sorted(needs - have)}",
+                  file=sys.stderr)
+            continue
+        entry = build_pair(pair, args.out_dir)
+        manifest.append(entry)
+        print(f"[{pair}] {entry['n']} prompts "
+              f"({entry['counts'][BENIGN]} benign / {entry['counts'][HARMFUL]} "
+              f"harmful) from {entry['provenance']}", flush=True)
 
     manifest_path = args.out_dir / "MANIFEST.json"
     manifest_path.write_text(json.dumps(
