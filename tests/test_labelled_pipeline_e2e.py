@@ -255,3 +255,31 @@ def test_misaligned_labels_stop_the_analysis_rather_than_shifting_them(
         cwd=REPO, capture_output=True, text=True)
     assert proc.returncode != 0
     assert "not aligned" in (proc.stdout + proc.stderr)
+
+
+def test_two_judge_caches_for_one_scheme_stop_the_analysis(
+        run_dir: Path, tmp_path: Path) -> None:
+    """Which grader's labels get reported must not depend on directory order.
+
+    The loader keys per-scheme caches by scheme alone and discards the
+    fingerprint, so an independent three-way pass and the five-way grader's
+    collapsed view collapse onto one key. They are different classifiers -- an
+    argmax over three labels versus an argmax over five followed by a merge --
+    and silently preferring whichever `glob` yields last would report one while
+    the manifest named the other.
+    """
+    run = next(run_dir.iterdir())
+    results = run / "results"
+    for scheme in SCHEMES:
+        rival = json.loads((results / f"judge_deadbeefdeadbeef_{scheme}.json").read_text())
+        (results / f"judge_collapsedcafe1234_{scheme}.json").write_text(
+            json.dumps(rival), encoding="utf-8")
+
+    proc = subprocess.run(
+        [sys.executable, "scripts/analyse_labelled.py", "--runs", str(run_dir),
+         "--min-n", "10", "--out", str(tmp_path / "l.json")],
+        cwd=REPO, capture_output=True, text=True)
+    assert proc.returncode != 0
+    combined = proc.stdout + proc.stderr
+    assert "more than one judge cache" in combined
+    assert "directory order" in combined

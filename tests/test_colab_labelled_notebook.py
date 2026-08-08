@@ -137,11 +137,11 @@ def built(notebook: dict, tmp_path: Path):
         "MODELS": [("qwen3b", "Qwen/Qwen2.5-3B-Instruct"),
                    ("phi35", "microsoft/Phi-3.5-mini-instruct"),
                    ("smol17", "HuggingFaceTB/SmolLM2-1.7B-Instruct")],
-        "CORPUS": "paired-strongreject-xstest",
+        "CORPUS": "xstest",
         "JUDGE_MODEL": "Qwen/Qwen2.5-7B-Instruct", "JUDGE_4BIT": True,
         "N_PER_CLASS": 150, "BITS": [8, 4], "MAX_NEW": 48,
         "BATCH": 8, "JUDGE_BATCH": 4, "DEADLINE_HOURS": 3.5,
-        "gen_min": 30.0, "judge_min": 15.0,
+        "gen_min": 30.0, "load_min": 12.0, "nll_min": 2.0, "judge_min": 15.0,
     }
     # The cell's import line would shadow the recording subclass.
     source = _pipeline_cell(notebook).replace(

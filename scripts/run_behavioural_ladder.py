@@ -40,6 +40,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -544,10 +545,29 @@ def main() -> int:  # noqa: C901 - linear experiment script
     decode_key = ("" if args.temperature <= 0.0
                   else f"_T{args.temperature:g}_s{args.seed}")
 
+    # WHICH prompts, not just how many. The key held the prompt COUNT and the
+    # token budget, neither of which identifies the corpus: a re-downloaded or
+    # re-ordered suite of the same size, or a different suite truncated to the
+    # same n, hits the same filenames and returns the previous corpus's
+    # completions. The run then stores the new prompts beside the old
+    # completions and every pairing after that is off by whatever moved --
+    # silent, and the sort of error that survives into a table.
+    #
+    # Eight hex characters over the ordered prompt text. Short enough to keep
+    # the filenames readable, and this is a cache key rather than a security
+    # boundary.
+    corpus_digest = hashlib.sha256()
+    for prompt in prompts:
+        blob = prompt.encode("utf-8", "replace")
+        corpus_digest.update(len(blob).to_bytes(8, "big"))
+        corpus_digest.update(blob)
+    corpus_key = f"_c{corpus_digest.hexdigest()[:8]}"
+    print(f"corpus fingerprint: {corpus_key[2:]} over {len(prompts)} ordered prompts")
+
     def run_scheme(name: str, loader: Any) -> None:
         cache_text = (args.cache /
                       f"completions_{name}_n{len(prompts)}_t{args.max_new_tokens}"
-                      f"{decode_key}.json")
+                      f"{corpus_key}{decode_key}.json")
         # The batch size is in the key because the result depends on it. Padded
         # positions are masked and never read, so the batching is exact in
         # logic -- verified bit-identical against the one-at-a-time version at
@@ -557,7 +577,7 @@ def main() -> int:  # noqa: C901 - linear experiment script
         # something to blend inside one run without saying so.
         cache_acts = (args.cache /
                       f"acts_{name}_L{args.layer}_n{len(prompts)}"
-                      f"_b{args.act_batch_size}.npy")
+                      f"{corpus_key}_b{args.act_batch_size}.npy")
         cached_texts = read_json_cache(cache_text)
         cached_acts = None if args.no_activations else read_npy_cache(cache_acts)
         if cached_texts is not None and (cached_acts is not None or args.no_activations):
@@ -694,7 +714,7 @@ def main() -> int:  # noqa: C901 - linear experiment script
     # ---- degeneracy scoring, all schemes under ONE reference model -------
     print("\n=== scoring every completion under the FP16 reference ===")
     nll_cache = (args.cache /
-                 f"nll_n{len(prompts)}_t{args.max_new_tokens}{decode_key}.json")
+                 f"nll_n{len(prompts)}_t{args.max_new_tokens}{corpus_key}{decode_key}.json")
     nll: dict[str, FloatArray] = {}
     cached: dict[str, FloatArray] = {}
     raw_nll = read_json_cache(nll_cache)

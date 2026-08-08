@@ -71,10 +71,30 @@ def load_run(run: Path) -> dict[str, Any] | None:
     }
     judge_file = results / "judge_classification.json"
     judge_raw: dict[str, list[str]] = {}
-    for f in results.glob("judge_*_*.json"):
+    # Per-scheme caches are named judge_<fingerprint>_<scheme>.json, and the
+    # fingerprint identifies WHO graded and HOW. This loader keys by scheme
+    # alone, so two graders' caches for one scheme collapse onto one key and the
+    # winner is whichever `glob` happens to yield last. That is directory order
+    # deciding which measurement gets reported, with the manifest still naming
+    # the other one -- silent, and not reproducible between machines.
+    #
+    # Two graders can legitimately both be present: an independent three-way
+    # pass and the five-way grader's collapsed view are different classifiers,
+    # and mixing them across schemes would build a label matrix from two
+    # instruments. Refuse instead of guessing.
+    by_scheme: dict[str, list[Path]] = {}
+    for f in sorted(results.glob("judge_*_*.json")):
         if f.name == "judge_classification.json":
             continue
-        scheme = f.stem.split("_", 2)[-1]
+        by_scheme.setdefault(f.stem.split("_", 2)[-1], []).append(f)
+    ambiguous = {s: [p.name for p in v] for s, v in by_scheme.items() if len(v) > 1}
+    if ambiguous:
+        raise SystemExit(
+            f"{run.name}: more than one judge cache per scheme, so which "
+            f"grader's labels are reported would depend on directory order: "
+            f"{ambiguous}. These are different measurements. Keep one set and "
+            "delete or move the other.")
+    for scheme, (f,) in by_scheme.items():
         judge_raw[scheme] = json.loads(f.read_text(encoding="utf-8"))
     return {
         "path": run, "manifest": manifest, "nll": nll, "completions": completions,

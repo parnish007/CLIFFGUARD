@@ -232,13 +232,28 @@ def build(suite: str, out_dir: Path) -> dict[str, Any]:
 # The 2x2 needs both prompt classes in ONE run, because the comparison is paired
 # against that run's own FP16 baseline. Only XSTest carries both, so every other
 # suite would otherwise need a run of its own that can fill only half the table.
-# Joining them is not a convenience: it is what lets a single ladder produce a
-# complete matrix, and it costs one ladder instead of two.
+# Joining them lets a single ladder produce a complete matrix.
 #
-# The pairs are chosen so the two halves come from DIFFERENT authors wherever
-# possible. XSTest's own halves were built together as matched contrasts, which
-# makes them a good control and a poor test of generalisation; harmbench against
-# or-bench-hard shares nothing but the task.
+# READ THIS BEFORE CHOOSING ONE. A pairing takes its harmful prompts from one
+# suite and its benign prompts from another, so prompt class is PERFECTLY
+# CONFOUNDED with authorship: every harmful prompt is a StrongREJECT prompt and
+# every benign one is an XSTest prompt. Any difference between the classes is
+# therefore also a difference between two research groups' construction
+# procedures, and cannot be attributed to harmfulness.
+#
+# That does NOT affect what this project primarily measures, because the paired
+# transitions are within-prompt -- the same prompt at FP16 and at a rung -- and a
+# confound constant within a prompt cancels. It DOES affect any comparison
+# ACROSS the classes, including the full-precision baseline rates that
+# `analyse_labelled` prints side by side.
+#
+# XSTest is the only suite whose two halves were built together as matched
+# contrasts, so it is the one corpus here where class is not confounded with
+# source. Prefer it when both classes will be compared; use a pairing when more
+# prompts of one class are needed than XSTest provides.
+#
+# An earlier version of this comment claimed the opposite -- that drawing the
+# halves from different groups avoided a confound. It creates one.
 PAIRS: dict[str, tuple[str, str]] = {
     "paired-harmbench-orbench": ("harmbench", "or-bench-hard"),
     "paired-advbench-orbench": ("advbench", "or-bench-hard"),
@@ -317,6 +332,9 @@ def build_pair(name: str, out_dir: Path) -> dict[str, Any]:
             "n_dropped_duplicate": 0, "counts": counts,
             "provenance": f"{harmful_suite} (harmful) + {benign_suite} (benign)",
             "components": [harmful_suite, benign_suite],
+            # Recorded in the manifest so an analysis, or a reader, can see the
+            # confound without reconstructing it from the component names.
+            "class_confounded_with_source": True,
             "sha256_16": digest}
 
 
