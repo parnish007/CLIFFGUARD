@@ -211,6 +211,17 @@ def main() -> int:
         manifest = run["manifest"]
         model = manifest.get("model_id", "?")
         key = manifest.get("label", run_dir.name)
+        if key in payload:
+            # Two completed run directories can carry one label -- a ladder whose
+            # journal update was lost is re-run and finishes twice. Overwriting
+            # here made one of them vanish from the output with no missing row a
+            # reader could notice. `analyse_matrix` already refuses; these two
+            # are read side by side, so they must agree about it.
+            raise SystemExit(
+                f"two runs carry the label {key!r}: {payload[key]['run']} and "
+                f"{run_dir.name}. One would silently replace the other. Narrow "
+                "the selection with --include/--exclude, or delete the stale "
+                "run directory.")
         payload[key] = {
             "run": run_dir.name,
             "model": MODEL_LABELS.get(model, model),

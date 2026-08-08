@@ -355,3 +355,37 @@ def test_journal_records_every_step_the_report_prints(tmp_path: Path) -> None:
     assert {"a", "b"} <= set(state["steps"])
     assert all(state["steps"][k]["status"] == OK for k in ("a", "b"))
     assert state["sessions"], "a session with no record cannot be audited later"
+
+
+def test_stopping_on_the_session_budget_is_not_reported_as_success(
+        tmp_path: Path) -> None:
+    """The one message a resumable pipeline must never print wrongly.
+
+    Stopping because the session is nearly over fails nothing, so `run` returns
+    0 -- and a caller that checked only that announced "all steps complete" over
+    a run that had done half the models. That is the message that tells someone
+    they can stop re-running it.
+    """
+    pipe = make(tmp_path, deadline_hours=0.05)
+    pipe.add(touch_step("early", tmp_path / "e.txt", estimated_minutes=0.1))
+    pipe.add(touch_step("late", tmp_path / "l.txt", estimated_minutes=600.0))
+
+    assert pipe.run() == 0, "nothing failed, so the failure count is zero"
+    assert pipe.outstanding() == ["late"], "but the run is NOT complete"
+
+
+def test_outstanding_is_empty_only_when_everything_really_finished(
+        tmp_path: Path) -> None:
+    pipe = make(tmp_path)
+    pipe.add(touch_step("a", tmp_path / "a.txt"))
+    pipe.add(touch_step("b", tmp_path / "b.txt"))
+    pipe.run()
+    assert pipe.outstanding() == []
+
+
+def test_outstanding_reports_a_failed_step_too(tmp_path: Path) -> None:
+    pipe = make(tmp_path)
+    pipe.add(Step("boom", [sys.executable, "-c", "import sys; sys.exit(2)"]))
+    pipe.add(touch_step("after", tmp_path / "after.txt"))
+    assert pipe.run() == 1
+    assert set(pipe.outstanding()) == {"boom", "after"}

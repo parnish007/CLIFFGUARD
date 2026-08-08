@@ -477,6 +477,21 @@ class Pipeline:
         self.report()
         return failures
 
+    def outstanding(self, only: Sequence[str] | None = None) -> list[str]:
+        """Steps that have not completed, for any reason.
+
+        `run` returns the number of steps that FAILED, which is not the same
+        question as "is this finished". Stopping on the session budget is a
+        deliberate and correct stop that fails nothing -- and a caller that
+        checked only the return value announced "all steps complete" over a run
+        that had done half the models. That is the one message a resumable
+        pipeline must never print wrongly, because it is the message that tells
+        someone they can stop re-running it.
+        """
+        chosen = [s for s in self.steps if only is None or s.name in only]
+        return [s.name for s in chosen
+                if self.state["steps"].get(s.name, {}).get("status") != OK]
+
     # -- reporting ---------------------------------------------------------
     def report(self) -> None:
         print(f"\n{'=' * 72}\npipeline state ({self.journal_path})\n{'=' * 72}")

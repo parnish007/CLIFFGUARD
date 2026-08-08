@@ -307,3 +307,23 @@ def test_a_run_interrupted_mid_write_is_skipped_not_crashed_on(
     assert "Traceback" not in combined, f"crashed instead of skipping:\n{combined}"
     assert "no manifest.json" in combined
     assert "interrupted" in combined
+
+
+def test_two_completed_runs_under_one_label_stop_analyse_labelled_too(
+        run_dir: Path, tmp_path: Path) -> None:
+    """A ladder whose journal update was lost is re-run and finishes twice.
+
+    `analyse_matrix` already refuses that; `analyse_labelled` silently kept the
+    last one, so a run vanished from the output with no missing row a reader
+    could notice. These two are read side by side and must agree.
+    """
+    import shutil
+    original = next(run_dir.iterdir())
+    shutil.copytree(original, run_dir / "20260202-000000_abc1234_lab-fake-xstest")
+
+    proc = subprocess.run(
+        [sys.executable, "scripts/analyse_labelled.py", "--runs", str(run_dir),
+         "--min-n", "10", "--out", str(tmp_path / "l.json")],
+        cwd=REPO, capture_output=True, text=True)
+    assert proc.returncode != 0
+    assert "two runs carry the label" in (proc.stdout + proc.stderr)
