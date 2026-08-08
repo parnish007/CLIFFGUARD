@@ -24,6 +24,7 @@ import pytest
 
 from scripts.colab_pipeline import (
     OK,
+    _is_interpreter,
     Pipeline,
     Step,
     argv_fingerprint,
@@ -216,6 +217,22 @@ def test_fingerprint_drops_only_an_actual_interpreter() -> None:
     assert argv_fingerprint(["gzip", "x"]) != argv_fingerprint(["bzip2", "x"])
     assert (argv_fingerprint(["python3.11", "s.py"])
             == argv_fingerprint(["/opt/python", "s.py"]))
+
+
+@pytest.mark.parametrize("name", ["python", "python3", "python3.11", "py",
+                                  "pypy", "pypy3.10", "PYTHON.EXE",
+                                  r"C:\py\python.exe", "/usr/bin/python3"])
+def test_interpreter_names_are_recognised(name: str) -> None:
+    assert _is_interpreter(name)
+
+
+@pytest.mark.parametrize("name", ["pythontool", "mypython", "python-wrapper",
+                                  "pypydoc", "pyright", "pytest"])
+def test_lookalike_names_are_not_treated_as_interpreters(name: str) -> None:
+    """`startswith("python")` swallows `pythontool`, which would make it and any
+    other single-word command the same step in the journal."""
+    assert not _is_interpreter(name)
+    assert argv_fingerprint([name, "x"]) != argv_fingerprint(["other", "x"])
 
 
 def test_fingerprint_separates_steps_that_differ_only_in_where_they_write() -> None:

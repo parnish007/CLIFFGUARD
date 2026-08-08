@@ -364,14 +364,24 @@ def main() -> int:
     # is not: fp16 kernels reduce in a batch-dependent order, and a near-tied
     # pair of label logits can cross. Verdicts are cached as exact, so the key
     # has to make that true.
+    # Length-prefixed, not delimiter-separated. A separator only works if it
+    # cannot occur in the data, and nothing guarantees that for model output: a
+    # completion containing the delimiter byte would move the boundary, so
+    # (prompt="a", completion="b<sep>c") and (prompt="a<sep>b", completion="c")
+    # would hash identically. Prefixing each field with its length makes the
+    # encoding unambiguous whatever the bytes are.
     payload_hash = hashlib.sha256()
+
+    def absorb(text: str) -> None:
+        blob = text.encode("utf-8", "replace")
+        payload_hash.update(len(blob).to_bytes(8, "big"))
+        payload_hash.update(blob)
+
     for scheme in schemes:
-        payload_hash.update(scheme.encode("utf-8"))
+        absorb(scheme)
         for prompt, completion in zip(prompts, completions[scheme]):
-            payload_hash.update(prompt.encode("utf-8", "replace"))
-            payload_hash.update(b"\x00")
-            payload_hash.update(completion.encode("utf-8", "replace"))
-            payload_hash.update(b"\x01")
+            absorb(prompt)
+            absorb(completion)
     fingerprint = hashlib.sha256(json.dumps({
         "judge": judge_model_id, "four_bit": bool(args.judge_4bit),
         "labels": list(LABELS), "template": TAXONOMY_TEMPLATE,

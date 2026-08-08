@@ -47,6 +47,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import threading
@@ -118,12 +119,18 @@ def _kill_tree(proc: "subprocess.Popen[str]") -> None:
         pass
 
 
+# `python`, `python3`, `python3.11`, `pypy3.10` -- and NOT `pythontool`, which a
+# `startswith("python")` test would wrongly swallow, making two different
+# commands one step in the journal.
+_INTERPRETER = re.compile(r"^(?:python|pypy)[0-9]*(?:\.[0-9]+)*$|^py$")
+
+
 def _is_interpreter(arg: str) -> bool:
     """Whether argv[0] names a Python interpreter rather than the work itself."""
     stem = Path(arg).name.lower()
     if stem.endswith(".exe"):
         stem = stem[:-4]
-    return stem.startswith("python") or stem in {"py", "pypy", "pypy3"}
+    return bool(_INTERPRETER.match(stem))
 
 
 def argv_fingerprint(argv: Sequence[str], extra: Any = None) -> str:

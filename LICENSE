@@ -1,0 +1,40 @@
+MIT License
+
+Copyright (c) 2026 Trilochan Sharma
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+The evaluation suites this repository downloads are NOT covered by this
+licence and are not redistributed here. `scripts/download_eval_suites.py`
+fetches each from its own source at run time, and each carries its own terms.
+Checked against the publishing repository or dataset card on 2026-08-08:
+
+  HarmBench       centerforaisafety/HarmBench (GitHub)   MIT
+  AdvBench        llm-attacks/llm-attacks (GitHub)       MIT
+  StrongREJECT    alexandrasouly/strongreject (GitHub)   MIT
+  XSTest          natolambert/xstest-v2-copy (HF)        CC-BY-4.0
+  OR-Bench        bench-llm/or-bench (HF)                CC-BY-4.0
+
+Check them again before redistributing anything derived from them; the note
+above records what was published on that date, not a warranty.
+
+Model checkpoints are likewise fetched from their publishers, under whatever
+licence each publisher applies. None is redistributed here.

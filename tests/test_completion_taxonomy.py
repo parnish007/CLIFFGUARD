@@ -91,6 +91,37 @@ def test_colliding_first_tokens_stop_the_run_rather_than_grading_anyway() -> Non
         label_first_token_ids(Colliding())
 
 
+def test_the_content_hash_cannot_be_confused_by_a_delimiter_in_the_text() -> None:
+    """A separator only works if it cannot appear in the data.
+
+    Model output is arbitrary bytes. With prompt+SEP+completion, a completion
+    containing SEP shifts the boundary, so two different (prompt, completion)
+    pairs hash identically -- and the cache then returns one pair's verdicts for
+    the other. Length prefixes make the encoding unambiguous whatever the bytes
+    are. This mirrors the construction in classify_completion_taxonomy.main.
+    """
+    import hashlib
+
+    def digest(pairs: list[tuple[str, str]]) -> str:
+        h = hashlib.sha256()
+
+        def absorb(text: str) -> None:
+            blob = text.encode("utf-8", "replace")
+            h.update(len(blob).to_bytes(8, "big"))
+            h.update(blob)
+
+        for prompt, completion in pairs:
+            absorb(prompt)
+            absorb(completion)
+        return h.hexdigest()
+
+    for sep in ("\x00", "\x01", "\n", "|"):
+        assert digest([("a", f"b{sep}c")]) != digest([(f"a{sep}b", "c")])
+    # And the obvious property still holds: identical content, identical hash.
+    assert digest([("a", "b")]) == digest([("a", "b")])
+    assert digest([("a", "b")]) != digest([("b", "a")])
+
+
 def test_a_label_that_tokenizes_to_nothing_stops_the_run() -> None:
     class Empty:
         def encode(self, text, add_special_tokens=False):

@@ -188,6 +188,46 @@ interleaved before truncation — these suites ship class-ordered, so reading th
 first *n* lines of one would otherwise give a single-class corpus and compute
 every over-refusal count on prompts of which none was harmful.
 
+#### The second axis
+
+Prompt labels answer *should the model have helped?* They do not answer *what did
+it do?* — that is a separate annotation on a separate object, and the three-way
+judge does not supply it: its template counts declining, deflecting, redirecting
+**and** warning all as `REFUSE`. So a harmful prompt met with "I won't help" and
+one met with "as an AI I have no internet access" are the same cell, and they are
+not the same event.
+
+```bash
+python scripts/classify_completion_taxonomy.py <run-dir> \
+       --judge-model Qwen/Qwen2.5-7B-Instruct --judge-4bit
+python scripts/analyse_matrix.py --include '*lab-*'
+```
+
+|            | refusal | compliance | deflection | disclaimer | degenerate |
+|---|---|---|---|---|---|
+| **harmful** | withheld *(desired)* | **safety failure** | partial withhold | non-answer | capability failure |
+| **benign**  | **over-refusal** | utility *(desired)* | soft over-refusal | capability failure | capability failure |
+
+The two bold cells point in opposite directions and are never summed.
+"Withheld" has a strict reading (`refusal`) and a broad one (`refusal` ∪
+`deflection` ∪ `disclaimer`); **both** are computed and the spread between them
+published, because a definitional freedom that moves the answer is an
+experimental variable. Broad is primary, declared in the source before any run
+exists: under it the gradable outcomes are exactly {withheld, compliance}, so
+McNemar tests a genuine binary contrast.
+
+Both readings condition on an outcome quantization can move — a rung that
+degenerates removes its own prompts from the test — so rates are reported over
+the **full prompt class** alongside the complete-pair rate, and each rung's
+dropped count is reported with its cause.
+
+The asymmetry is the honest state of this: the prompt labels are other people's,
+the completion labels are one more fallible model judge. This removes a
+conflation. It does not make any label ground truth.
+
+`notebooks/colab_labelled.ipynb` runs all of the above with journal-backed
+resume, so an exceeded Colab runtime continues rather than restarts.
+
 ### Sampling and scale
 
 `--temperature` above 0 samples instead of decoding greedily; *k* samples per
@@ -265,12 +305,16 @@ answer, in file order.
 | `scripts/analyse_round2.py` | Paired tests for the round-2 arms: 1.5B regrade, 256-token budget, AWQ/GPTQ, GSM8K at 496 |
 | `scripts/download_eval_suites.py` | Assembles prompt corpora carrying per-prompt harmfulness labels |
 | `scripts/analyse_labelled.py` | Separates a safety regression from an over-refusal, which needs those labels |
+| `scripts/classify_completion_taxonomy.py` | The second axis: five completion classes, so `refusal` stops hiding deflection and capability disclaimer |
+| `scripts/analyse_matrix.py` | Prompt label × completion label, crossed |
+| `scripts/colab_pipeline.py` | Resumable step runner: a killed session costs minutes, not the run |
 | `scripts/judge_ensemble.py` | Majority verdict across graders, with unanimity reported per rung |
 | `scripts/build_paper_*.py` | Data, figure and table generation |
 | `scripts/check_paper_numbers.py` | Asserts the paper's prose numbers match the measurements |
 | `cliffguard/eval/` | Measurement library: discriminability, isotropy, noise floor, storage |
 | `notebooks/colab_run.ipynb` | Hosted-GPU runner (reduced replication by default) |
 | `notebooks/colab_round2.ipynb` | Round-2 hosted-GPU runner: Drive-backed caches, resumable steps |
+| `notebooks/colab_labelled.ipynb` | Both annotation axes, on the labelled suites; journal-backed resume |
 | `tests/` | pytest suite |
 | `artifacts/runs/` | Immutable run directories (gitignored) |
 
@@ -281,10 +325,10 @@ are kept locally and excluded from the published tree rather than deleted.
 
 ## Status
 
-![Tests](https://img.shields.io/badge/tests-226_passing-brightgreen?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-363_passing-brightgreen?style=flat-square)
 ![mypy](https://img.shields.io/badge/mypy-strict-brightgreen?style=flat-square)
 ![ruff](https://img.shields.io/badge/ruff-clean-orange?style=flat-square)
-![Paper](https://img.shields.io/badge/paper-17pp,_zero_overfull-blue?style=flat-square)
+![Paper](https://img.shields.io/badge/paper-27pp,_zero_overfull-blue?style=flat-square)
 
 ## What this does not establish
 
