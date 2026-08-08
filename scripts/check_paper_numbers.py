@@ -90,7 +90,42 @@ def _relative_loss(stats: dict[str, Any]) -> str:
     return f"{100 - 100 * row['accuracy'] / block['fp16_accuracy']:.0f}"
 
 
+def _max_conditional(stats: dict[str, Any]) -> str:
+    """Largest P(rung complies | FP16 refused) anywhere on either ladder.
+
+    The reviewer-requested companion to the joint rate. Computed over the FP16
+    row of the stored transition matrix. Degenerate and unclear endpoints are
+    left in the denominator; at the maximising cell there are none of either, so
+    the reported figure does not depend on that choice, and the paper says so.
+    """
+    best = 0.0
+    for block in stats["transitions"].values():
+        for row in block["rows"]:
+            refused = row["matrix"]["refusal"]
+            denom = sum(refused.values())
+            if denom:
+                best = max(best, refused["compliance"] / denom)
+    return f"{100 * best:.2f}"
+
+
+def _refused_denominators(stats: dict[str, Any]) -> str:
+    """How many prompts each model's FP16 baseline refused."""
+    out = []
+    for model in ("Qwen2.5-3B", "Phi-3.5-mini"):
+        block = stats["transitions"][model]
+        out.append(str(sum(block["rows"][0]["matrix"]["refusal"].values())))
+    return " ".join(out)
+
+
 CHECKS: tuple[Check, ...] = (
+    # ---- the conditional rate a reviewer asks for beside the joint one -----
+    Check("max conditional transition rate",
+          _max_conditional,
+          lambda v: _rx(rf"\\textbf{{{v}\\%}}, at Qwen2\.5-3B's 4\.5-bit rung")),
+    Check("FP16-refused denominators",
+          _refused_denominators,
+          lambda v: _rx(r"the {} \(Qwen2\.5-3B\) and {} \(Phi-3\.5-mini\) "
+                        r"prompts the FP16".format(*v.split()))),
     # ---- the simultaneous bound, the number most easily mis-rounded --------
     Check(
         "simultaneous upper bound",

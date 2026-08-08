@@ -99,27 +99,57 @@ def test_no_latex_control_word_lost_its_backslash() -> None:
     valid input -- it simply typesets the word "ef" and no reference at all,
     and the defect is visible only by reading the rendered PDF.
 
-    The mangled forms are the tell: a control word's remainder appearing where
-    a command should be. Checked against the source rather than the log,
-    because the log says nothing.
+    Word-matching the mangled forms was the wrong approach: the first version
+    of this test listed `\ref` and `\newline`, then missed `$\times$` becoming
+    `$<TAB>imes$` because "imes" was not on the list. The residue of an eaten
+    escape is always the CONTROL CHARACTER it produced, so that is what to look
+    for -- a stray TAB, or a CR outside a CRLF pair, is essentially never
+    legitimate in this manuscript and always means an escape was interpreted.
+
+    Checked against the source bytes rather than the log, because the log says
+    nothing.
+    """
+    raw = TEX.read_bytes()
+    problems: list[str] = []
+    for i, byte in enumerate(raw):
+        if byte == 0x09:
+            what = r"TAB, probably an eaten \t (\times, \textbf, \tabular)"
+        elif byte == 0x0D and raw[i + 1:i + 2] != b"\n":
+            what = r"lone CR, probably an eaten \r (\ref, \right, \rule)"
+        else:
+            continue
+        line_no = raw[:i].count(b"\n") + 1
+        context = raw[max(0, i - 40):i + 30].decode("utf-8", "replace")
+        problems.append(f"line {line_no}: {what}\n    ...{context}...")
+    assert not problems, (
+        "control characters in the LaTeX source, which is what a shell heredoc "
+        "leaves behind when it eats a backslash:\n" + "\n".join(problems))
+
+
+@needs_paper
+def test_no_known_mangled_control_word_survives() -> None:
+    """Belt and braces: the specific mangled spellings, in case one is typed.
+
+    The byte-level check above catches escapes eaten at write time. This catches
+    the same words arriving some other way -- a copy-paste from a mangled file,
+    say -- where the control character has already been normalised to a space.
     """
     text = live_tex()
     mangled = {
-        "ef{": r"\ref",          # \r
-        "ewline": r"\newline",   # \n
-        "extbf{": r"\textbf",    # \t
-        "extit{": r"\textit",    # \t
-        "able~": r"\table",      # \t (rare, but same mechanism)
-        "abular": r"\tabular",   # \t
+        "ef{": r"\ref",
+        "ewline": r"\newline",
+        "extbf{": r"\textbf",
+        "extit{": r"\textit",
+        "imes$": r"\times",
+        "abular": r"\tabular",
     }
     problems: list[str] = []
     for line_no, line in enumerate(text.splitlines(), 1):
         for bad, intended in mangled.items():
             for hit in re.finditer(re.escape(bad), line):
                 start = hit.start()
-                # A legitimate occurrence is preceded by the letter that the
-                # escape ate; a mangled one is preceded by whitespace, a tie,
-                # or nothing at all.
+                # A legitimate occurrence is preceded by the letter the escape
+                # ate; a mangled one follows whitespace, a tie, or nothing.
                 before = line[start - 1] if start else ""
                 if before.isalpha():
                     continue
