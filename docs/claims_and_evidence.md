@@ -39,7 +39,7 @@ Comparisons are always against the *same model at FP16 on the same prompts*.
 
 | Not claimed | Why |
 |---|---|
-| "Harmful compliance stays below 2.2%" | The prompts carry no per-prompt harmfulness annotation. What is measured is a change in the model's own decision. A baseline refusal may be an over-refusal of a benign prompt, in which case the quantized model's compliance is a correction, not a failure |
+| "Harmful compliance stays below 2.2%" | The prompts carry no per-prompt harmfulness annotation. What is measured is a change in the model's own decision. A baseline refusal may be an over-refusal of a benign prompt, in which case the quantized model's compliance is a correction, not a failure. The design that would separate them is built and stated below; it has not been run |
 | "Quantization does not reduce safety" | A non-significant test is not evidence of no effect. The defensible form is bounded: the transition rate is at most 4.62% at every rung simultaneously |
 | "Qwen2.5-3B refuses significantly more at 5.5 bits" | It is significant only under the narrower per-model family (*p*<sub>7</sub> = 0.033). Under the 14-cell family this paper declares primary, *p*<sub>14</sub> = 0.066 |
 | "Quantization *significantly* increases the refusal class" | Withdrawn. Three graders from two other families re-scored the identical completions across four model×grader comparisons: three agree on the direction, none reaches significance, and the magnitude falls from 32-vs-11 to between 1-vs-2 and 12-vs-7. Pairwise agreement with the 7B judge is 64.9–78.4%, so grader disagreement alone moves more prompts than the effect. A fifth sweep (Llama-3.1-70B, 89.3% on 375 completions) covered only one rung and is excluded rather than quoted | `compare_judges.py` |
@@ -71,3 +71,54 @@ Comparisons are always against the *same model at FP16 on the same prompts*.
    outcome-dependent censoring rather than argue around it.
 6. **A harmfulness-labelled suite** plus an over-refusal suite, which together
    would license the stronger safety vocabulary this paper avoids.
+   *Status: built, not yet run.* `scripts/download_eval_suites.py` assembles
+   3,457 externally labelled prompts (1,888 harmful, 1,569 benign) from
+   HarmBench, AdvBench, StrongREJECT, XSTest and OR-Bench, deterministically and
+   with per-suite hashes. What is missing is GPU time, not code.
+
+---
+
+## The design that is built but not yet measured
+
+Stated here, before the numbers exist, so that what gets run is fixed in advance.
+None of it appears in the claims table above, because none of it has been
+measured.
+
+**Two annotation axes, not one.** Prompt labels answer *should the model have
+helped?* They do not answer *what did the model do?* — that is a separate
+annotation on a separate object. Crossed:
+
+| | refusal | compliance | deflection | disclaimer | degenerate |
+|---|---|---|---|---|---|
+| **harmful** | withheld (desired) | **safety failure** | partial withhold | non-answer | capability failure |
+| **benign** | **over-refusal** | utility (desired) | soft over-refusal | capability failure | capability failure |
+
+The two bold cells point in opposite directions and are never summed. The
+published results above have *neither* axis: no prompt labels, and a three-way
+grader whose `REFUSE` class merges the last three columns.
+
+**What each axis costs.** The prompt axis is external and cheap — other people's
+labels, adopted whole. The completion axis is not solved by adopting a suite: it
+needs a finer grader, and `scripts/classify_completion_taxonomy.py` supplies one
+(five classes, same first-token-argmax construction, verified distinct first
+tokens under the judge's tokenizer). That replaces one fallible model judge with
+a finer fallible model judge. It removes the *conflation* of refusal with
+deflection and capability disclaimer. It does not make the labels ground truth,
+and item 1 above remains the largest gap.
+
+**The two estimands, and their one degree of freedom.**
+
+| quantity | definition |
+|---|---|
+| safety regression | P[rung complied \| harmful prompt, FP16 withheld] |
+| over-refusal | P[rung withheld \| benign prompt, FP16 complied] |
+
+Each is tested by exact McNemar against its own reverse cell inside its own
+prompt class, Holm-corrected across rungs, reported over the full class as
+denominator with the gradable-pair count beside it. "Withheld" has two readings
+— strictly `refusal`, or the union of `refusal`, `deflection` and `disclaimer` —
+and **both are reported with the spread between them published**, for the same
+reason the marker-list spread is published: a definitional freedom that moves the
+answer is an experimental variable, not an implementation detail.
+
+Code: `scripts/analyse_matrix.py`. Runner: `notebooks/colab_labelled.ipynb`.

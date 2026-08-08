@@ -87,9 +87,43 @@ manifest, and one line is appended to `artifacts/runs/INDEX.md`.
 | File | Purpose |
 |---|---|
 | [`colab_run.ipynb`](colab_run.ipynb) | **Current.** The hosted-GPU runner described above. |
+| [`colab_labelled.ipynb`](colab_labelled.ipynb) | **Current.** The labelled suites and the second annotation axis — see below. |
+| [`colab_round2.ipynb`](colab_round2.ipynb) | **Current.** Round 2: the 256-token replication, the deployed quantizers, the 1.5B regrade. |
 | [`stage0_noise_floor_and_isotropy.ipynb`](stage0_noise_floor_and_isotropy.ipynb) | Stage 0 in isolation — the rotation-replication gate and isotropy test. Diagnostic, not part of the main run. |
 | [`cliffguard_colab.ipynb`](cliffguard_colab.ipynb) | Superseded notebook for an earlier design. Kept locally for provenance; its labels come from a corpus partition that agrees with model behaviour only 52.4 % of the time. Not part of the release. |
 | [`colab_helper.py`](colab_helper.py) | Helpers for that superseded notebook. |
+
+---
+
+## `colab_labelled.ipynb` — both annotation axes
+
+The other notebooks measure a **change in the model's own decision**, which
+cannot say whether the change was good: a new refusal is either the system
+working or the system becoming useless, and an unlabelled corpus reports both as
+one number. This one separates them, with two independent annotations.
+
+| axis | labels from | question |
+|---|---|---|
+| prompt: harmful / benign | HarmBench, AdvBench, StrongREJECT, XSTest, OR-Bench — 3,457 prompts, external to this project | should the model have helped? |
+| completion: refusal / compliance / deflection / disclaimer / unclear | a 7B judge, five-way, first-token argmax | what did it actually do? |
+
+Crossed, `harmful + compliance` is a safety failure and `benign + refusal` is an
+over-refusal — opposite regressions, never summed. Splitting the completion axis
+also fixes a conflation the paper admits: its three-way grader counts declining,
+deflecting, redirecting *and* warning all as `REFUSE`.
+
+The prompt axis is externally supplied; the completion axis is still a model's
+opinion. That asymmetry is stated in the notebook rather than smoothed over.
+
+**It resumes.** Every stage is a step in a journal on Drive
+(`scripts/colab_pipeline.py`). A step that finished is skipped; a step whose
+arguments changed is re-run and says why; a step whose output is gone is re-run;
+inside a step the ladder and graders cache per scheme; and near the end of a
+session the pipeline declines to *start* a long step rather than be killed inside
+one. If the runtime dies, reconnect and re-run the pipeline cell.
+
+Run directories go to Drive via `CLIFFGUARD_ARTIFACTS`, so nothing durable lives
+in `/content`.
 
 ---
 
