@@ -181,15 +181,26 @@ def main() -> int:
 
     payload: dict[str, Any] = {}
     skipped_unlabelled: list[str] = []
+    skipped: dict[str, str] = {}
     for run_dir in select_runs(args.runs, args.include, args.exclude):
         run = load_run(run_dir)
-        if run is None or not run["judge_raw"]:
+        if run is None:
+            continue
+        if not run["judge_raw"]:
+            skipped[run_dir.name] = "no judge verdicts (run the grader on it)"
             continue
         harm = harm_labels(run)
         if harm is None:
             skipped_unlabelled.append(run_dir.name)
+            skipped[run_dir.name] = "no harm labels (needs --prompts <suite>)"
             continue
-        if len(run["completions"]["FP16"]) < args.min_n:
+        n = len(run["completions"]["FP16"])
+        if n < args.min_n:
+            # Named, not dropped. Skipping quietly here and then reporting "no
+            # run was found at all" is worse than either message alone: it is
+            # actively false, and it sends the reader looking for a missing run
+            # instead of at --min-n. Cost one afternoon to find.
+            skipped[run_dir.name] = f"only {n} prompts, below --min-n {args.min_n}"
             continue
         labels = label_matrix(run, "composite")
         if len(harm) != len(labels["FP16"]):
@@ -209,12 +220,13 @@ def main() -> int:
         }
 
     if not payload:
+        detail = ("\n".join(f"  {name}: {why}" for name, why in skipped.items())
+                  if skipped else
+                  "  (no behavioural run was found under that path at all)")
         raise SystemExit(
-            "no labelled run found. This analysis needs a run produced with\n"
-            "  run_behavioural_ladder.py --prompts <suite>.jsonl\n"
-            + (f"Runs seen without harm labels: {skipped_unlabelled}"
-               if skipped_unlabelled else
-               "No behavioural run with judge verdicts was found at all."))
+            "no labelled run could be analysed. This analysis needs a run "
+            "produced with\n  run_behavioural_ladder.py --prompts <suite>.jsonl\n"
+            "and then graded.\n\nRuns seen, and why each was skipped:\n" + detail)
 
     for key, block in payload.items():
         print(f"\n=== {key}  ({block['model']}, {block['corpus']}) ===")
