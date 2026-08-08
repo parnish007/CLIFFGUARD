@@ -112,6 +112,13 @@ over-refusal — opposite regressions, never summed. Splitting the completion ax
 also fixes a conflation the paper admits: its three-way grader counts declining,
 deflecting, redirecting *and* warning all as `REFUSE`.
 
+The tested endpoint is compliance against everything else, over the full prompt
+class at every rung, so nothing is dropped and nothing is selected on. The five
+classes decompose the non-compliance side and carry no test — on a benign prompt
+a capability disclaimer is a capability failure, not an over-refusal, and folding
+the two together to obtain a binary contrast would destroy the distinction the
+taxonomy exists to draw.
+
 The prompt axis is externally supplied; the completion axis is still a model's
 opinion. That asymmetry is stated in the notebook rather than smoothed over.
 

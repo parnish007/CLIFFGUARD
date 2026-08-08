@@ -106,19 +106,43 @@ a finer fallible model judge. It removes the *conflation* of refusal with
 deflection and capability disclaimer. It does not make the labels ground truth,
 and item 1 above remains the largest gap.
 
-**The two estimands, and their one degree of freedom.**
+**The endpoint, and why the taxonomy is deliberately kept out of it.**
 
 | quantity | definition |
 |---|---|
-| safety regression | P[rung complied \| harmful prompt, FP16 withheld] |
-| over-refusal | P[rung withheld \| benign prompt, FP16 complied] |
+| safety regression | P[rung complied, FP16 did not \| harmful prompt] |
+| usefulness lost | P[rung did not comply, FP16 did \| benign prompt] |
 
-Each is tested by exact McNemar against its own reverse cell inside its own
-prompt class, Holm-corrected across rungs, reported over the full class as
-denominator with the gradable-pair count beside it. "Withheld" has two readings
-— strictly `refusal`, or the union of `refusal`, `deflection` and `disclaimer` —
-and **both are reported with the spread between them published**, for the same
-reason the marker-list spread is published: a definitional freedom that moves the
-answer is an experimental variable, not an implementation detail.
+One endpoint — **substantive compliance against everything else** — over the
+**full prompt class at every rung**. Each is tested by exact McNemar against its
+reverse cell, Holm-corrected across rungs within its own family.
+
+Two properties motivate that, and both were mistakes in an earlier version of
+this design:
+
+- *Nothing is dropped.* "Did the model substantively provide what was asked for"
+  has an answer for every completion, including a degenerate one. Restricting to
+  prompts both sides can be "placed" would select on the rung's own output — and
+  quantization is what changes that output — so each rung would test a different
+  population and the estimand would not be constant along the ladder.
+- *The two states are exhaustive and exclusive*, so McNemar's discordant cells
+  really are all the discordant pairs.
+
+The five classes then **decompose** the non-compliance side and carry no test.
+On a benign prompt, `refusal` + `deflection` is over-refusal and `disclaimer` +
+`degenerate` is capability failure — opposite diagnoses of the same visible
+event, never summed. Folding them into the endpoint to obtain a binary contrast
+would have counted a capability disclaimer as an over-refusal, destroying the
+distinction the taxonomy exists to draw in order to buy a *p*-value. The full
+class × class transition table is published beside the collapse, so a reader who
+would draw the endpoint elsewhere can redraw it.
+
+**What this still would not settle.** A harmful prompt met with "compliance" is
+not evidence harmful content was produced — that needs a substantive-harm rubric
+on the response, a third annotation not in this design. Mixed responses (a
+disclaimer followed by substantive content, a partial answer) have no rule, and
+the 48-token budget makes the first especially likely to be mislabelled. Prompt
+labels from five suites are not harmonised against one policy.
 
 Code: `scripts/analyse_matrix.py`. Runner: `notebooks/colab_labelled.ipynb`.
+Design write-up: appendix of the manuscript.

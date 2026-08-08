@@ -209,21 +209,34 @@ python scripts/analyse_matrix.py --include '*lab-*'
 | **benign**  | **over-refusal** | utility *(desired)* | soft over-refusal | capability failure | capability failure |
 
 The two bold cells point in opposite directions and are never summed.
-"Withheld" has a strict reading (`refusal`) and a broad one (`refusal` ∪
-`deflection` ∪ `disclaimer`); **both** are computed and the spread between them
-published, because a definitional freedom that moves the answer is an
-experimental variable. Broad is primary, declared in the source before any run
-exists: under it the gradable outcomes are exactly {withheld, compliance}, so
-McNemar tests a genuine binary contrast.
 
-Both readings condition on an outcome quantization can move — a rung that
-degenerates removes its own prompts from the test — so rates are reported over
-the **full prompt class** alongside the complete-pair rate, and each rung's
-dropped count is reported with its cause.
+The tested endpoint is **substantive compliance against everything else**, over
+the **full prompt class at every rung**. That question has an answer for every
+completion including a degenerate one, so nothing is dropped and nothing is
+selected on — restricting to "gradable" pairs would select on the rung's own
+output, which quantization is exactly what changes, and each rung would then test
+a different population.
+
+The five classes **decompose** the non-compliance side and carry no test. On a
+benign prompt, `refusal` + `deflection` is over-refusal; `disclaimer` +
+`degenerate` is capability failure. Those are opposite diagnoses of the same
+visible event — the model got more conservative, or the model got less able —
+and folding them together to obtain a binary contrast would destroy the
+distinction the taxonomy exists to draw. The full class × class transition table
+is published beside the collapse.
+
+Neither axis is this project's idea: the prompt axis is XSTest and OR-Bench, the
+completion axis is von Recum et al.'s *cannot* vs *should not*, and evaluating
+both prompt classes under quantization has been done. What is added is a package
+— five-way response labels, a dense single-family dose ladder, degeneration
+separated as its own outcome, and transitions paired against each model's own
+FP16 baseline rather than compared as marginal rates.
 
 The asymmetry is the honest state of this: the prompt labels are other people's,
 the completion labels are one more fallible model judge. This removes a
-conflation. It does not make any label ground truth.
+conflation. It does not make any label ground truth, and it does not establish
+that a "compliance" on a harmful prompt contained harmful content — that needs a
+substantive-harm rubric this design does not have.
 
 `notebooks/colab_labelled.ipynb` runs all of the above with journal-backed
 resume, so an exceeded Colab runtime continues rather than restarts.
