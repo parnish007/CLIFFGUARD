@@ -2,6 +2,7 @@
 
 [← Docs index](README.md) &nbsp;|&nbsp;
 [Claims ledger](claims_and_evidence.md) &nbsp;|&nbsp;
+[Provenance](data_provenance.md) &nbsp;|&nbsp;
 [Setup](setup.md) &nbsp;|&nbsp;
 [Colab](setup_colab.md)
 
@@ -12,6 +13,12 @@
 The single reference for *what* this project measures, *why* each choice was
 made, *which choices were reversed and why*, and *what to do when something
 breaks*. Written for lookup, not for reading end to end.
+
+Three companion pages carry what this one deliberately does not:
+[`claims_and_evidence.md`](claims_and_evidence.md) for what is and is not
+asserted, [`data_provenance.md`](data_provenance.md) for which run produced
+which number across three experiments, and `docs/results_labelled.md` (local
+only) for the round-3 results in full.
 
 If you change something here, change it in the code in the same commit. A
 methodology document that describes a pipeline the repository does not implement
@@ -187,6 +194,33 @@ A claim quantified over models or suites is a larger family than that controls.
    response has failed, not the model — but dropping those prompts would
    reintroduce selection. Deliberate trade, reported separately.
 
+### The fourth blind spot, found in the 2026-08-08 run: endpoint saturation
+
+The three above were anticipated. This one was not, and it is the largest.
+
+**The endpoint can be empty.** If no scheme ever produces the compliance verdict
+on a harmful prompt — *including the FP16 reference every rung is compared
+against* — then `safety_lost` is 0 because the arm has no dynamic range, and
+every exact-McNemar *p* is 1.000 because there are no discordant pairs. Both
+read as findings. Neither is one.
+
+That is exactly what the labelled XSTest runs produced, in all 21 cells, driven
+by a 48-token budget that ends inside the answer's preamble. The full account is
+in `docs/results_labelled.md` — **not linked, because it is not published**:
+`docs/results_*.md` is gitignored along with `docs/paper/`, so results are
+released deliberately rather than as a side effect of a commit. It is written by
+hand and checked by `tests/test_results_labelled_doc.py`, which recomputes every
+number in it and skips when the runs are absent.
+
+`analyse_matrix.py` now detects this and prints `ENDPOINT SATURATED ON THE
+SAFETY ARM` with the exact claim the data supports and the four claims it does
+not. **Before quoting any zero from the safety arm, check whether that banner
+was printed.**
+
+The general rule this generalises to: *a negative result is only a result if the
+instrument could have returned something else.* Report the baseline's own rate
+on the endpoint, always, so a reader can see whether there was room to move.
+
 ---
 
 ## 5. Decisions we reversed — do not re-litigate
@@ -269,12 +303,16 @@ Say that. Do not write "what is new is the crossing".
 |---|---|
 | Degeneracy is decided before refusal | `resolve()` gates first; tested |
 | Judge labels have distinct first tokens | asserted at load; preflight |
+| Unequal label tokenization is reported, not hidden | `label_token_report`; written to the manifest |
+| A zero endpoint is distinguished from a zero result | `safety_arm_saturated`; banner printed |
+| A ladder-wide bound is family-adjusted | `simultaneous_safety_bound` |
 | A cache key identifies WHAT was run, not just how much | corpus fingerprint in every cache filename |
 | Two graders' caches never silently merge | `load_run` refuses >1 cache per scheme |
 | Two runs never share a label silently | both analyses refuse |
 | An unmeasured quantity prints `NA`, never `0.00` | `_pct` / `_p` helpers |
 | The prompt classes are interleaved before truncation | `load_labelled_prompts`; suites ship class-ordered |
 | Nothing is dropped from the tested population | `paired()` uses full class |
+| The results write-up matches the runs | `tests/test_results_labelled_doc.py` recomputes every figure |
 
 Each has a test. If you break one, a test fails — that is the point.
 
@@ -323,6 +361,12 @@ Earned the hard way. Symptom → cause → fix.
 | Drive fills / disk error mid-run | 3 models + 7B judge ≈ 32.5 GB vs 15 GB free Drive | notebook picks `HF_HOME` from measured free space |
 | Notebook prints "all steps complete" but results are missing | *fixed* — was the deadline path returning 0 | check `pipe.outstanding()` |
 | CUDA OOM during generation | batch too large | handled automatically by halving; persists → lower `--batch-size` |
+| Safety arm reads `0` and `p = 1.000` at every rung | **endpoint saturation** — the compliance class is empty on harmful prompts even at FP16 | check for the `ENDPOINT SATURATED` banner. Not a negative result; the arm had no dynamic range |
+| Judge calls a plainly compliant answer `DEFLECT` | the completion was cut off at `--max-new-tokens` before delivering | raise the budget. It is part of the cache key, so this regenerates rather than upgrades |
+| Marker refusal rate wildly disagrees with the judge | the phrase list is family-specific — recall was 49% / 24% / **3.6%** across three families | do not compare marker rates across families; use the judge for anything cross-model |
+| A five-way class reads 0 everywhere | possibly the label's tokenization, not the behaviour | check `label_tokenization` in the manifest. `DISCLAIM` is one token, the other four are prefixes |
+| Token counts look wrong for a non-Qwen model | measured with the wrong tokenizer | use each model's own; Qwen's reported Phi as 0% truncated when it was 100% |
+| The PDF prints `ef{tab:x}` or `ewline` as literal text, and LaTeX reported **no warning** | a bash heredoc ate the backslash: `\r`→CR, `\n`→LF, `\t`→TAB. **This happens even with a quoted delimiter** (`<< 'EOF'`) | never write LaTeX or regexes through a heredoc — use the Write/Edit tools, or `chr(92)`. Guarded by `tests/test_paper_assets.py::test_no_latex_control_word_lost_its_backslash` |
 
 **First thing to check on any Colab failure:** the per-step log on Drive under
 `logs_labelled/<step>.log`. Colab's cell output lives in the browser and is lost
@@ -341,7 +385,18 @@ on disconnect; the log is the only record.
 3. Read the **cautions** the matrix prints before reading the table — they say
    how much of the reverse cell was a collapsing model, and how many harmful
    prompts were graded on a deflection.
-4. Regenerate paper data and check the prose:
+4. **Check for the `ENDPOINT SATURATED` banner before quoting any zero.** If it
+   printed, the safety arm had no dynamic range and the zero means the
+   instrument never moved, not that nothing happened.
+5. Size the unadjudicated population, and read some of it:
+   ```bash
+   python scripts/analyse_leakage.py --runs artifacts/runs --include '*lab-*' \
+          --dump-matches queue.json
+   python scripts/build_labelled_figures.py
+   ```
+   The counts it prints are a **queue for human reading**, not a measure of
+   harm — the detector is a regular expression written against this corpus.
+6. Regenerate paper data and check the prose:
    ```bash
    python scripts/build_paper_data.py
    python scripts/build_paper_tables.py

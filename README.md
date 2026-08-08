@@ -338,7 +338,7 @@ are kept locally and excluded from the published tree rather than deleted.
 
 ## Status
 
-![Tests](https://img.shields.io/badge/tests-428_passing-brightgreen?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-469_passing-brightgreen?style=flat-square)
 ![mypy](https://img.shields.io/badge/mypy-strict-brightgreen?style=flat-square)
 ![ruff](https://img.shields.io/badge/ruff-clean-orange?style=flat-square)
 ![Paper](https://img.shields.io/badge/paper-27pp,_zero_overfull-blue?style=flat-square)

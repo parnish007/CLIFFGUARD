@@ -76,10 +76,20 @@ tmp/
 *.log
 external_data/
 
-# Downloaded run archives and their extractions
-notebooks/cliffguard_colab_*/
-notebooks/cliffguard_colab_*.zip
+# Downloaded run archives and their extractions.
+# The first two patterns named one archive prefix and missed the next one that
+# arrived (`cliffguard_labelled_*`), leaving 2.7 MB of results unprotected in a
+# repository whose whole convention is that results are published deliberately.
+# Matched on the shared prefix now, so a new archive name is covered in advance.
+notebooks/cliffguard_*/
+notebooks/cliffguard_*.zip
 notebooks/colab_alreadyrun.ipynb
+
+# Executed notebooks. A notebook that has been run carries its outputs, which
+# are results; the committed copies are clean templates. `colab_run_EXECUTED`
+# predates this rule and stays tracked rather than being removed from history.
+notebooks/*-ranned.ipynb
+notebooks/*-executed.ipynb
 
 # ---------------------------------------------------------------------------
 # Notebook noise

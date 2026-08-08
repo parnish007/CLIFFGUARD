@@ -33,7 +33,20 @@ Comparisons are always against the *same model at FP16 on the same prompts*.
 | 9 | Perplexity alone cannot detect degeneration, and fails in the direction that matters | Qwen2.5-3B median NLL at 2.5 bits is 4.13, *lower* than 3.5 bits at 5.80. NLL-only flags 15.6% of 2.5-bit completions; composite flags 99.8% | `reanalyse_runs.py` |
 | 10 | A frozen refusal probe retains **95–100%** across 8.5–4.5 bits on both models in the refusal arm, and falls to 57% at Phi-3.5-mini's largest shift, the 3.5-bit rung. Labels are the 7B judge's, matching the behavioural arm; the marker-label variant reads 96–100% and 63% | Difference-in-means direction fitted on one prompt half, scored on a disjoint half, 200 synchronized splits | `review_reanalysis.py` → `probe` |
 | 11 | Capability collapses at a **model-specific** bit-width, one full bit apart | Qwen2.5-3B and Qwen2.5-1.5B destroyed at 3.5 bits (*p*<sub>21</sub> < 0.001 and = 0.001); Phi-3.5-mini shows no significant paired difference at 3.5 bits, collapses at 2.5 | `review_reanalysis.py` → `gsm8k` |
-| 12 | The judge's three labels are separable by first-token argmax | Each label is two tokens under the Qwen2.5 tokenizer, but the first tokens are distinct: ids 38029 / 7682 / 75255. Asserted at load time | `classify_completions_judge.py` |
+| 12 | The judge's three labels are separable by first-token argmax | Each label is two tokens under the Qwen2.5 tokenizer, but the first tokens are distinct: ids 38029 / 7682 / 75255. Asserted at load time. Separable is not the same as *equally scored* — see claim 16 | `classify_completions_judge.py` |
+
+### Round 3 — the labelled suites (2026-08-08)
+
+Three families, XSTest, 21 model×rung cells. See
+[`data_provenance.md`](data_provenance.md) for how these were collected and why
+they are **not** comparable cell-for-cell with claims 1–12 above.
+
+| # | Claim | Evidence | Where |
+|---|---|---|---|
+| 13 | One refusal-phrase list reads three model families at **49.3% / 23.5% / 3.6%** recall | Against the five-way judge's declining classes at full precision, on identical prompts, while all three models decline at nearly the same rate (277–281 of 300). Phi-3.5-mini declines with "I must clarify that…", absent from the 25-string list | `labelled_paper_stats.json` → `recall` |
+| 14 | The five-way judge's **compliance class is empty on harmful prompts** in all 21 cells, including every FP16 reference | So a paired safety statistic on that endpoint is 0 by construction and its exact McNemar *p* is 1.000 for want of discordant pairs. Reported as an instrument property | `analyse_matrix.py` → `ENDPOINT SATURATED` banner |
+| 15 | **92.7 / 100.0 / 96.3%** of full-precision completions reach the 48-token cap rather than stopping, and never below **85%** down to 4.5 stored bits | Measured under each model's own tokenizer. It falls at 3.5 and 2.5 bits — to 63% and 34% on Qwen — because the models stop early for a different reason: output has degenerated. Truncation is the most plausible explanation for the empty compliance class, not a demonstrated cause | `labelled_paper_stats.json` → `at_cap_by_scheme` |
+| 16 | The five label words are **not scored alike** | `REFUSE`/`COMPLY`/`DEFLECT`/`UNCLEAR` begin with 3-character prefixes; `DISCLAIM` is one whole-word token. Every token over-counts its label, but a common short prefix carries far more unrelated mass. `DISCLAIM` never exceeded 3 of 300 in any of the 24 scheme×model cells, and was 0 in 19 of them | `classify_completion_taxonomy.py` → `label_tokenization` |
 
 ## Claims explicitly **not** made
 
@@ -51,6 +64,11 @@ Comparisons are always against the *same model at FP16 on the same prompts*.
 | Anything about AWQ, GPTQ, GGUF k-quants, or mixed precision | One quantizer family was tested, deliberately, so that only bit-width varies |
 | Anything about sampled decoding, long completions, or non-English prompts | Greedy, 48 tokens, English |
 | That the bit-width selection rule in the paper's §9.2 improves deployments | It is stated as a testable design hypothesis. Every quantity in it is measured here; whether optimising against them beats the conventional rule is untested |
+| "Round 3 found no safety regression" | The endpoint saturated: substantive compliance was never the verdict on a harmful prompt at *any* rung, including the full-precision reference each rung is compared against. The instrument had no dynamic range, so 0 was the only value it could return. The defensible form names the instrument: *this judge detected no non-compliance→compliance transition on these prompts at this budget* |
+| "Harmful compliance is bounded below 3.95% across the 21 cells" | The bound is on **detected transitions under this endpoint**, not on harmful content or on behaviour. It also assumes the 150 prompts of each class are exchangeable with a population; they are the first *n* of a fixed benchmark, not a random sample |
+| A quantitative reading of the `DISCLAIM` class | Withdrawn — claim 16. Genuine rarity and a tokenization artefact cannot be separated from what was stored: the cache holds verdicts and top-two margins, not the five logits, so no rescoring is possible after the fact |
+| That SmolLM2's withheld harmful completions leak harmful content | An in-sample regular expression flags 72 of 150 as turning toward an answer. That is an **unadjudicated queue**, not a measurement: the pattern was written by reading these very completions and never checks whether the offered material answers the request. Blinded human labels against a substantive-harm rubric would be needed |
+| That round-3 rungs are comparable to round-1 rungs cell for cell | Different corpus (XSTest vs unlabelled paired prompts), different *n* (300 vs 500), different grader (5-way vs 3-way), different bit labelling (8–2 code bits vs 8.5–2.5 stored bits), different multiplicity family (21 vs 14). See [`data_provenance.md`](data_provenance.md) §1 |
 
 ## Open work, in priority order
 

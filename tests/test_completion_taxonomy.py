@@ -17,6 +17,7 @@ from scripts.classify_completion_taxonomy import (
     LABELS,
     gate_mask,
     label_first_token_ids,
+    label_token_report,
     resolve,
 )
 
@@ -80,6 +81,66 @@ def test_the_five_labels_have_distinct_first_tokens_under_qwen() -> None:
     ids = label_first_token_ids(FakeTokenizer())
     assert ids == [38029, 7682, 23865, 24717, 75255]
     assert len(set(ids)) == len(LABELS)
+
+
+class _QwenLike:
+    """The real Qwen2.5 pieces: four prefixes and one whole word."""
+
+    table = {" REFUSE": [38029, 8171], " COMPLY": [7682, 22781],
+             " DEFLECT": [23865, 12206], " DISCLAIM": [24717],
+             " UNCLEAR": [75255, 934]}
+    decoded = {38029: " REF", 7682: " COM", 23865: " DEF",
+               24717: " DISCLAIM", 75255: " UNC"}
+
+    def encode(self, text, add_special_tokens=False):
+        return list(self.table.get(text, []))
+
+    def decode(self, ids):
+        return "".join(self.decoded[i] for i in ids)
+
+
+def test_the_qwen_labels_are_distinct_but_not_uniformly_tokenized() -> None:
+    """Distinctness passes and uniformity does not, which is the whole point.
+
+    DISCLAIM is the only label whose entire word is one token; the other four
+    are scored on prefixes that many other words share. P(" DEF") includes the
+    mass leading to "define" and "default", so it exceeds the probability of
+    the label it stands for, while " DISCLAIM" tracks its label closely -- the
+    five numbers being argmaxed are not five estimates of the same kind of
+    thing. (The statement is about probabilities: a raw logit bounds nothing,
+    and softmax being monotone means the argmax itself is still well defined.)
+
+    This ran for a full three-model sweep before anyone noticed, and DISCLAIM
+    came back 0-1 out of 300 every time.
+    """
+    report = label_token_report(_QwenLike())
+    assert report["scored_on_whole_word"] == ["DISCLAIM"]
+    assert set(report["scored_on_prefix"]) == {"REFUSE", "COMPLY", "DEFLECT",
+                                               "UNCLEAR"}
+    assert report["uniform_tokenization"] is False
+    assert report["per_label"]["DEFLECT"]["first_piece"] == " DEF"
+    assert report["per_label"]["DISCLAIM"]["n_tokens"] == 1
+
+
+def test_labels_that_all_tokenize_whole_are_reported_uniform() -> None:
+    class AllWhole:
+        ids = dict(zip((" " + lab for lab in LABELS), ([i] for i in range(1, 6))))
+
+        def encode(self, text, add_special_tokens=False):
+            return list(self.ids.get(text, []))
+
+        def decode(self, ids):
+            return f"<{ids[0]}>"
+
+    report = label_token_report(AllWhole())
+    assert report["uniform_tokenization"] is True
+    assert report["scored_on_prefix"] == []
+
+
+def test_the_asymmetry_does_not_stop_the_run() -> None:
+    """It is a caveat to report, not a defect to abort on -- the verdicts are
+    still usable, they are just not equally calibrated across the five."""
+    assert label_first_token_ids(_QwenLike()) == [38029, 7682, 23865, 24717, 75255]
 
 
 def test_colliding_first_tokens_stop_the_run_rather_than_grading_anyway() -> None:

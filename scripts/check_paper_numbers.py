@@ -330,6 +330,52 @@ class UniqueCheck(NamedTuple):
 MIN_GRADED = 400          # matches build_paper_tables and build_paper_figures
 
 
+_WORD_NUMBER = {"zero": "0", "one": "1", "two": "2", "three": "3", "four": "4",
+                "five": "5", "six": "6", "seven": "7", "eight": "8",
+                "nine": "9", "ten": "10"}
+
+
+def _digits(text: str) -> str:
+    """Normalise `three of four` and `3 of 4` to one form.
+
+    Prose spells small numbers out; a recomputed tally does not. Without this
+    the consistency check reports a contradiction between two ways of writing
+    the same fact, which trains a reader to ignore it.
+    """
+    return " ".join(_WORD_NUMBER.get(w.lower(), w) for w in text.split())
+
+
+def _direction_tally(agreement: dict[str, Any]) -> str:
+    """How many grader x model comparisons agree on the direction, and of how many.
+
+    Guarded because the paper contradicted itself here: three passages claimed
+    the shift was "consistent in sign under every grader we tried" while the
+    grader section said three of four agreed. One comparison
+    (Llama-3.3-70B on Qwen2.5-3B) runs the other way, 1 toward refusal against
+    2 toward compliance. A claim of unanimity is the most damaging kind of
+    error a replication section can contain, so it is recomputed rather than
+    trusted.
+
+    Two exclusions, both the same ones the agreement range applies. A sweep
+    below MIN_GRADED completions cannot support a paired comparison at all, and
+    a tie -- no transitions in either direction -- has neither agreed nor
+    disagreed with anything. Under those, the tally is 3 of 4; without the
+    floor it would read 4 of 5, and quoting that would count two four-completion
+    sweeps as evidence.
+    """
+    toward = total = 0
+    for models in agreement.values():
+        for block in models.values():
+            if block.get("n_compared", 0) < MIN_GRADED:
+                continue
+            for row in block.get("reproduction") or []:
+                if row["to_refusal"] == row["to_compliance"]:
+                    continue
+                total += 1
+                toward += row["to_refusal"] > row["to_compliance"]
+    return f"{toward} of {total}"
+
+
 def _agreement_range(agreement: dict[str, Any]) -> str:
     """Agreement span over the sweeps large enough to support a comparison.
 
@@ -345,6 +391,16 @@ def _agreement_range(agreement: dict[str, Any]) -> str:
 
 
 UNIQUE_CHECKS: tuple[UniqueCheck, ...] = (
+    UniqueCheck(
+        # Catches the self-contradiction directly: any sentence of the form
+        # "<n> of <m> grader comparisons" must agree with the recomputed tally.
+        # The unanimity phrasings that prompted this ("consistent in sign under
+        # every grader we tried") state no numbers at all, so they are caught by
+        # the separate no-unanimity test rather than here.
+        "grader direction tally stated consistently",
+        lambda s: s["_direction_tally"],
+        r"(\w+ of (?:\w+)) grader comparisons",
+    ),
     UniqueCheck(
         "Phi 3.5 retention stated consistently",
         lambda s: f"{100 * _probe_row(s, 'Phi-3.5-mini', 3.5)['retained_mean']:.0f}",
@@ -443,6 +499,107 @@ DATA_CHECKS: tuple[Check, ...] = (
 )
 
 
+# ---------------------------------------------------------------------------
+# the labelled-suite subsection (round 3)
+# ---------------------------------------------------------------------------
+
+
+def _recall(labelled: dict[str, Any], model: str) -> str:
+    return f"{100 * labelled[model]['recall']:.1f}"
+
+
+def _bound(k: int, n: int, family: int) -> str:
+    """One-sided Clopper-Pearson, Bonferroni-adjusted for a family of `family`.
+
+    Recomputed here rather than read from a file, because the three bounds the
+    subsection quotes differ only in their family size and mixing them up is the
+    exact error the sentence exists to prevent.
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from scripts.review_reanalysis import clopper_pearson_upper
+
+    return f"{100 * clopper_pearson_upper(k, n, 1 - 0.05 / family):.2f}"
+
+
+def _flagged() -> str:
+    """Withheld-harmful completions the exploratory pattern matches at FP16.
+
+    Read from `leakage_stats.json` rather than `labelled_paper_stats.json`,
+    because this quantity is deliberately kept out of the tables: it is a count
+    of string matches by an in-sample rule, not a measurement, and the paper
+    says so where it states it.
+    """
+    path = Path("docs/paper/leakage_stats.json")
+    blocks = json.loads(path.read_text(encoding="utf-8"))
+    by_model = {b["model"]: b["fp16_sensitive_comply"] for b in blocks}
+    smol = next(v for k, v in by_model.items() if "SmolLM2" in k)
+    qwen = next(v for k, v in by_model.items() if "Qwen2.5-3B" in k)
+    phi = next(v for k, v in by_model.items() if "Phi-3.5" in k)
+    return f"{smol} {qwen} {phi}"
+
+
+LABELLED_CHECKS: tuple[Check, ...] = (
+    # "coverage relative to the judge", not "recall": the denominator is the
+    # instrument this paper indicts, and the prose says so rather than implying
+    # accuracy against a ground truth it does not have.
+    Check("labelled coverage, Qwen2.5-3B",
+          lambda d: _recall(d, "Qwen2.5-3B"),
+          lambda v: _rx(rf"is {v}\\%, 23\.5\\% and 3\.6\\%")),
+    Check("labelled coverage, SmolLM2",
+          lambda d: _recall(d, "SmolLM2-1.7B"),
+          lambda v: _rx(rf"is 49\.3\\%, {v}\\% and 3\.6\\%")),
+    Check("labelled coverage, Phi-3.5-mini",
+          lambda d: _recall(d, "Phi-3.5-mini"),
+          lambda v: _rx(rf"is 49\.3\\%, 23\.5\\% and {v}\\%")),
+    Check("truncation at full precision",
+          lambda d: " ".join(
+              f"{100 * d[m]['at_cap_by_scheme']['FP16']:.1f}"
+              for m in ("Qwen2.5-3B", "Phi-3.5-mini", "SmolLM2-1.7B")),
+          lambda v: _rx(r"{}\\%, {}\\% and\s+{}\\% of full-precision".format(
+              *v.split()))),
+    Check("phrase-list counts, all three",
+          lambda d: " ".join(str(d[m]["marker"]) for m in
+                             ("Qwen2.5-3B", "SmolLM2-1.7B", "Phi-3.5-mini")),
+          lambda v: _rx(r"phrase list seeing {}, {} and {} of them".format(
+              *v.split()))),
+    Check("benign compliance, all three",
+          lambda d: " ".join(str(d[m]["benign_comply"]) for m in
+                             ("Qwen2.5-3B", "Phi-3.5-mini", "SmolLM2-1.7B")),
+          lambda v: _rx(r"substantive compliance {}, {} and {} times".format(
+              *v.split()))),
+    Check("marker precision, all three",
+          lambda d: f"{min(m['precision'] for m in d.values()):.3f}",
+          lambda v: _rx(rf"precision\s+against the judge is exactly \${v}\$")),
+    Check("completions the list misses",
+          lambda d: " ".join(str(d[m]["missed"]) for m in
+                             ("Qwen2.5-3B", "SmolLM2-1.7B", "Phi-3.5-mini")),
+          lambda v: _rx(r"the list misses {}, {} and {} completions".format(
+              *v.split()))),
+    Check("kappa, all three",
+          lambda d: " ".join(f"{d[m]['kappa']:.3f}" for m in
+                             ("Qwen2.5-3B", "SmolLM2-1.7B", "Phi-3.5-mini")),
+          lambda v: _rx(r"\$\\kappa\$ is \${}\$, \${}\$ and \${}\$".format(
+              *v.split()))),
+    # The exploratory pattern counts. Guarded precisely because they are the
+    # numbers most tempting to leave stale: they are not carried into any table
+    # or bound, so nothing else would catch them drifting.
+    Check("pattern-flagged withheld, all three",
+          lambda d: _flagged(),
+          lambda v: _rx(r"matches {} of SmolLM2's 150\s+withheld harmful "
+                        r"completions at full precision, {} of Qwen2\.5-3B's "
+                        r"and {} of\s+Phi-3\.5-mini's".format(*v.split()))),
+    Check("bound, one cell",
+          lambda d: _bound(0, 150, 1),
+          lambda v: _rx(rf"is {v}\\% for a single")),
+    Check("bound, seven rungs",
+          lambda d: _bound(0, 150, 7),
+          lambda v: _rx(rf"{v}\\% simultaneously across one model")),
+    Check("bound, twenty-one cells",
+          lambda d: _bound(0, 150, 21),
+          lambda v: _rx(rf"and {v}\\% across all 21")),
+)
+
+
 def live_tex(source: str) -> str:
     r"""Strip what the reader never sees, so a check cannot be satisfied by it.
 
@@ -465,6 +622,11 @@ def main() -> int:
                     default=Path("docs/paper/data.json"))
     ap.add_argument("--agreement", type=Path,
                     default=Path("docs/paper/judge_agreement.json"))
+    ap.add_argument("--labelled", type=Path,
+                    default=Path("docs/paper/labelled_paper_stats.json"),
+                    help="round-3 measurements; skipped when absent, because "
+                         "the labelled subsection is only in the paper when "
+                         "those runs are")
     args = ap.parse_args()
 
     # The manuscript and its consolidated measurement files are not published
@@ -487,8 +649,9 @@ def main() -> int:
     # recomputed here rather than stored, because the floor that defines it is a
     # decision this file has to be able to state.
     if args.agreement.exists():
-        stats["_agreement_range"] = _agreement_range(
-            json.loads(args.agreement.read_text(encoding="utf-8")))
+        agreement = json.loads(args.agreement.read_text(encoding="utf-8"))
+        stats["_agreement_range"] = _agreement_range(agreement)
+        stats["_direction_tally"] = _direction_tally(agreement)
     data = json.loads(args.data.read_text(encoding="utf-8"))
     text = live_tex(args.tex.read_text(encoding="utf-8"))
 
@@ -511,11 +674,31 @@ def main() -> int:
             failures.append(f"  {check.label}: expected {value!r} in context "
                             f"/{check.pattern(value)}/")
 
+    # Round 3 travels with its own measurement file. If the subsection is in the
+    # manuscript, its numbers are checked; if the runs are absent, so is the
+    # subsection, and there is nothing to check rather than something broken.
+    if args.labelled.exists():
+        labelled = json.loads(args.labelled.read_text(encoding="utf-8"))
+        for check in LABELLED_CHECKS:
+            value = check.value(labelled)
+            found = re.search(check.pattern(value), text) is not None
+            print(f"{check.label:34s} {value:16s} {'ok' if found else 'MISSING'}")
+            if not found:
+                failures.append(f"  {check.label}: expected {value!r} in "
+                                f"context /{check.pattern(value)}/")
+    elif "sec:labelled" in text:
+        failures.append(
+            "  the manuscript contains the labelled subsection but "
+            f"{args.labelled} is missing, so none of its numbers are checked. "
+            "Run scripts/build_labelled_tables.py.")
+
     print()
     for unique in UNIQUE_CHECKS:
         value = unique.value(stats)
         found = re.findall(unique.pattern, text)
-        wrong = sorted({f for f in found if f != value})
+        # Compared on the digit-normalised form, so "three of four" and
+        # "3 of 4" are one statement rather than a false contradiction.
+        wrong = sorted({f for f in found if _digits(f) != _digits(value)})
         status = ("NOT STATED" if not found
                   else f"CONTRADICTED by {wrong}" if wrong
                   else f"ok ({len(found)}x)")
@@ -546,7 +729,12 @@ def main() -> int:
         print("\nprose disagrees with the measurements:")
         print("\n".join(failures))
         return 1
-    print(f"\nall {len(CHECKS) + len(DATA_CHECKS) + len(DOC_CHECKS)} "
+    # The labelled group is conditional, so the total is computed rather than
+    # written down -- a fixed number would quietly under-report the moment
+    # round 3's measurements were present.
+    n_checked = (len(CHECKS) + len(DATA_CHECKS) + len(DOC_CHECKS)
+                 + (len(LABELLED_CHECKS) if args.labelled.exists() else 0))
+    print(f"\nall {n_checked} "
           f"quoted quantities match {args.stats} in context, and "
           f"{len(UNIQUE_CHECKS)} of them are stated consistently everywhere "
           "they appear")

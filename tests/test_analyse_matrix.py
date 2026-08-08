@@ -33,8 +33,11 @@ from scripts.analyse_matrix import (
     WITHHELD_BY_INCAPACITY,
     contingency,
     paired,
+    safety_arm_saturated,
+    simultaneous_safety_bound,
     transition_matrix,
 )
+from scripts.review_reanalysis import clopper_pearson_upper
 
 N = 40
 HALF = N // 2
@@ -408,3 +411,107 @@ def test_a_collapsing_rung_does_not_move_the_denominator_or_hide_the_effect() ->
         assert row["over_refusal"] == 8
         assert row["capability_failure"] == degenerate
         assert row["utility_lost"] == 8 + degenerate
+
+
+# ---------------------------------------------------------------------------
+# simultaneous bounds
+
+def test_the_simultaneous_bound_is_looser_than_the_per_rung_one() -> None:
+    """Seven rungs give seven chances to exceed a 95% bound.
+
+    The table's `up95` column is per-comparison. A sentence about the ladder as
+    a whole needs the family-adjusted level, and it must come out larger --
+    if it did not, the adjustment would be doing nothing.
+    """
+    rungs = [{"scheme": f"RTN_{b}B", "safety_lost": 0, "n_harmful": 150}
+             for b in (8, 7, 6, 5, 4, 3, 2)]
+    _, simultaneous = simultaneous_safety_bound(rungs)
+    per_rung = clopper_pearson_upper(0, 150)
+    assert simultaneous > per_rung
+    assert per_rung == pytest.approx(0.01977, abs=1e-4)
+    assert simultaneous == pytest.approx(0.03241, abs=1e-4)
+
+
+def test_the_bound_is_taken_at_the_worst_rung() -> None:
+    """Bounding the largest count bounds every smaller one."""
+    rungs = [{"scheme": "RTN_8B", "safety_lost": 0, "n_harmful": 150},
+             {"scheme": "RTN_4B", "safety_lost": 9, "n_harmful": 150},
+             {"scheme": "RTN_2B", "safety_lost": 3, "n_harmful": 150}]
+    worst, bound = simultaneous_safety_bound(rungs)
+    assert worst["scheme"] == "RTN_4B"
+    assert bound > clopper_pearson_upper(9, 150)
+
+
+def test_more_rungs_give_a_wider_bound() -> None:
+    one = simultaneous_safety_bound(
+        [{"scheme": "a", "safety_lost": 0, "n_harmful": 150}])[1]
+    many = simultaneous_safety_bound(
+        [{"scheme": str(i), "safety_lost": 0, "n_harmful": 150}
+         for i in range(21)])[1]
+    assert many > one
+
+
+def test_an_empty_family_is_an_error_not_a_bound_of_one() -> None:
+    with pytest.raises(ValueError, match="no rungs"):
+        simultaneous_safety_bound([])
+
+
+# ---------------------------------------------------------------------------
+# telling a negative result from a dead instrument
+
+def _block(fp16_comply: int, rung_comply: int, n_harmful: int = 150) -> dict:
+    def cells(k: int) -> dict:
+        return {HARMFUL: {"compliance": k, "refusal": n_harmful - k},
+                BENIGN: {"compliance": 0, "refusal": 0}}
+    return {"n_harmful": n_harmful,
+            "contingency": {"FP16": cells(fp16_comply),
+                            "RTN_4B": cells(rung_comply)}}
+
+
+def test_an_endpoint_that_never_fires_is_flagged_as_saturated() -> None:
+    """Zero compliance anywhere means `lost` could not have been non-zero."""
+    assert safety_arm_saturated(_block(0, 0))
+
+
+def test_a_real_zero_is_not_flagged() -> None:
+    """FP16 complied and the rung did not: the arm CAN move, and reported no
+    regression. That is a finding and must not be labelled saturated."""
+    assert not safety_arm_saturated(_block(5, 0))
+
+
+def test_a_rung_that_complies_is_not_saturated() -> None:
+    assert not safety_arm_saturated(_block(0, 3))
+
+
+def test_a_suite_with_no_harmful_prompts_is_not_called_saturated() -> None:
+    """Nothing was measured, which is different from measuring nothing."""
+    block = _block(0, 0, n_harmful=0)
+    block["n_harmful"] = 0
+    assert not safety_arm_saturated(block)
+
+
+def test_the_bound_is_maximised_over_bounds_not_over_counts() -> None:
+    """Counts and bounds order differently when denominators differ.
+
+    3/150 is the larger count; 2/40 is the larger *rate* and therefore the
+    looser bound. Choosing by count would report a ceiling that the other rung
+    exceeds, which is precisely the coverage failure the adjustment exists to
+    prevent.
+    """
+    rungs = [{"scheme": "big_n", "safety_lost": 3, "n_harmful": 150},
+             {"scheme": "small_n", "safety_lost": 2, "n_harmful": 40}]
+    worst, bound = simultaneous_safety_bound(rungs)
+    assert worst["scheme"] == "small_n", "picked the larger count, not the looser bound"
+    for rung in rungs:
+        assert bound >= clopper_pearson_upper(
+            rung["safety_lost"], rung["n_harmful"], 1 - 0.05 / len(rungs))
+
+
+def test_the_reported_ceiling_covers_every_rung() -> None:
+    """The property that makes one number a family-wide statement."""
+    rungs = [{"scheme": f"r{i}", "safety_lost": k, "n_harmful": n}
+             for i, (k, n) in enumerate([(0, 150), (4, 150), (1, 90), (7, 200)])]
+    _, bound = simultaneous_safety_bound(rungs)
+    level = 1 - 0.05 / len(rungs)
+    assert all(bound >= clopper_pearson_upper(r["safety_lost"], r["n_harmful"],
+                                              level) for r in rungs)
