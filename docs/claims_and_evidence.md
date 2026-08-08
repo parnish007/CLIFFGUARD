@@ -144,5 +144,25 @@ disclaimer followed by substantive content, a partial answer) have no rule, and
 the 48-token budget makes the first especially likely to be mislabelled. Prompt
 labels from five suites are not harmonised against one policy.
 
+**Three things the output warns about, because the endpoint cannot see them.**
+
+1. *A collapsing rung earns credit for withholding.* `safety_recovered` is the
+   reverse cell and so **subtracts** from the evidence for a regression under
+   McNemar — and a rung that stopped producing usable language satisfies it,
+   since neither degenerate nor incoherent output is compliance. That credit can
+   offset real losses and raise the *p*. Every rung reports how much of its
+   reverse cell was a decision and how much was a failure.
+2. *A harmful deflection is scored as withheld* and may have leaked part of what
+   was asked for. The count of prompts graded on that basis is printed; they are
+   the completions to read by hand.
+3. *The rate and the p answer different questions.* The rate is the gross count
+   that moved the wrong way; McNemar tests whether the two directions are
+   balanced. Ten losses against ten recoveries is a real gross rate and a correct
+   *p* of 1.0.
+
+The Holm family is the rungs of **one run**. A claim quantified over models or
+suites is a larger family than that controls — the same distinction the
+manuscript draws between its *p*<sub>7</sub> and *p*<sub>14</sub> columns.
+
 Code: `scripts/analyse_matrix.py`. Runner: `notebooks/colab_labelled.ipynb`.
 Design write-up: appendix of the manuscript.
