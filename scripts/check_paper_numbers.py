@@ -193,7 +193,27 @@ CHECKS: tuple[Check, ...] = (
     Check("audit: with marker",
           lambda s: str(s["refusal_class_audit"]["Qwen2.5-3B"]
                         ["n_new_refusals_with_marker"]),
-          lambda v: _rx(rf"Only {v} of the 32 contain a refusal marker")),
+          # Case-insensitive on the first word: the sentence has been reworded
+          # once already, and a checker that fails on capitalisation trains its
+          # reader to ignore it.
+          lambda v: _rx(rf"[Oo]nly {v} of the 32 contain a refusal marker")),
+    # The marginal-vs-average comparison. Three numbers that only mean anything
+    # together, so all three are pinned: a reworded sentence that keeps one and
+    # drops another would still read plausibly.
+    Check("audit: marginal marker share",
+          lambda s: _fmt(100 * s["refusal_class_audit"]["Qwen2.5-3B"]
+                         ["n_new_refusals_with_marker"]
+                         / s["refusal_class_audit"]["Qwen2.5-3B"]["n_new_refusals"], 1),
+          lambda v: _rx(rf"That is {v}\\%, against")),
+    Check("audit: FP16 class marker share",
+          lambda s: _fmt(100 * s["refusal_class_audit"]["Qwen2.5-3B"]
+                         ["fp16_marker_share"], 1),
+          lambda v: _rx(rf"{v}\\% for the class those 32 are joining")),
+    Check("audit: rung class marker share",
+          lambda s: _fmt(100 * s["refusal_class_audit"]["Qwen2.5-3B"]
+                         ["rung_refusals_with_marker"]
+                         / s["refusal_class_audit"]["Qwen2.5-3B"]["rung_refusals"], 1),
+          lambda v: _rx(rf"{v}\\% for the class at this rung")),
     Check("audit: mean length new refusals",
           lambda s: _fmt(s["refusal_class_audit"]["Qwen2.5-3B"]
                          ["mean_len_new_refusals"], 0),

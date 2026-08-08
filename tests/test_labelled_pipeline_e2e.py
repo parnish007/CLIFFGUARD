@@ -129,28 +129,46 @@ def test_analyse_labelled_reads_the_run_and_finds_the_planted_cells(
     assert block["baseline"]["benign"]["refusal_rate"] == 0.0
 
 
-def test_analyse_matrix_reads_both_axes_and_separates_the_readings(
+def test_analyse_matrix_reads_both_axes_and_decomposes_the_loss(
         run_dir: Path, tmp_path: Path) -> None:
     out = tmp_path / "matrix.json"
     stdout = _invoke("analyse_matrix.py", run_dir, out)
-    assert "SAFETY REGRESSION" in stdout and "OVER-REFUSAL" in stdout
+    assert "SAFETY REGRESSION" in stdout and "USEFULNESS LOST" in stdout
 
     block = next(iter(json.loads(out.read_text()).values()))
     assert block["n_harmful"] == N_HARMFUL and block["n_benign"] == N_BENIGN
 
-    strict = block["paired"]["strict"][0]
-    broad = block["paired"]["broad"][0]
-    assert strict["safety_lost"] == SAFETY_LOST
-    assert strict["over_refusal"] == OVER_REFUSAL
-    # The deflections are the whole point of having two readings: invisible to
-    # the strict count, and counted by the broad one.
-    assert broad["over_refusal"] == OVER_REFUSAL + BENIGN_DEFLECTIONS
-    assert broad["safety_lost"] == SAFETY_LOST
+    row = block["paired"][0]
+    assert row["safety_lost"] == SAFETY_LOST
+    # The endpoint is compliance vs everything else, so BOTH the refusals and
+    # the deflections count as usefulness lost...
+    assert row["utility_lost"] == OVER_REFUSAL + BENIGN_DEFLECTIONS
+    # ...and the decomposition says which of them was a refusal decision.
+    assert row["over_refusal"] == OVER_REFUSAL + BENIGN_DEFLECTIONS
+    assert row["capability_failure"] == 0
+    assert row["utility_lost_by_class"]["refusal"] == OVER_REFUSAL
+    assert row["utility_lost_by_class"]["deflection"] == BENIGN_DEFLECTIONS
 
-    spread = block["reading_sensitivity"]["over_refusal"]["RTN_4B"]
-    assert spread["by_reading"] == {"strict": OVER_REFUSAL,
-                                    "broad": OVER_REFUSAL + BENIGN_DEFLECTIONS}
-    assert spread["spread"] == BENIGN_DEFLECTIONS
+
+def test_a_benign_disclaimer_is_reported_as_capability_not_over_refusal(
+        run_dir: Path, tmp_path: Path) -> None:
+    """End to end, on a real run directory: the distinction survives the round
+    trip through the grader's file and into the analysis output."""
+    run = next(run_dir.iterdir())
+    path = run / "results" / "completion_taxonomy.json"
+    payload = json.loads(path.read_text())
+    verdicts = payload["verdicts"]["RTN_4B"]
+    start = N_HARMFUL + OVER_REFUSAL + BENIGN_DEFLECTIONS
+    for i in range(start, start + 3):
+        verdicts[i] = "DISCLAIM"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    out = tmp_path / "matrix.json"
+    _invoke("analyse_matrix.py", run_dir, out)
+    row = next(iter(json.loads(out.read_text()).values()))["paired"][0]
+    assert row["capability_failure"] == 3
+    assert row["over_refusal"] == OVER_REFUSAL + BENIGN_DEFLECTIONS
+    assert row["utility_lost"] == OVER_REFUSAL + BENIGN_DEFLECTIONS + 3
 
 
 def test_the_full_contingency_is_written_for_every_scheme(
@@ -188,7 +206,7 @@ def test_the_gate_is_re_applied_from_raw_verdicts_not_trusted(
     _invoke("analyse_matrix.py", run_dir, out)
     block = next(iter(json.loads(out.read_text()).values()))
     assert block["gate"] == "composite"
-    assert block["paired"]["strict"][0]["safety_lost"] == SAFETY_LOST
+    assert block["paired"][0]["safety_lost"] == SAFETY_LOST
 
 
 def test_an_old_run_cannot_be_reported_under_a_gate_it_never_ran(

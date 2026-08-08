@@ -25,18 +25,30 @@
 
 ## 1. TL;DR
 
-CLIFFGUARD runs end-to-end on a Colab GPU with no local hardware. Open
-[`notebooks/cliffguard_colab.ipynb`](../notebooks/cliffguard_colab.ipynb)
-and execute the cells top to bottom; the notebook checkpoints to Google
-Drive after every `(model, scheme)` pair so a disconnected runtime loses
-at most one scheme of compute.
+CLIFFGUARD runs end-to-end on a Colab GPU with no local hardware. **Which
+notebook you want depends on what you are asking**, and all of them checkpoint
+to Google Drive so a disconnected runtime loses at most one scheme of compute:
+
+| Notebook | Use it for | Runtime |
+|---|---|---|
+| [`colab_run.ipynb`](../notebooks/colab_run.ipynb) | Reproducing the paper: 7B judge, Qwen2.5-3B and Phi-3.5-mini, refusal + GSM8K arms | T4, 60–90 min reduced / ~2.5 h full |
+| [`colab_round2.ipynb`](../notebooks/colab_round2.ipynb) | The round-2 gaps: 256-token budget, AWQ/GPTQ/NF4, 1.5B regrade | T4, ~4 h |
+| [`colab_labelled.ipynb`](../notebooks/colab_labelled.ipynb) | Both annotation axes on the labelled suites, and the 2×2 | T4, several sessions; resumes |
+
+Sections 7 and 8 below describe the first two, which share a checkpoint helper.
+`colab_labelled.ipynb` uses a journal instead and needs no manual steps at all —
+see §8.
 
 **You'll get:**
-- Calibrated refusal direction `r̂` and per-scheme threshold `τ_q` for
-  the model that fits your GPU (Fold A).
-- Cliff metrics — `Δ_cliff`, `Δ_W-cliff`, `Δ_B-cliff` — across your
-  scheme set on the AdvBench + JailbreakBench corpus (Fold B).
+- Paired transition counts against each model's own FP16 baseline, with the
+  degeneracy rate reported beside every refusal rate.
+- The phrase-list estimate on identical completions under four marker lists and
+  both gates, which is what separates the grader effect from the gate effect.
 - A persistent run directory in `/content/drive/MyDrive/cliffguard/`.
+
+> `cliffguard_colab.ipynb` and `colab_helper.py` belong to an earlier design and
+> are kept for provenance only. Its labels come from a corpus partition that
+> agrees with model behaviour 52.4% of the time — chance. Do not start there.
 
 ## 2. Why Colab
 
@@ -179,6 +191,32 @@ and the venv are all gone after a disconnect, but
 
 You lose **at most one scheme** of compute — the scheme that was
 running when the runtime died. Everything else is restored from Drive.
+
+### `colab_labelled.ipynb` resumes differently, and needs no steps
+
+That notebook does not use the checkpoint helper above. Every stage is a step in
+a journal on Drive (`scripts/colab_pipeline.py`), so recovery is one action:
+
+> **Reconnect and re-run the pipeline cell.** That is the whole procedure.
+
+It skips steps that finished, re-runs steps whose command, declared output or
+environment changed, re-runs steps whose output has gone missing, and resumes
+part-finished steps from their per-scheme caches. Two behaviours are worth
+knowing about because they look like failures and are not:
+
+- **A step that never started.** Near the end of a session the pipeline refuses
+  to *begin* a step it estimates will not fit, marks it `pending`, and stops. It
+  is stopping cleanly between steps instead of being killed inside one. Set
+  `DEADLINE_HOURS` slightly under your session limit — 3.5 for free, 11 for Pro.
+- **A step that says `killed` and retries.** Return code −9 is the host OOM
+  killer, not a bug. Each attempt starts from the caches the previous one wrote,
+  so a retry makes progress rather than repeating. It gives up after two.
+
+Its run directories go to Drive through `CLIFFGUARD_ARTIFACTS`, so nothing that
+matters is written to `/content` and there is no copy-back step to forget.
+Per-step logs are on Drive too, under `logs_labelled/` — worth knowing, because a
+closed browser tab loses Colab's cell output entirely and the log is then the
+only record of why something failed.
 
 ## 9. Where results live
 
