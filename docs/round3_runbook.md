@@ -10,40 +10,31 @@ arrives from where, what to do before starting, and what to do with the result.
 | Code (`scripts/`, `cliffguard/`) | Cloned from GitHub at a **pinned commit** | Following `main` would run whatever it happens to be that morning, not the code this notebook was verified against |
 | Fold A corpus (`data/folds/fold_a/`) | Drive, else rebuilt from HuggingFace | `data/` is gitignored. The rebuild uses an **unpinned** dataset revision, so preflight hashes it immediately — see below |
 | XSTest (`data/eval_suites/xstest.jsonl`) | Drive, else fetched from a stable URL | Same reason. Fetched from a fixed file rather than a mutable dataset, so it is the safer of the two |
-| Published runs (`artifacts/runs/…`) | `MyDrive/cliffguard/prior_runs.zip` | Not in the repository. See "The one upload" |
+| Published runs (`artifacts/runs/…`) | **Cloned with the repository** | 4.5 MB of prompts, completions, NLL and manifests for the five runs behind the published numbers. Activations excluded — 63–95 MB each, unread here |
 | Model weights | HuggingFace, cached to local disk | ~32 GB; never checked in |
 | Everything the run produces | Written to Drive after each step | Colab wipes local disk on disconnect |
 
-## The one upload
+## No upload needed
 
-Step 3 re-grades the five runs behind the published numbers under the corrected
-label scorer. Those run directories are not in the repository, and they are not
-in the repository on purpose: `artifacts/` is gitignored, and the completions
-include model responses to harmful prompts — around 2,000 of which decline and
-then begin to turn toward answering before the 48-token budget cuts them off.
-None are complete instructions. Publishing them to a public, permanently-cached
-repository is still a decision to take deliberately, not a side effect of
-wanting a file to be reachable from Colab.
+The five runs behind the published numbers ship with the repository, so a clone
+has everything step 3 needs. They are model responses to harmful prompts and
+this repository is public; that is deliberate, because the round-3 re-grade
+compares a corrected label scorer against the published one on exactly this
+text, and a reader who cannot get the text cannot check the comparison.
 
-So instead:
-
-```
-python scripts/bundle_prior_runs.py          # writes prior_runs.zip, ~0.4 MB
-```
-
-Upload it to `MyDrive/cliffguard/prior_runs.zip`. It carries only what the
-re-grade reads — prompts, completions, NLL and manifests, for full precision
-and the 4.5-bit rung — and omits the activation tensors, which are 63–95 MB per
-run and which nothing in round 3 opens.
-
-Without it, everything except step 3 still runs, and step 3 reports itself as
-not run rather than passing quietly.
+`scripts/bundle_prior_runs.py` still exists, and a `prior_runs.zip` in Drive
+still overrides the repository copies. That is for re-running against different
+data, not for the ordinary path.
 
 ## Before you start
 
 1. Runtime → Change runtime type → **T4 GPU**.
-2. Upload `prior_runs.zip` to Drive as above.
-3. Run all.
+2. Run all.
+
+There is no upload step and nothing to prepare. The notebook clones the
+repository at a pinned commit, restores anything a previous session left in
+Drive, rebuilds either corpus if it is missing, and only then runs the
+preflight gate.
 
 The preflight cell is the gate. It runs on CPU in seconds and stops the session
 before any GPU time if:
