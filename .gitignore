@@ -234,3 +234,5 @@ configs/example.yaml
 
 # Judge batch exports: intermediate working files for the agent judge.
 artifacts/judge_batches/
+prior_runs.zip
+
