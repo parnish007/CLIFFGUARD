@@ -52,30 +52,35 @@ def test_the_window_fits_a_256_token_completion() -> None:
         "window is not a long-window measurement")
 
 
-def test_an_unbound_window_does_not_change_the_cache_identity() -> None:
-    """Widening the window must not invalidate caches it could not have altered.
+def test_the_two_scoring_modes_have_different_cache_identities() -> None:
+    """Letter and first-token verdicts must never share a cache entry.
 
-    Keying on the raw window number would re-judge every 48-token run the
-    moment the default moved, to reproduce labels that are provably identical
-    -- nothing there comes within 130 characters of even the old cap. That cost
-    would land in the one session that cannot spare it.
+    They are different instruments, not two settings of one. First-token
+    scoring compares the opening piece of each label word, which under Qwen2.5
+    means four three-character prefixes against one whole word; letter scoring
+    compares five verified single tokens, so the logits are five mutually
+    exclusive complete answers. Pooling them would mix a measurement with its
+    own correction.
 
-    So the window enters the fingerprint only when some completion is longer
-    than it, and is absent otherwise. Absent rather than a sentinel: a sentinel
-    is still a change to the hashed object, and would invalidate exactly the
-    caches this preserves. The value below is the fingerprint the existing
-    Qwen2.5-3B run was actually stored under.
+    This also documents a deliberate cost. Adding the mode to the identity
+    supersedes the legacy caches -- the stored Qwen2.5-3B fingerprint
+    98850b5cca2ec1a8 predates the field and no longer recomputes. That is
+    accepted rather than worked around: the only reason to re-grade that data
+    is to move it onto the corrected scorer, which invalidates those entries by
+    definition, so preserving them would buy a saving the next step spends.
     """
     import hashlib
 
     mod = judge_module()
 
-    def fingerprint(chars: int | None) -> str:
+    def fingerprint(scoring: str, template: str,
+                    chars: int | None = None) -> str:
         identity = {
             "judge": "Qwen/Qwen2.5-7B-Instruct",
             "four_bit": True,
             "labels": list(mod.LABELS),
-            "template": mod.JUDGE_TEMPLATE,
+            "template": template,
+            "scoring": scoring,
             "n_prompts": 500,
         }
         if chars is not None:
@@ -83,13 +88,31 @@ def test_an_unbound_window_does_not_change_the_cache_identity() -> None:
         return hashlib.sha256(
             json.dumps(identity, sort_keys=True).encode("utf-8")).hexdigest()[:16]
 
-    assert fingerprint(None) == "98850b5cca2ec1a8", (
-        "the cache identity of an unbound window has changed, so every "
-        "existing 48-token verdict would be re-judged to reproduce itself")
-    assert fingerprint(2000) != fingerprint(None), (
-        "a window that actually truncates must produce a different cache "
-        "identity, or long-window verdicts would be pooled with short-window "
-        "ones")
+    letter = fingerprint("letter", mod.LETTER_TEMPLATE)
+    first = fingerprint("first-token", mod.JUDGE_TEMPLATE)
+    assert letter != first, (
+        "the two scoring modes share a cache identity, so a letter-scored run "
+        "would silently reuse first-token verdicts")
+    assert letter != "98850b5cca2ec1a8" and first != "98850b5cca2ec1a8", (
+        "a current fingerprint collides with the legacy one, which would let "
+        "superseded verdicts be reused as if they were current")
+
+
+def test_the_letter_options_are_asserted_single_tokens() -> None:
+    """The mode's whole guarantee is one token per option, so it is checked.
+
+    If a tokenizer split ' A' into pieces, letter scoring would reintroduce
+    exactly the prefix-versus-whole-word asymmetry it exists to remove, and
+    would do it invisibly. Both graders must refuse rather than score.
+    """
+    for name in ("classify_completions_judge.py",
+                 "classify_completion_taxonomy.py"):
+        source = (REPO / "scripts" / name).read_text(encoding="utf-8")
+        block = source.split("def letter_token_ids(")[1].split("\ndef ")[0]
+        assert "len(pieces) != 1" in block, (
+            f"{name} does not verify that each letter is a single token")
+        assert "raise SystemExit" in block, (
+            f"{name} does not fail when a letter is not a single token")
 
 
 def test_the_window_is_part_of_the_cache_fingerprint() -> None:

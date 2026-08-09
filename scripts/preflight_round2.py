@@ -43,6 +43,10 @@ SCRIPT_FLAGS: tuple[tuple[str, tuple[str, ...]], ...] = (
         "--label", "--deployed", "--no-activations",
     )),
     ("run_sector_ladder.py", ("--model", "--n", "--bits", "--cache", "--label")),
+    # Derives the short window from the long run's own tokens, so the two
+    # budgets are compared on identical generated text instead of on two
+    # generation passes assumed to agree.
+    ("make_prefix_run.py", ("--tokens", "--compare")),
     # --no-activations: the behavioural script grew this flag after the
     # notebook was written. Without it every scheme pays for a second full
     # forward with output_hidden_states=True, at batch 8, to collect
@@ -51,8 +55,15 @@ SCRIPT_FLAGS: tuple[tuple[str, tuple[str, ...]], ...] = (
     # --completion-chars: how much of a completion the judge is shown. A
     # 256-token run graded through the old 600-character window would be a
     # ~117-token measurement wearing a 256-token label.
+    # --scoring: letter mode reads five verified single-token options instead
+    # of comparing label-word prefixes against one whole word. A run that
+    # forgets it silently measures with the instrument this round exists to
+    # replace.
     ("classify_completions_judge.py", ("--judge-model", "--judge-4bit",
-                                       "--completion-chars")),
+                                       "--completion-chars", "--scoring")),
+    ("classify_completion_taxonomy.py", ("--judge-model", "--judge-4bit",
+                                         "--completion-chars", "--max-length",
+                                         "--scoring")),
 )
 
 FLAG_RE = re.compile(r'add_argument\(\s*[\'\"](?P<flag>--[^\'\"]+)[\'\"]')

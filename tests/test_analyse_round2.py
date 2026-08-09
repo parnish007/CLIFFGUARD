@@ -119,7 +119,12 @@ def test_pairs_the_long_run_against_the_short_one(tree) -> None:
     out = token_budget({b["label"]: b for b in (short, long_)}, runs)
     assert out["r2-long256-qwen3b"]["comparable_baseline"] == "behavioural-qwen3b"
     assert len(out["r2-long256-qwen3b"]["rows"]) == 2
-    assert all(r["direction_holds"] for r in out["r2-long256-qwen3b"]["rows"])
+    # Renamed from `direction_holds`: two aggregates keeping their sign is a
+    # weak statement, and it used to be the only one this function made. It is
+    # still reported, alongside the per-prompt comparison that replaced it as
+    # the answer to the truncation question.
+    assert all(r["same_direction"] for r in out["r2-long256-qwen3b"]["rows"])
+    assert all("per_prompt" in r for r in out["r2-long256-qwen3b"]["rows"])
 
 
 def test_a_deployed_run_is_not_a_token_budget_baseline(tree) -> None:
