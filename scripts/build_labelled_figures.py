@@ -74,7 +74,13 @@ SCHEMES = ["FP16", "RTN_8B", "RTN_7B", "RTN_6B", "RTN_5B", "RTN_4B", "RTN_3B", "
 # at group 64. The runner names its schemes by CODE bits, so RTN_8B is 8.5
 # stored. Labelling these figures "8" under an axis titled "stored bits" would
 # put the same rung at two different positions in one paper.
-RUNG_LABEL = {"FP16": "FP16", "RTN_8B": "8.5", "RTN_7B": "7.5",
+#
+# Full precision is labelled "16" rather than "FP16" for the same reason the
+# rungs are labelled by stored bits: the axis is a bit count, and 16 is what
+# FP16 stores. It also fits. "FP16" is four characters against three, and on
+# the three-panel plates the tick spacing is narrower than that string, so it
+# ran into its neighbour and printed "FP168.5".
+RUNG_LABEL = {"FP16": "16", "RTN_8B": "8.5", "RTN_7B": "7.5",
               "RTN_6B": "6.5", "RTN_5B": "5.5", "RTN_4B": "4.5",
               "RTN_3B": "3.5", "RTN_2B": "2.5"}
 
