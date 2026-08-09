@@ -111,11 +111,51 @@ def transitions(cov: dict[str, Any], ids: list[int]) -> dict[str, Any]:
     }
 
 
+def local_judge(results: Path) -> dict[str, dict[int, str]] | None:
+    """The 7B judge's own per-prompt verdicts, keyed like the API caches.
+
+    Stored as a positional list, one entry per prompt in corpus order, while
+    the API caches are dicts keyed by that same index. Converting to the dict
+    form lets both be restricted to an identical prompt subset.
+    """
+    hits = sorted(p for p in results.glob(f"judge_*_{BASELINE}.json")
+                  if "_api_" not in p.name and "collapsed" not in p.name)
+    if not hits:
+        return None
+    fingerprint = hits[0].stem[len("judge_"):-len(f"_{BASELINE}")]
+    out: dict[str, dict[int, str]] = {}
+    for end in (BASELINE, RUNG):
+        path = results / f"judge_{fingerprint}_{end}.json"
+        if not path.exists():
+            return None
+        verdicts = json.loads(path.read_text(encoding="utf-8"))
+        out[end] = {i: v for i, v in enumerate(verdicts) if v in VALID}
+    return out
+
+
+def matched_local(local: dict[str, dict[int, str]],
+                  ids: list[int]) -> dict[str, Any] | None:
+    """What the 7B judge says about exactly the prompts an API grader paired.
+
+    This is the comparison that separates the two explanations the paper has
+    been conflating. A difference between the 7B judge over 500 prompts and an
+    external grader over the 200 it happened to return is a difference of
+    grader AND of sample. Restricting the 7B judge to those same 200 removes
+    the sample, and whatever remains is the grader.
+    """
+    usable = [i for i in ids if i in local[BASELINE] and i in local[RUNG]]
+    if not usable:
+        return None
+    shim = {"base": local[BASELINE], "rung": local[RUNG]}
+    return transitions(shim, usable)
+
+
 def analyse(results: Path) -> dict[str, Any] | None:
     covs = {g: coverage(results, g) for g in graders_in(results)}
     covs = {g: c for g, c in covs.items() if c["paired"]}
     if not covs:
         return None
+    local = local_judge(results)
 
     # The intersection every grader that paired anything also paired.
     common = set.intersection(*(set(c["paired_ids"]) for c in covs.values()))
@@ -131,8 +171,14 @@ def analyse(results: Path) -> dict[str, Any] | None:
             "paired": c["paired"],
             "own": transitions(c, c["paired_ids"]),
             "common": transitions(c, common_ids) if common_ids else None,
+            # The 7B judge over the SAME prompts, so the two rows differ by
+            # grader alone.
+            "local_on_same": (matched_local(local, c["paired_ids"])
+                              if local else None),
         })
-    return {"rows": rows, "n_common": len(common_ids)}
+    return {"rows": rows, "n_common": len(common_ids),
+            "local_all": (matched_local(local, sorted(local[BASELINE]))
+                          if local else None)}
 
 
 def report(model: str, block: dict[str, Any]) -> None:
@@ -159,6 +205,26 @@ def report(model: str, block: dict[str, Any]) -> None:
         line += (f"{c['n']:5d} {c['to_refusal']:5d} {c['to_compliance']:5d} "
                  f"{c['p']:6.3f}" if c else f"{'--':>5s}")
         print(line)
+
+    # Coverage held fixed: the same prompts, scored by the external grader and
+    # by the 7B judge. Any remaining difference is the grader, and only this
+    # column supports a statement of the form "grader choice moves the result".
+    print(f"\n{'grader':34s} | {'external':^19s} | {'7B on the SAME prompts':^24s}")
+    print(f"{'':34s} | {'n':>5s} {'->ref':>5s} {'->cmp':>5s} | "
+          f"{'n':>5s} {'->ref':>5s} {'->cmp':>5s} {'p':>6s}")
+    print("-" * 86)
+    for r in block["rows"]:
+        o, m = r["own"], r["local_on_same"]
+        line = (f"{r['grader']:34s} | {o['n']:5d} {o['to_refusal']:5d} "
+                f"{o['to_compliance']:5d} | ")
+        line += (f"{m['n']:5d} {m['to_refusal']:5d} {m['to_compliance']:5d} "
+                 f"{m['p']:6.3f}" if m else f"{'--':>5s}")
+        print(line)
+    if block.get("local_all"):
+        a = block["local_all"]
+        print(f"{'7B judge, full coverage':34s} | {'':19s} | "
+              f"{a['n']:5d} {a['to_refusal']:5d} {a['to_compliance']:5d} "
+              f"{a['p']:6.3f}")
 
     own_dirs = [r["own"]["direction"] for r in block["rows"]]
     com_dirs = [r["common"]["direction"] for r in block["rows"] if r["common"]]
@@ -204,6 +270,46 @@ def latex_table(payload: dict[str, Any]) -> str:
     return "\n".join(out) + "\n"
 
 
+def latex_matched(payload: dict[str, Any]) -> str:
+    """Each external grader beside the 7B judge on the SAME prompts.
+
+    The table that separates the two explanations. Reading the external column
+    against the 7B judge's full-coverage result confounds grader with sample;
+    reading it against the adjacent column does not, because both scored the
+    same prompts.
+    """
+    out = [r"\begin{tabular}{llrrrrrr}", r"\toprule",
+           r"& & & \multicolumn{2}{c}{external grader} "
+           r"& \multicolumn{3}{c}{7B judge, same prompts} \\",
+           r"\cmidrule(lr){4-5}\cmidrule(lr){6-8}",
+           r"grader & model & paired & $\to$ref & $\to$cmp "
+           r"& $\to$ref & $\to$cmp & $p$ \\",
+           r"\midrule"]
+    for model, block in payload.items():
+        if not isinstance(block, dict) or "rows" not in block:
+            continue
+        for r in block["rows"]:
+            matched = r.get("local_on_same")
+            if not matched:
+                continue
+            own = r["own"]
+            out.append(
+                f"{GRADER_LABEL.get(r['grader'], r['grader'])} & {model} & "
+                f"{own['n']} & {own['to_refusal']} & {own['to_compliance']} & "
+                f"{matched['to_refusal']} & {matched['to_compliance']} & "
+                f"{matched['p']:.3f} \\\\")
+        full = block.get("local_all")
+        if full:
+            out.append(
+                f"\\emph{{7B, full coverage}} & {model} & {full['n']} & "
+                f"--- & --- & {full['to_refusal']} & {full['to_compliance']} & "
+                f"{full['p']:.3f} \\\\")
+        out.append(r"\addlinespace")
+    out[-1] = r"\bottomrule"
+    out.append(r"\end{tabular}")
+    return "\n".join(out) + "\n"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--runs", default="artifacts/runs")
@@ -221,6 +327,11 @@ def main() -> int:
         if block:
             payload[model] = {
                 "n_common": block["n_common"],
+                # The 7B judge over its whole 500. Carried so a reader can see
+                # what the matched columns are being compared against, and why
+                # the Qwen gap between 32/11 and 8/5 is coverage rather than
+                # grader.
+                "local_all": block.get("local_all"),
                 "rows": [{k: v for k, v in r.items()} for r in block["rows"]],
             }
             report(model, block)
@@ -240,6 +351,10 @@ def main() -> int:
     table.parent.mkdir(parents=True, exist_ok=True)
     table.write_text(latex_table(payload), encoding="utf-8")
     print(f"wrote {table}")
+
+    matched = repo / "docs/paper/tables/tab_coverage_matched.tex"
+    matched.write_text(latex_matched(payload), encoding="utf-8")
+    print(f"wrote {matched}")
     return 0
 
 

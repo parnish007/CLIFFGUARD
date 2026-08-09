@@ -665,6 +665,41 @@ LABELLED_CHECKS: tuple[Check, ...] = (
 )
 
 
+def _matched(cov: dict[str, Any], model: str, grader: str,
+             side: str) -> str:
+    """Transitions on a coverage-matched subset, external or 7B.
+
+    These are the numbers that separate grader disagreement from coverage
+    disagreement, and the paper now leads with them. They are also the easiest
+    numbers in the manuscript to get subtly wrong by hand, because each one is
+    a pair of counts restricted to a subset defined by a different file.
+    """
+    row = next(r for r in cov[model]["rows"] if r["grader"] == grader)
+    block = row["own"] if side == "external" else row["local_on_same"]
+    return f"{block['to_refusal']} {block['to_compliance']}"
+
+
+COVERAGE_CHECKS: tuple[Check, ...] = (
+    Check("Qwen/Claude, external",
+          lambda c: _matched(c, "Qwen2.5-3B", "agent_claude", "external"),
+          lambda v: _rx(r"{} against {}".format(*v.split()))),
+    Check("Qwen/Claude, 7B matched",
+          lambda c: _matched(c, "Qwen2.5-3B", "agent_claude", "local"),
+          lambda v: _rx(r"{} against {}".format(*v.split()))),
+    Check("Phi/Haiku, external",
+          lambda c: _matched(c, "Phi-3.5-mini", "agent_haiku", "external"),
+          lambda v: _rx(r"{} against {}".format(*v.split()))),
+    Check("Phi/Haiku, 7B matched",
+          lambda c: _matched(c, "Phi-3.5-mini", "agent_haiku", "local"),
+          lambda v: _rx(r"{} against {}".format(*v.split()))),
+    Check("Qwen 7B full coverage",
+          lambda c: (f"{c['Qwen2.5-3B']['local_all']['to_refusal']} "
+                     f"{c['Qwen2.5-3B']['local_all']['to_compliance']}"),
+          lambda v: _rx(r"{} transitions toward refusal against {}".format(
+              *v.split()))),
+)
+
+
 _MATRIX_KEY = {"Qwen2.5-3B": "qwen3b", "Phi-3.5-mini": "phi35",
                "SmolLM2-1.7B": "smol17"}
 
@@ -717,6 +752,10 @@ def main() -> int:
                     default=Path("docs/paper/data.json"))
     ap.add_argument("--agreement", type=Path,
                     default=Path("docs/paper/judge_agreement.json"))
+    ap.add_argument("--coverage", type=Path,
+                    default=Path("docs/paper/grader_coverage.json"),
+                    help="coverage-matched grader transitions; the numbers that "
+                         "separate grader disagreement from coverage disagreement")
     ap.add_argument("--matrix", type=Path,
                     default=Path("docs/paper/matrix_stats.json"),
                     help="paired per-rung blocks; source of the degenerate "
@@ -791,6 +830,16 @@ def main() -> int:
             f"{args.labelled} is missing, so none of its numbers are checked. "
             "Run scripts/build_labelled_tables.py.")
 
+    if args.coverage.exists():
+        cov = json.loads(args.coverage.read_text(encoding="utf-8"))
+        for check in COVERAGE_CHECKS:
+            value = check.value(cov)
+            found = re.search(check.pattern(value), text) is not None
+            print(f"{check.label:34s} {value:16s} {'ok' if found else 'MISSING'}")
+            if not found:
+                failures.append(f"  {check.label}: expected {value!r} in "
+                                f"context /{check.pattern(value)}/")
+
     # The utility figure's caption is the only place the degenerate SHARE of a
     # loss is quoted, and it comes from the paired blocks rather than from the
     # labelled summary, so it needs its own source.
@@ -846,7 +895,8 @@ def main() -> int:
     # round 3's measurements were present.
     n_checked = (len(CHECKS) + len(DATA_CHECKS) + len(DOC_CHECKS)
                  + (len(LABELLED_CHECKS) if args.labelled.exists() else 0)
-                 + (len(MATRIX_CHECKS) if args.matrix.exists() else 0))
+                 + (len(MATRIX_CHECKS) if args.matrix.exists() else 0)
+                 + (len(COVERAGE_CHECKS) if args.coverage.exists() else 0))
     print(f"\nall {n_checked} "
           f"quoted quantities match {args.stats} in context, and "
           f"{len(UNIQUE_CHECKS)} of them are stated consistently everywhere "
