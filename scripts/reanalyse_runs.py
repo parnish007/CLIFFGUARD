@@ -41,8 +41,42 @@ from scripts.run_behavioural_ladder import (
 FloatArray = Any
 
 
-def load_run(run: Path) -> dict[str, Any] | None:
-    """Load one behavioural run, or None if it is not one."""
+def _resolve_scorer(run: Path, scorer: str) -> str:
+    """Turn a scorer name into the fingerprint that names its cache files.
+
+    A raw fingerprint passes through, so a caller who has read a filename can
+    use it directly. A mode name is resolved by recomputing the grading
+    identity and checking it against the files present, which means an
+    unrecognised or absent mode fails loudly here rather than silently
+    selecting nothing.
+    """
+    from cliffguard.eval.scorer_caches import MODES, resolve
+
+    if scorer not in MODES:
+        return scorer
+    found = resolve(run, completion_chars=600)
+    if scorer not in found:
+        raise SystemExit(
+            f"{run.name}: no {scorer!r} grading on disk (found "
+            f"{sorted(found) or 'none'}). Grade it, or name a scorer the run "
+            "actually carries.")
+    return found[scorer]
+
+
+def load_run(run: Path, scorer: str | None = None) -> dict[str, Any] | None:
+    """Load one behavioural run, or None if it is not one.
+
+    `scorer` picks which grading to read when a run carries more than one.
+    It accepts either a mode name -- "letter", "first-token",
+    "first-token-legacy" -- or a raw fingerprint. Leaving it None keeps the
+    original behaviour of refusing to choose, which is right for callers that
+    have no basis for a choice and wrong only for those that do.
+
+    Round 3 created the need. Every published run now holds the grading behind
+    the published numbers and a re-grading under the corrected label scorer,
+    which is the entire point of the comparison; a loader that aborts on
+    finding both makes that comparison impossible to run.
+    """
     results = run / "results"
     nll_file = results / "completion_nll.json"
     if not nll_file.exists():
@@ -100,15 +134,58 @@ def load_run(run: Path) -> dict[str, Any] | None:
         if f.name == "judge_classification.json":
             continue
         by_scheme.setdefault(f.stem.split("_", 2)[-1], []).append(f)
+
+    if scorer is not None:
+        digest = _resolve_scorer(run, scorer)
+        by_scheme = {
+            scheme: [p for p in paths if p.stem.split("_", 2)[1] == digest]
+            for scheme, paths in by_scheme.items()
+        }
+        # A scheme the chosen grading never covered is dropped rather than
+        # back-filled from another grading. Mixing two scorers across schemes
+        # would build one label matrix out of two instruments, which is the
+        # failure the ambiguity check exists to prevent -- naming a scorer must
+        # not become a way around it.
+        by_scheme = {s: paths for s, paths in by_scheme.items() if paths}
+        if not by_scheme:
+            available = sorted({
+                p.stem.split("_", 2)[1]
+                for p in results.glob("judge_*_*.json")
+                if p.name != "judge_classification.json"})
+            raise SystemExit(
+                f"{run.name}: no judge cache matches scorer {scorer!r} "
+                f"(resolved to {digest}); the run carries {available}")
+
     ambiguous = {s: [p.name for p in v] for s, v in by_scheme.items() if len(v) > 1}
     if ambiguous:
         raise SystemExit(
             f"{run.name}: more than one judge cache per scheme, so which "
             f"grader's labels are reported would depend on directory order: "
-            f"{ambiguous}. These are different measurements. Keep one set and "
-            "delete or move the other.")
+            f"{ambiguous}. These are different measurements. Pass "
+            "scorer=<mode|fingerprint> to choose one explicitly, or keep one "
+            "set and delete or move the other.")
     for scheme, (f,) in by_scheme.items():
         judge_raw[scheme] = json.loads(f.read_text(encoding="utf-8"))
+
+    if scorer is not None:
+        # Narrow the run to what this grading covers. The round-3 re-gradings
+        # deliberately score only FP16 and the 4.5-bit rung, while the run
+        # directory still holds completions for all eight; without this, every
+        # analysis would demand verdicts for six rungs the grading never
+        # claimed to cover and refuse to produce any.
+        #
+        # FP16 is not optional. It sets the degeneracy threshold and is the
+        # baseline every safety statistic is defined against, so a grading
+        # without it cannot be narrowed to -- it can only be rejected.
+        covered = set(judge_raw)
+        if "FP16" not in covered:
+            raise SystemExit(
+                f"{run.name}: the {scorer!r} grading covers {sorted(covered)} "
+                "and not FP16. Every statistic here is defined against the "
+                "full-precision baseline, so there is nothing to compute.")
+        completions = {s: v for s, v in completions.items() if s in covered}
+        nll = {s: v for s, v in nll.items() if s in covered}
+
     return {
         "path": run, "manifest": manifest, "nll": nll, "completions": completions,
         "judge_raw": judge_raw,

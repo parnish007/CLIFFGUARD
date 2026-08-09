@@ -253,6 +253,17 @@ def test_an_all_zero_ladder_does_not_summarise_itself_as_fp16() -> None:
     assert peak_unsafe_scheme(behavioural, list(behavioural)) != "FP16"
 
 
-def test_a_ladder_with_no_quantized_rung_is_an_error() -> None:
-    with pytest.raises(ValueError, match="no quantized rung"):
-        peak_unsafe_scheme(_behav(FP16=0.0), ["FP16"])
+def test_a_ladder_with_no_quantized_rung_reports_no_peak() -> None:
+    """A full-precision baseline has no peak, and that is not a failure.
+
+    This used to raise. The requirement it was protecting is real -- an FP16
+    entry must never become the headline unsafe-flip rate, because FP16's rate
+    against itself is 0 by construction -- but raising also aborted the three
+    XSTest baseline runs at the very last line of main(), after every result
+    file had been written, which marked three complete runs as failed.
+
+    None satisfies the same requirement: there is no rung, so there is nothing
+    to report, and the caller has to handle that explicitly rather than
+    printing a zero that reads like a safety finding.
+    """
+    assert peak_unsafe_scheme(_behav(FP16=0.0), ["FP16"]) is None

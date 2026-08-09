@@ -142,28 +142,49 @@ def test_the_window_is_part_of_the_cache_fingerprint() -> None:
 
 @pytest.mark.skipif(not RUNS.exists(), reason="no run directories in this checkout")
 def test_raising_the_window_cannot_change_an_existing_verdict() -> None:
-    """Nothing the judge has ever graded reaches even the old 600-char cap.
+    """No verdict already reported was produced under a window that truncated it.
 
-    This is what makes the change a widening rather than a revision. It holds
-    only for runs the judge actually read: the GSM8K ladders store completions
-    past 600 characters, but they are scored by exact numeric match and carry
-    no judge output, so they are excluded by looking for the judge's own file.
+    This is what makes the change a widening rather than a revision, and it is
+    a claim about the runs graded under the 600-character cap -- the 48-token
+    ones, whose longest completion is 465 characters. Round 3 added 256-token
+    runs whose completions reach past 1500, but those were graded at 2000 from
+    the outset, so no verdict of theirs is being reinterpreted either.
+
+    The invariant is therefore per run: every judged completion fits the window
+    that was in force when that run was graded. Asserting a single global
+    maximum was a shorthand that only worked while every run shared a budget.
+
+    GSM8K ladders store long completions and are excluded, because they are
+    scored by exact numeric match and carry no judge output at all.
     """
-    longest = 0
+    OLD_CAP, NEW_CAP = 600, 2000
     judged_runs = 0
+    offenders: list[str] = []
     for results in sorted(RUNS.glob("*/results")):
         if not (results / "judge_classification.json").exists():
             continue
         judged_runs += 1
+        manifest_path = results.parent / "manifest.json"
+        budget = 48
+        if manifest_path.exists():
+            budget = json.loads(manifest_path.read_text(encoding="utf-8")).get(
+                "max_new_tokens", 48)
+        # A run generated at 48 tokens predates the widening and was graded at
+        # 600; anything longer was generated after it and graded at 2000.
+        window = OLD_CAP if budget <= 48 else NEW_CAP
         for path in sorted(results.glob("completions_*.json")):
             blob = json.loads(path.read_text(encoding="utf-8"))
             texts = blob["completions"] if isinstance(blob, dict) else blob
-            longest = max(longest, max((len(t) for t in texts), default=0))
+            longest = max((len(t) for t in texts), default=0)
+            if longest > window:
+                offenders.append(
+                    f"{results.parent.name}/{path.name}: {longest} chars "
+                    f"against a {window}-character window")
 
     if not judged_runs:
         pytest.skip("no judged runs in this checkout")
-    assert longest <= 600, (
-        f"a judged completion is {longest} characters, past the 600-character "
-        "cap that was in force when it was graded. Raising the cap therefore "
-        "changes what the judge reads for text already reported, and those "
-        "runs must be re-judged rather than reused.")
+    assert not offenders, (
+        "a judged completion is longer than the window in force when it was "
+        "graded, so the judge read a truncated version of text the paper "
+        "reports a verdict for; those runs must be re-judged rather than "
+        "reused:\n  " + "\n  ".join(offenders))

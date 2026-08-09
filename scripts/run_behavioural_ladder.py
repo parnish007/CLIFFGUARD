@@ -170,7 +170,8 @@ def is_degenerate(text: str, nll: float, nll_threshold: float) -> bool:
     )
 
 
-def peak_unsafe_scheme(behavioural: dict[str, Any], schemes: list[str]) -> str:
+def peak_unsafe_scheme(behavioural: dict[str, Any],
+                       schemes: list[str]) -> str | None:
     """The rung with the highest unsafe-flip rate, which is never FP16.
 
     The run summary used to report `schemes[-1]`, the most aggressive rung, and
@@ -184,10 +185,18 @@ def peak_unsafe_scheme(behavioural: dict[str, Any], schemes: list[str]) -> str:
     every rung genuinely reads 0 the max ties and `max` returns the first
     candidate -- FP16 -- restoring the same misleading summary under a
     different name.
+
+    An FP16-only ladder has no peak at all, and that is a legitimate run rather
+    than a mistake: the XSTest baselines measure what full precision does and
+    never quantize anything. Returning None says "there is no rung to report"
+    where raising used to abort the process -- which it did at the very end of
+    main(), after every result file was written, so the only casualties were
+    the index line and the printed summary, and the exit status wrongly marked
+    three complete runs as failures.
     """
     quantized = [s for s in schemes if s != "FP16"]
     if not quantized:
-        raise ValueError("no quantized rung to summarise; the ladder ran FP16 only")
+        return None
     return max(quantized, key=lambda s: behavioural[s]["unsafe_flip_rate"])
 
 
@@ -1023,15 +1032,26 @@ def main() -> int:  # noqa: C901 - linear experiment script
     # number a reader wants, and the degeneracy beside it says how much of the
     # rung was still producing language.
     worst = peak_unsafe_scheme(behavioural, schemes)
-    degenerate_share = behavioural[worst].get("degenerate_rate", 0.0)
     last = schemes[-1]
-    summary = (
-        f"behavioural: FP16 refuses {fp16_refused.mean():.1%}; "
-        f"peak unsafe-flip {behavioural[worst]['unsafe_flip_rate']:.1%} at "
-        f"{worst} ({degenerate_share:.0%} of it degenerate); "
-        f"d'(model labels) {dprime.get('FP16', {}).get('d_prime_model_labels', float('nan')):.3f}"
-        f" -> {dprime.get(last, {}).get('d_prime_model_labels', float('nan')):.3f}"
-    )
+    dprime_fp16 = dprime.get("FP16", {}).get("d_prime_model_labels", float("nan"))
+    if worst is None:
+        # A full-precision baseline. There is no rung, so there is no flip rate
+        # to quote; saying so is the summary. Inventing one against FP16 itself
+        # would print 0.0% and read as a safety result.
+        summary = (
+            f"behavioural: FP16 refuses {fp16_refused.mean():.1%}; "
+            f"full-precision baseline only, so no unsafe-flip rate is defined; "
+            f"d'(model labels) {dprime_fp16:.3f}"
+        )
+    else:
+        degenerate_share = behavioural[worst].get("degenerate_rate", 0.0)
+        summary = (
+            f"behavioural: FP16 refuses {fp16_refused.mean():.1%}; "
+            f"peak unsafe-flip {behavioural[worst]['unsafe_flip_rate']:.1%} at "
+            f"{worst} ({degenerate_share:.0%} of it degenerate); "
+            f"d'(model labels) {dprime_fp16:.3f}"
+            f" -> {dprime.get(last, {}).get('d_prime_model_labels', float('nan')):.3f}"
+        )
     run.append_to_index(summary)
     print(f"\nrun: {run.path}\n{summary}")
     return 0
