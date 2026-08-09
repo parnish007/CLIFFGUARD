@@ -138,17 +138,32 @@ def _corpus_check(n: int, expected_sha: str) -> Result:
     )
 
 
-def _xstest_check(n_per_class: int, expected_sha: str) -> Result:
+def _xstest_check(n_per_class: int, expected_sha: str,
+                  required: bool = False) -> Result:
     """The labelled arm's corpus, checked the same way as Fold A.
 
-    Kept separate because it can be absent legitimately: the HH-RLHF steps do
-    not need it, so a missing XSTest file is a reason to skip the labelled
-    steps rather than to abort the session. A present-but-different file is
-    another matter -- it would silently produce baselines that cannot be
-    compared with the 21 cells already published.
+    Absence is `skip` by default, because the HH-RLHF steps do not need this
+    file and a caller that only runs those should not be blocked by it.
+
+    `required` exists because that default is actively dangerous for a caller
+    that DOES need it. A notebook whose second half is the labelled arm would
+    otherwise pass preflight, spend two hours on the first half, and only then
+    discover the corpus was never there. Anything that plans to use the file
+    must say so here, and get a hard failure in CPU seconds instead.
+
+    A present-but-different file is fatal either way: it would silently produce
+    baselines that cannot be compared with the 21 cells already published.
     """
     path = REPO / XSTEST
     if not path.exists():
+        if required:
+            return Result(
+                "xstest corpus", "FAIL", f"{XSTEST} absent",
+                "This run needs the labelled corpus and it is not here. `data/` "
+                "is gitignored, so a fresh clone never has it. Restore it from "
+                "Drive, or rebuild with scripts/download_eval_suites.py, before "
+                "starting -- discovering this after the HH-RLHF steps would "
+                "cost two hours of the session.")
         return Result(
             "xstest corpus", "skip",
             f"{XSTEST} absent; the long-window labelled steps cannot run")
@@ -305,13 +320,18 @@ def main() -> int:
                     help="XSTest prompts per harm class")
     ap.add_argument("--expect-xstest-sha", default=EXPECTED_XSTEST_SHA,
                     help="expected order-sensitive XSTest prompt hash")
+    ap.add_argument("--require-xstest", action="store_true",
+                    help="treat a missing labelled corpus as fatal. Pass this "
+                         "from any run whose later steps need it, so the "
+                         "failure lands before the GPU time rather than after.")
     ap.add_argument("--skip-gpu", action="store_true",
                     help="run the non-GPU checks on a CPU-only machine")
     args = ap.parse_args()
 
     results = (
         _corpus_check(args.n, args.expect_sha),
-        _xstest_check(args.n_xstest, args.expect_xstest_sha),
+        _xstest_check(args.n_xstest, args.expect_xstest_sha,
+                      required=args.require_xstest),
         _scripts_check(),
         _gpu_check(args.skip_gpu),
         _disk_check(),
