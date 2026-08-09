@@ -281,7 +281,16 @@ def generate_batched(
             # Slice off the prompt: with left padding every row's completion
             # begins at the same offset, namely the padded input width.
             generated = out[:, batch["input_ids"].shape[1] :]
-            return list(tokenizer.batch_decode(generated, skip_special_tokens=True))
+            # Token ids are kept beside the text, not discarded after decoding.
+            # A later analysis that wants the first k generated tokens can then
+            # take them exactly, instead of re-tokenizing decoded text and
+            # hoping tokenization round-trips -- it is not guaranteed to, and a
+            # window comparison built on that hope confounds the window with a
+            # tokenizer artefact. Cheap to store: a few hundred ints per row.
+            texts = list(tokenizer.batch_decode(generated, skip_special_tokens=True))
+            ids = [[int(t) for t in row if int(t) != (tokenizer.pad_token_id or -1)]
+                   for row in generated.cpu()]
+            return texts, ids
         except torch.cuda.OutOfMemoryError:
             if size == 1:
                 raise
@@ -289,23 +298,32 @@ def generate_batched(
             half = max(1, size // 2)
             print(f"   [{tag}] CUDA OOM at batch {size}, retrying at {half}", flush=True)
             out_texts: list[str] = []
+            out_ids: list[list[int]] = []
             for i in range(0, len(chunk), half):
-                out_texts.extend(run_chunk(chunk[i : i + half], half))
-            return out_texts
+                # The recursive call returns the same (texts, ids) pair, so both
+                # halves of it have to be carried. Returning only the texts here
+                # would type-error on the first OOM -- the one path that is
+                # least likely to be exercised before a long unattended run.
+                texts_half, ids_half = run_chunk(chunk[i : i + half], half)
+                out_texts.extend(texts_half)
+                out_ids.extend(ids_half)
+            return out_texts, out_ids
 
+    token_ids: list[list[int]] = []
     try:
         with torch.no_grad():
             for start in range(0, len(prompts), batch_size):
-                completions.extend(
-                    run_chunk(prompts[start : start + batch_size], batch_size)
-                )
+                texts_chunk, ids_chunk = run_chunk(
+                    prompts[start : start + batch_size], batch_size)
+                completions.extend(texts_chunk)
+                token_ids.extend(ids_chunk)
                 done = min(start + batch_size, len(prompts))
                 if done % (batch_size * 4) == 0 or done == len(prompts):
                     rate = (time.time() - started) / done
                     print(f"   [{tag}] {done}/{len(prompts)}  {rate:.2f} s/prompt", flush=True)
     finally:
         tokenizer.padding_side = original_side
-    return completions
+    return completions, token_ids
 
 
 def score_nll(
@@ -585,6 +603,8 @@ def main() -> int:  # noqa: C901 - linear experiment script
     corpus_key = f"_c{corpus_digest.hexdigest()[:8]}"
     print(f"corpus fingerprint: {corpus_key[2:]} over {len(prompts)} ordered prompts")
 
+    token_ids: dict[str, list[list[int]]] = {}
+
     def run_scheme(name: str, loader: Any) -> None:
         cache_text = (args.cache /
                       f"completions_{name}_n{len(prompts)}_t{args.max_new_tokens}"
@@ -599,6 +619,8 @@ def main() -> int:  # noqa: C901 - linear experiment script
         cache_acts = (args.cache /
                       f"acts_{name}_L{args.layer}_n{len(prompts)}"
                       f"{corpus_key}_b{args.act_batch_size}.npy")
+        cache_ids = cache_text.with_name(
+            cache_text.name.replace("completions_", "tokens_", 1))
         cached_texts = read_json_cache(cache_text)
         cached_acts = None if args.no_activations else read_npy_cache(cache_acts)
         if cached_texts is not None and (cached_acts is not None or args.no_activations):
@@ -606,6 +628,12 @@ def main() -> int:  # noqa: C901 - linear experiment script
             if len(cached_texts) == len(prompts) and acts_ok:
                 print(f"[{name}] cache hit", flush=True)
                 completions[name] = cached_texts
+                # Absent for anything generated before ids were stored. That is
+                # a reason to fall back to re-tokenizing text downstream, not a
+                # reason to regenerate hours of valid completions.
+                cached_ids = read_json_cache(cache_ids)
+                if cached_ids is not None and len(cached_ids) == len(prompts):
+                    token_ids[name] = cached_ids
                 if cached_acts is not None:
                     activations[name] = cached_acts
                 return
@@ -621,7 +649,7 @@ def main() -> int:  # noqa: C901 - linear experiment script
         model.eval()
         print(f"[{name}] generating {args.max_new_tokens} tokens x {len(prompts)} prompts ...",
               flush=True)
-        texts = generate_batched(
+        texts, gen_ids = generate_batched(
             model, tokenizer, prompts, args.max_new_tokens, args.batch_size, name,
             temperature=args.temperature,
         )
@@ -640,6 +668,13 @@ def main() -> int:  # noqa: C901 - linear experiment script
         # and is then killed on the next load still leaves its work on disk.
         # This is what makes a restart resume instead of starting over.
         write_json_atomic(cache_text, texts, indent=1)
+        # A SEPARATE file, deliberately. Folding ids into the completions cache
+        # would change its shape and invalidate every generation cache already
+        # on disk -- hours of GPU time, discarded to add a field that older
+        # analyses do not read. Anything that wants exact token prefixes checks
+        # for this file and falls back to re-tokenizing text when it is absent.
+        write_json_atomic(cache_ids, gen_ids, indent=1)
+        token_ids[name] = gen_ids
         if acts is not None:
             write_npy_atomic(cache_acts, acts)
             activations[name] = acts
@@ -955,6 +990,8 @@ def main() -> int:  # noqa: C901 - linear experiment script
     record_corpus(run, "prompts", prompts)
     for name in schemes:
         run.save_json(f"completions_{name}", {"completions": completions[name]})
+        if name in token_ids:
+            run.save_json(f"tokens_{name}", {"token_ids": token_ids[name]})
         if name in activations:
             run.save_array("activations", f"{name}", activations[name])
     # The judge script needs these; writing them into the run directory keeps it

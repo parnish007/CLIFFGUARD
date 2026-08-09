@@ -260,6 +260,11 @@ def main() -> int:
                          "quantization cost is acceptable here -- but it must be recorded, which "
                          "it is, in the output manifest.")
     ap.add_argument("--batch-size", type=int, default=8)
+    ap.add_argument("--schemes", nargs="*", default=None,
+                    help="grade only these schemes. Without it every "
+                         "scheme in the manifest is graded, which on a "
+                         "full ladder is four times the work when only "
+                         "full precision and one rung are wanted.")
     ap.add_argument("--scoring", choices=("letter", "first-token"),
                     default="letter",
                     help="how a verdict is read off the judge. 'letter' scores "
@@ -304,6 +309,21 @@ def main() -> int:
     if extra:
         print(f"[schemes] {extra} present on disk but absent from the manifest; "
               "not graded")
+
+    # Restrict AFTER validating against what is on disk, so a typo in --schemes
+    # is caught by the unmatched check above rather than silently grading
+    # nothing. FP16 is always kept: every comparison here is against it, and a
+    # request for a rung alone would produce a run that cannot be paired.
+    if args.schemes:
+        wanted = set(args.schemes) | {"FP16"}
+        unknown = sorted(set(args.schemes) - set(schemes))
+        if unknown:
+            raise SystemExit(
+                f"--schemes names {unknown}, which this run does not contain "
+                f"({schemes})")
+        schemes = [s for s in schemes if s in wanted]
+        print(f"grading only {schemes}")
+
 
     # The model under test supplies the prompts and the NLL reference; the judge
     # is a separate choice and should normally be a bigger model.

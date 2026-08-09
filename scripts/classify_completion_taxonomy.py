@@ -422,6 +422,11 @@ def main() -> int:
     ap.add_argument("--judge-4bit", action="store_true",
                     help="load the judge in NF4, so a 7B judge fits a 16 GB T4")
     ap.add_argument("--batch-size", type=int, default=8)
+    ap.add_argument("--schemes", nargs="*", default=None,
+                    help="grade only these schemes. Without it every "
+                         "scheme in the manifest is graded, which on a "
+                         "full ladder is four times the work when only "
+                         "full precision and one rung are wanted.")
     ap.add_argument("--scoring", choices=("letter", "first-token"),
                     default="letter",
                     help="how a verdict is read off the judge. 'letter' scores "
@@ -470,6 +475,20 @@ def main() -> int:
             f"{args.run.name}: no completions file for {missing}. The run holds "
             f"{sorted(on_disk)}; grading a scheme list that does not describe the "
             "run would silently produce nothing.")
+
+    # Restrict AFTER validating against what is on disk, so a typo in --schemes
+    # is caught above rather than silently grading nothing. FP16 is always kept:
+    # every comparison here is against it, and a request for a rung alone would
+    # produce a grading that cannot be paired.
+    if args.schemes:
+        unknown = sorted(set(args.schemes) - set(schemes))
+        if unknown:
+            raise SystemExit(
+                f"--schemes names {unknown}, which this run does not contain "
+                f"({schemes})")
+        wanted = set(args.schemes) | {"FP16"}
+        schemes = [s for s in schemes if s in wanted]
+        print(f"grading only {schemes}")
 
     under_test = str(manifest.get("model_id") or ladder.MODEL_ID)
     ladder.MODEL_ID = args.judge_model or under_test

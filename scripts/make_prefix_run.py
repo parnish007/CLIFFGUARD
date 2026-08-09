@@ -176,19 +176,49 @@ def main() -> int:
         tokenizer = AutoTokenizer.from_pretrained(model_id)
         prefixes: dict[str, list[str]] = {}
         derived_payloads: dict[str, dict[str, Any]] = {}
+        exact = 0
         for filename, payload in completion_payloads.items():
-            truncated = [
-                tokenizer.decode(
-                    tokenizer.encode(text, add_special_tokens=False)[:args.tokens],
-                    skip_special_tokens=False,
-                    clean_up_tokenization_spaces=False,
-                )
-                for text in payload["completions"]
-            ]
+            scheme = filename.removeprefix("completions_").removesuffix(".json")
+            # Prefer the token ids the generation actually emitted. Truncating
+            # those is exact; re-tokenizing decoded text is a guess that
+            # tokenization round-trips, and it does not always. Runs made
+            # before ids were stored fall back, which is why the fallback still
+            # exists and why the agreement report distinguishes the two causes
+            # of a disagreement.
+            ids_path = source / "results" / f"tokens_{scheme}.json"
+            stored_ids = None
+            if ids_path.is_file():
+                blob = json.loads(ids_path.read_text(encoding="utf-8"))
+                candidate = blob.get("token_ids") if isinstance(blob, dict) else blob
+                if (isinstance(candidate, list)
+                        and len(candidate) == len(payload["completions"])):
+                    stored_ids = candidate
+            if stored_ids is not None:
+                exact += 1
+                truncated = [
+                    tokenizer.decode(row[:args.tokens], skip_special_tokens=True,
+                                     clean_up_tokenization_spaces=False)
+                    for row in stored_ids
+                ]
+            else:
+                truncated = [
+                    tokenizer.decode(
+                        tokenizer.encode(text, add_special_tokens=False)[:args.tokens],
+                        skip_special_tokens=False,
+                        clean_up_tokenization_spaces=False,
+                    )
+                    for text in payload["completions"]
+                ]
             prefixes[filename] = truncated
             # Preserve any per-file metadata: a prefix changes the completion,
             # not the identity of the scheme that produced it.
             derived_payloads[filename] = {**payload, "completions": truncated}
+
+        print(f"prefix source: {exact}/{len(completion_payloads)} schemes used "
+              f"stored generation token ids"
+              + ("" if exact == len(completion_payloads)
+                 else "; the rest re-tokenized decoded text, which is a "
+                      "round-trip assumption rather than the emitted tokens"))
 
         agreement = None
         if comparison_payloads is not None:
@@ -208,6 +238,7 @@ def main() -> int:
             "max_new_tokens": args.tokens,
             "derived_from": manifest.get("run_id", source.name),
             "derivation": "token-prefix",
+            "prefix_from_stored_ids": exact == len(completion_payloads),
         })
         if agreement is not None:
             carried["prefix_agreement"] = agreement
@@ -221,6 +252,36 @@ def main() -> int:
         shutil.copyfile(prompts, run.path / "results" / "prompts.json")
         for filename, payload in derived_payloads.items():
             run.save_json(filename.removesuffix(".json"), payload)
+
+        # The graders refuse to run without completion_nll.json: it is the
+        # degeneracy gate's input, and a run without it would fall through to
+        # grading text the gate should have rejected. A prefix has no NLL of
+        # its own until something scores it, so it is scored here rather than
+        # inherited from the parent -- a 48-token prefix and the 256-token
+        # completion it came from are different strings, and reusing the
+        # parent's value would gate the prefix on a measurement of other text.
+        #
+        # This is the one part of the derivation that needs the model, and it
+        # is the same scoring pass the ladder itself runs, imported rather than
+        # reimplemented so the two cannot drift.
+        from scripts.run_behavioural_ladder import score_nll
+        import scripts.run_local_ladder as ladder
+
+        ladder.MODEL_ID = model_id
+        nll_model = ladder.load_fp16_model()
+        nll_model.eval()
+        try:
+            nll = {
+                filename.removeprefix("completions_").removesuffix(".json"):
+                    score_nll(nll_model, tokenizer, payload["completions"],
+                              batch_size=8,
+                              tag=filename.removesuffix(".json")).tolist()
+                for filename, payload in derived_payloads.items()
+            }
+        finally:
+            del nll_model
+        run.save_json("completion_nll", nll)
+
         run.write_manifest()
         run.append_to_index(
             f"{args.tokens}-token prefixes derived from "
