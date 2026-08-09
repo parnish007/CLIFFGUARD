@@ -58,10 +58,20 @@ Checks that cannot run report `skip`, never `ok`.
 | 2 | 256-token XSTest FP16 baselines, three families | Is the harmful-compliance cell still empty when the window is not the binding constraint? |
 | 3 | The five published runs re-graded under **both** scorers | How much of the published picture is an artefact of comparing label-word prefixes against one whole word? |
 
-Roughly 3–3.5 hours. Every step checkpoints to Drive when it finishes, so a
-disconnect costs one step rather than the session, and re-running skips work it
-can prove is already complete — matching model, schemes, prompt count, token
-budget, seed, corpus hash, row counts, and the scorer that produced it.
+**Roughly 3.5–4.8 hours**, computed from the measured T4 rates of the labelled
+run (178 grading pairs per minute at batch 8; 28–45 minutes to generate 1,000
+completions at 256 tokens) rather than estimated. Judge loads are a real line
+item: every grading is a separate subprocess and reloads the 7B judge, at about
+two minutes each.
+
+That is longer than a comfortable free session, so plan for two. Every step
+checkpoints to Drive when it finishes, and re-running skips only work it can
+prove is complete — matching model, schemes, prompt count, token budget, seed,
+corpus hash, row counts, and the scorer that produced it. Step 1 runs first
+because it carries the headline; if the session dies after it, the most
+valuable half is already durable.
+
+Approximate shares: step 1 about 2.2 hours, step 2 about 1.1, step 3 about 0.5.
 
 ## Afterwards
 
