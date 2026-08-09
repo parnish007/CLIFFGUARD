@@ -208,6 +208,32 @@ def test_the_paper_does_not_plot_the_number_it_promises_not_to_plot() -> None:
 
 
 @needs_paper
+def test_the_transition_matrices_are_described_consistently() -> None:
+    """One appendix said withheld, another said reported. Both cannot hold.
+
+    The full class-by-class matrices are computed and sit in
+    `matrix_stats.json`. The appendix called them "deliberately not published"
+    while a later section said the same table "is reported beside the
+    collapse". For a paper whose argument is that summaries hide their own
+    composition, being unclear about whether the composition was released is
+    the worst possible place to be unclear.
+
+    Resolved as: released as machine-readable data, not typeset. This pins the
+    part that could drift back -- a claim of non-publication.
+    """
+    text = re.sub(r"\s+", " ", live_tex())
+    banned = [
+        r"deliberately not published",
+        r"is not published",
+        r"we do not release the (?:full )?matri",
+    ]
+    hits = [p for p in banned if re.search(p, text, re.IGNORECASE)]
+    assert not hits, (
+        "the paper says the transition matrices are unpublished, but they are "
+        f"computed and released as data: {hits}")
+
+
+@needs_paper
 def test_every_cross_reference_resolves() -> None:
     text = live_tex()
     labels = set(re.findall(r"\\label\{([^}]+)\}", text))

@@ -24,7 +24,16 @@ from typing import NamedTuple
 
 
 REPO = Path(__file__).resolve().parents[1]
+
+# Fold A, harmful + benign at --n 250. The hash the three 500-prompt
+# behavioural runs were measured against.
 EXPECTED_PROMPT_SHA = "7da25bf88ee0409ce4900a12052e15849a2898ed01cfdcdfe6409bbfc11bd9b5"
+
+# XSTest interleaved at --n 150 per class. The labelled arm's equivalent, and
+# the one the long-window XSTest baselines must reproduce to be comparable with
+# the 21 cells already reported.
+EXPECTED_XSTEST_SHA = "33874ac77bd574a74283cd024466f442e69da870fa1195fcde8a9107433f9ce4"
+XSTEST = Path("data/eval_suites/xstest.jsonl")
 
 # This is deliberately data rather than control flow: the notebook contract is
 # visible in one place, and adding a command cannot quietly evade the gate.
@@ -127,6 +136,44 @@ def _corpus_check(n: int, expected_sha: str) -> Result:
         "corpus pairing", "ok",
         f"sha256 matches expected; {recorded_detail}",
     )
+
+
+def _xstest_check(n_per_class: int, expected_sha: str) -> Result:
+    """The labelled arm's corpus, checked the same way as Fold A.
+
+    Kept separate because it can be absent legitimately: the HH-RLHF steps do
+    not need it, so a missing XSTest file is a reason to skip the labelled
+    steps rather than to abort the session. A present-but-different file is
+    another matter -- it would silently produce baselines that cannot be
+    compared with the 21 cells already published.
+    """
+    path = REPO / XSTEST
+    if not path.exists():
+        return Result(
+            "xstest corpus", "skip",
+            f"{XSTEST} absent; the long-window labelled steps cannot run")
+    try:
+        sys.path.insert(0, str(REPO))
+        from cliffguard.eval.storage import prompt_manifest_hash
+        from scripts.run_local_ladder import load_labelled_prompts
+
+        prompts, _, _ = load_labelled_prompts(path, n_per_class)
+        sha = prompt_manifest_hash(prompts)
+    except (Exception, SystemExit) as exc:
+        return Result(
+            "xstest corpus", "FAIL", f"could not build the XSTest list: {exc}",
+            "Rebuild it with scripts/download_eval_suites.py, or restore it "
+            "from Drive.")
+    if sha != expected_sha:
+        return Result(
+            "xstest corpus", "FAIL",
+            f"sha256 {sha} != expected {expected_sha}",
+            "The labelled corpus differs from the one the published 21 cells "
+            "were measured on, so a long-window baseline built from it would "
+            "not be comparable with them. Restore the file from Drive rather "
+            "than re-fetching it.")
+    return Result("xstest corpus", "ok",
+                  f"sha256 matches expected ({len(prompts)} prompts)")
 
 
 def _recorded_prompt_hashes() -> tuple[list[tuple[str, str]], list[Path], int]:
@@ -254,12 +301,17 @@ def main() -> int:
     ap.add_argument("--n", type=int, default=250, help="prompts per source class")
     ap.add_argument("--expect-sha", default=EXPECTED_PROMPT_SHA,
                     help="expected order-sensitive Fold A prompt hash")
+    ap.add_argument("--n-xstest", type=int, default=150,
+                    help="XSTest prompts per harm class")
+    ap.add_argument("--expect-xstest-sha", default=EXPECTED_XSTEST_SHA,
+                    help="expected order-sensitive XSTest prompt hash")
     ap.add_argument("--skip-gpu", action="store_true",
                     help="run the non-GPU checks on a CPU-only machine")
     args = ap.parse_args()
 
     results = (
         _corpus_check(args.n, args.expect_sha),
+        _xstest_check(args.n_xstest, args.expect_xstest_sha),
         _scripts_check(),
         _gpu_check(args.skip_gpu),
         _disk_check(),
