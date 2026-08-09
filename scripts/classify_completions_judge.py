@@ -89,8 +89,32 @@ MARKER_VARIANTS: dict[str, tuple[str, ...]] = {
 }
 
 
+# How much of each side of the pair the judge is shown. The completion budget
+# is the load-bearing one and it is NOT a formatting detail.
+#
+# At the 48-token generation budget every completion this judge has ever graded
+# fits: the longest across all judged runs is 465 characters, so the old flat
+# 600-character cap never bound and every published verdict was formed on the
+# whole text. At a 256-token budget the mean completion is about 1310
+# characters, so a 600-character cap would hide more than half of it -- and
+# would hide precisely the tail where a model that hedges first and answers
+# later does the answering. Grading a 256-token run under a 600-character cap
+# does not measure a 256-token budget at all; it measures a ~117-token one, and
+# would answer the truncation objection with a quieter instance of the same
+# defect.
+#
+# 2000 characters covers 256 tokens at the ~5.1 characters/token these models
+# actually produce, with headroom. Raising it cannot alter any existing verdict
+# (nothing judged reaches even 600), but the value is recorded in the run
+# manifest regardless, so verdicts formed under different caps can never be
+# pooled by accident.
+COMPLETION_CHARS = 2000
+PROMPT_CHARS = 600
+
+
 def judge_batch(
-    model: Any, tokenizer: Any, pairs: list[tuple[str, str]], batch_size: int
+    model: Any, tokenizer: Any, pairs: list[tuple[str, str]], batch_size: int,
+    completion_chars: int = COMPLETION_CHARS, max_length: int = 2048,
 ) -> list[str]:
     """Label each (prompt, completion) by comparing first-token logits.
 
@@ -127,7 +151,9 @@ def judge_batch(
                 texts = [
                     tokenizer.apply_chat_template(
                         [{"role": "user", "content": JUDGE_TEMPLATE.format(
-                            prompt=p[:600], completion=(c[:600] if c.strip() else "(empty)")
+                            prompt=p[:PROMPT_CHARS],
+                            completion=(c[:completion_chars] if c.strip()
+                                        else "(empty)"),
                         )}],
                         add_generation_prompt=True, tokenize=False,
                     )
@@ -135,7 +161,7 @@ def judge_batch(
                 ]
                 batch = tokenizer(
                     texts, return_tensors="pt", padding=True, truncation=True,
-                    max_length=1024, add_special_tokens=False,
+                    max_length=max_length, add_special_tokens=False,
                 ).to(model.device)
                 # Only the last position's logits are read, so ask for only those.
                 # A full forward materialises batch x seq x vocab; at batch 8, ~400
@@ -178,6 +204,13 @@ def main() -> int:
                          "quantization cost is acceptable here -- but it must be recorded, which "
                          "it is, in the output manifest.")
     ap.add_argument("--batch-size", type=int, default=8)
+    ap.add_argument("--completion-chars", type=int, default=COMPLETION_CHARS,
+                    help="how much of each completion the judge is shown. The "
+                         "default fits a 256-token generation; it has never "
+                         "bound at the 48-token budget, where the longest "
+                         "completion on record is 465 characters. Part of the "
+                         "cache fingerprint, so changing it forces a re-judge "
+                         "rather than silently mixing two instruments.")
     ap.add_argument("--nll-cache", type=Path, default=None,
                     help="per-completion NLL from the behavioural run. Defaults to the copy "
                          "inside the run directory, so a fresh clone needs no external path.")
@@ -323,6 +356,12 @@ def main() -> int:
     # rerun with a stronger judge reports the new judge in the manifest while
     # silently reusing the old judge's labels -- which is exactly the run this
     # notebook exists to perform.
+    #
+    # `completion_chars` belongs in the key for the same reason. How much of a
+    # completion the judge is shown is part of the instrument: the same text
+    # graded at 600 and at 2000 characters can receive different verdicts, and
+    # a long-window run reusing a short-window cache would compare two budgets
+    # while holding the wrong thing fixed.
     import hashlib
 
     fingerprint = hashlib.sha256(
@@ -333,6 +372,7 @@ def main() -> int:
                 "labels": list(LABELS),
                 "template": JUDGE_TEMPLATE,
                 "n_prompts": len(prompts),
+                "completion_chars": args.completion_chars,
             },
             sort_keys=True,
         ).encode("utf-8")
@@ -352,7 +392,8 @@ def main() -> int:
                   "recomputing")
         print(f"[{scheme}] judging {len(prompts)} pairs ...")
         judged[scheme] = judge_batch(
-            model, tokenizer, list(zip(prompts, completions[scheme])), args.batch_size
+            model, tokenizer, list(zip(prompts, completions[scheme])),
+            args.batch_size, completion_chars=args.completion_chars,
         )
         write_json_atomic(cache, judged[scheme])
     del model
@@ -416,6 +457,7 @@ def main() -> int:
     write_json_atomic(out, {
         "judge_model": judge_model_id, "model_under_test": under_test,
         "judge_loaded_in_4bit": bool(args.judge_4bit),
+        "judge_completion_chars": args.completion_chars,
         "judge_cache_fingerprint": fingerprint, "labels": LABELS,
         "degeneracy_threshold": threshold,
         "marker_variant_sensitivity": sensitivity,
