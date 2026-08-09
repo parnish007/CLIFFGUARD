@@ -466,6 +466,18 @@ def main() -> int:
     manifest = json.loads((args.run / "manifest.json").read_text(encoding="utf-8"))
     schemes = list(manifest.get("schemes")
                    or ["FP16"] + [f"RTN_{b}B" for b in manifest["bits"]])
+    # Restrict BEFORE checking what is on disk. A bundle that ships only the
+    # schemes it intends to grade is legitimate, and validating the full
+    # manifest list first would reject it for missing files nobody reads.
+    if args.schemes:
+        unknown = sorted(set(args.schemes) - set(schemes))
+        if unknown:
+            raise SystemExit(
+                f"--schemes names {unknown}, which this run does not contain "
+                f"({schemes})")
+        wanted = set(args.schemes) | {"FP16"}
+        schemes = [s for s in schemes if s in wanted]
+        print(f"grading only {schemes}")
     results = args.run / "results"
     on_disk = {f.stem.replace("completions_", "")
                for f in results.glob("completions_*.json")}
@@ -476,19 +488,6 @@ def main() -> int:
             f"{sorted(on_disk)}; grading a scheme list that does not describe the "
             "run would silently produce nothing.")
 
-    # Restrict AFTER validating against what is on disk, so a typo in --schemes
-    # is caught above rather than silently grading nothing. FP16 is always kept:
-    # every comparison here is against it, and a request for a rung alone would
-    # produce a grading that cannot be paired.
-    if args.schemes:
-        unknown = sorted(set(args.schemes) - set(schemes))
-        if unknown:
-            raise SystemExit(
-                f"--schemes names {unknown}, which this run does not contain "
-                f"({schemes})")
-        wanted = set(args.schemes) | {"FP16"}
-        schemes = [s for s in schemes if s in wanted]
-        print(f"grading only {schemes}")
 
     under_test = str(manifest.get("model_id") or ladder.MODEL_ID)
     ladder.MODEL_ID = args.judge_model or under_test

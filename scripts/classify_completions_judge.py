@@ -297,6 +297,21 @@ def main() -> int:
     # written fall back, and the fallback is checked against what is on disk.
     schemes = list(manifest.get("schemes")
                    or ["FP16"] + [f"RTN_{b}B" for b in manifest["bits"]])
+    # Restrict BEFORE checking what is on disk. A bundle that ships only the
+    # schemes it intends to grade is legitimate -- the published runs travel
+    # that way -- and validating the full manifest list first would reject it
+    # for missing files nobody was going to read. The typo case is still
+    # caught, by comparing against the manifest here rather than the disk.
+    # FP16 is always kept: every comparison is against it.
+    if args.schemes:
+        wanted = set(args.schemes) | {"FP16"}
+        unknown = sorted(set(args.schemes) - set(schemes))
+        if unknown:
+            raise SystemExit(
+                f"--schemes names {unknown}, which this run does not contain "
+                f"({schemes})")
+        schemes = [s for s in schemes if s in wanted]
+        print(f"grading only {schemes}")
     on_disk = {f.stem.replace("completions_", "")
                for f in (args.run / "results").glob("completions_*.json")}
     unmatched = [s for s in schemes if s not in on_disk]
@@ -310,19 +325,6 @@ def main() -> int:
         print(f"[schemes] {extra} present on disk but absent from the manifest; "
               "not graded")
 
-    # Restrict AFTER validating against what is on disk, so a typo in --schemes
-    # is caught by the unmatched check above rather than silently grading
-    # nothing. FP16 is always kept: every comparison here is against it, and a
-    # request for a rung alone would produce a run that cannot be paired.
-    if args.schemes:
-        wanted = set(args.schemes) | {"FP16"}
-        unknown = sorted(set(args.schemes) - set(schemes))
-        if unknown:
-            raise SystemExit(
-                f"--schemes names {unknown}, which this run does not contain "
-                f"({schemes})")
-        schemes = [s for s in schemes if s in wanted]
-        print(f"grading only {schemes}")
 
 
     # The model under test supplies the prompts and the NLL reference; the judge
