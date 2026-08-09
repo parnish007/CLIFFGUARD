@@ -118,6 +118,135 @@ def test_movement_out_of_refusal_into_deflection_is_counted_as_change() -> None:
 
 
 # ---------------------------------------------------------------------------
+# the pairing guards, exercised on runs built to violate them
+#
+# A guard that has only ever seen valid input is an untested guard. These
+# construct the failure each one exists to catch.
+# ---------------------------------------------------------------------------
+
+
+def make_run(root: Path, name: str, prompts: list[str],
+             completions: dict[str, list[str]], model: str = "org/model",
+             **manifest_extra) -> Path:
+    run = root / name
+    (run / "results").mkdir(parents=True)
+    (run / "manifest.json").write_text(
+        json.dumps({"model_id": model, "n_prompts": len(prompts),
+                    **manifest_extra}), encoding="utf-8")
+    (run / "results" / "prompts.json").write_text(
+        json.dumps({"prompts": prompts}), encoding="utf-8")
+    for scheme, texts in completions.items():
+        (run / "results" / f"completions_{scheme}.json").write_text(
+            json.dumps({"completions": texts}), encoding="utf-8")
+    return run
+
+
+def test_reordered_prompts_are_refused(tmp_path: Path) -> None:
+    """Same prompts, different order. Pairs perfectly by row and means nothing."""
+    mod = module()
+    a = make_run(tmp_path, "a", ["one", "two"], {"FP16": ["x", "y"]})
+    b = make_run(tmp_path, "b", ["two", "one"], {"FP16": ["x", "y"]})
+    with pytest.raises(SystemExit, match="row i is not the same prompt"):
+        mod.require_paired(a, b, "test")
+
+
+def test_two_different_models_are_refused(tmp_path: Path) -> None:
+    mod = module()
+    a = make_run(tmp_path, "a", ["one"], {"FP16": ["x"]}, model="org/small")
+    b = make_run(tmp_path, "b", ["one"], {"FP16": ["x"]}, model="org/large")
+    with pytest.raises(SystemExit, match="pairs two different models"):
+        mod.require_paired(a, b, "test")
+
+
+def test_a_short_completion_array_is_refused(tmp_path: Path) -> None:
+    """The failure zip() hides: a scheme with fewer rows than prompts."""
+    mod = module()
+    a = make_run(tmp_path, "a", ["one", "two"], {"FP16": ["x", "y"]})
+    b = make_run(tmp_path, "b", ["one", "two"], {"FP16": ["x"]})
+    with pytest.raises(SystemExit, match="1 rows against 2 prompts"):
+        mod.require_paired(a, b, "test")
+
+
+def test_a_prefix_run_that_is_not_a_prefix_is_refused(tmp_path: Path) -> None:
+    """The manifest says token-prefix; the text says otherwise. Text wins.
+
+    Both manifest fields are set correctly here, so only reading the
+    completions catches it. That is the point: a derivation's own account of
+    itself is not evidence.
+    """
+    mod = module()
+    source = make_run(tmp_path, "src", ["one", "two"],
+                      {"FP16": ["hello world", "goodbye now"]})
+    prefix = make_run(tmp_path, "src-prefix48", ["one", "two"],
+                      {"FP16": ["hello", "farewell"]},
+                      derived_from="src", prefix_from_stored_ids=True)
+    with pytest.raises(SystemExit, match="are not prefixes of"):
+        mod.require_exact_prefix(prefix, source)
+
+
+def test_a_prefix_run_must_name_its_parent(tmp_path: Path) -> None:
+    mod = module()
+    source = make_run(tmp_path, "src", ["one"], {"FP16": ["hello world"]})
+    prefix = make_run(tmp_path, "other-prefix48", ["one"], {"FP16": ["hello"]},
+                      derived_from="somewhere-else", prefix_from_stored_ids=True)
+    with pytest.raises(SystemExit, match="says it was derived from"):
+        mod.require_exact_prefix(prefix, source)
+
+
+def test_a_retokenized_prefix_is_refused(tmp_path: Path) -> None:
+    """Re-tokenizing decoded text is a round-trip assumption, not a prefix."""
+    mod = module()
+    source = make_run(tmp_path, "src", ["one"], {"FP16": ["hello world"]})
+    prefix = make_run(tmp_path, "src-prefix48", ["one"], {"FP16": ["hello"]},
+                      derived_from="src", prefix_from_stored_ids=False)
+    with pytest.raises(SystemExit, match="not cut from stored generation"):
+        mod.require_exact_prefix(prefix, source)
+
+
+def test_the_drift_gate_uses_the_exact_count_not_the_tolerant_one(
+        tmp_path: Path) -> None:
+    """A word changed inside the last eight characters must count as divergence.
+
+    The tolerance exists to describe near-misses, and eight characters is
+    enough to hold a real word -- so if the pairing decision ever consulted it,
+    a changed word would be forgiven and the two budgets would be declared one
+    generation when they are two.
+    """
+    mod = module()
+    short = "I cannot help with that, sorry"
+    # Identical for all but the final word, which is inside the tolerance.
+    long = "I cannot help with that, howdy and then a great deal more text"
+    published = make_run(tmp_path, "pub", ["one"], {"FP16": [short]})
+    longer = make_run(tmp_path, "long", ["one"], {"FP16": [long]})
+
+    got = mod.xstest_drift_bound(published, longer)
+    assert got["long_starts_with_short"] == 0
+    assert got["diverged"] == 1, (
+        "the gate must count this as divergence; it differs by a word")
+    assert got["allowing_a_partial_final_token"] == 1, (
+        "the tolerant count should forgive it, which is exactly why the gate "
+        "must not be the tolerant count")
+    assert got["tolerance_is_diagnostic_only"] is True
+
+
+def test_the_drift_gate_reports_the_lengths_that_make_it_non_vacuous(
+        tmp_path: Path) -> None:
+    """A two-character completion is a prefix of nearly anything.
+
+    The check would pass trivially on degenerate input, so the lengths that
+    make it meaningful are reported alongside the result rather than left for
+    a reader to assume.
+    """
+    mod = module()
+    published = make_run(tmp_path, "pub", ["one", "two"], {"FP16": ["ab", "abcd"]})
+    longer = make_run(tmp_path, "long", ["one", "two"],
+                      {"FP16": ["abxxxx", "abcdyyyy"]})
+    got = mod.xstest_drift_bound(published, longer)
+    assert got["diverged"] == 0
+    assert got["shortest_48_token_completion_chars"] == 2
+
+
+# ---------------------------------------------------------------------------
 # the resolver, against the filenames actually on disk
 # ---------------------------------------------------------------------------
 

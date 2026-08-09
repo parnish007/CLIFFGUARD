@@ -128,6 +128,35 @@ def require_paired(left: Path, right: Path, why: str) -> None:
             f"{why}: {left.name} is {left_model} and {right.name} is "
             f"{right_model}; comparing them pairs two different models")
 
+    # Prompt equality is not sufficient. Every statistic indexes completions,
+    # NLL and verdicts by the same row, so a scheme whose arrays are a
+    # different length would silently truncate under zip and be compared on
+    # the rows that happen to survive.
+    n = len(left_prompts)
+    for run in (left, right):
+        results = run / "results"
+        for path in sorted(results.glob("completions_*.json")):
+            texts = read_json(path)["completions"]
+            if len(texts) != n:
+                raise SystemExit(
+                    f"{why}: {run.name}/{path.name} has {len(texts)} rows "
+                    f"against {n} prompts")
+        nll_path = results / "completion_nll.json"
+        if nll_path.is_file():
+            for scheme, values in read_json(nll_path).items():
+                if len(values) != n:
+                    raise SystemExit(
+                        f"{why}: {run.name} NLL for {scheme} has "
+                        f"{len(values)} rows against {n} prompts")
+        for path in sorted(results.glob("judge_*_*.json")):
+            if path.name == "judge_classification.json":
+                continue
+            verdicts = read_json(path)
+            if isinstance(verdicts, list) and len(verdicts) != n:
+                raise SystemExit(
+                    f"{why}: {run.name}/{path.name} has {len(verdicts)} "
+                    f"verdicts against {n} prompts")
+
 
 def require_exact_prefix(prefix_run: Path, source_run: Path) -> None:
     """The prefix run must really be a prefix of the run it claims to come from.
@@ -148,6 +177,28 @@ def require_exact_prefix(prefix_run: Path, source_run: Path) -> None:
             f"{prefix_run.name} was not cut from stored generation token ids, "
             "so its 48-token side is a re-tokenization of decoded text rather "
             "than the tokens the model emitted")
+
+    # Both checks above read the manifest, which is the derivation's own
+    # account of itself. Verify the text instead: if the short run really is a
+    # prefix of the long one, every short completion starts the long one.
+    # Exact, with no tolerance -- a derived prefix has no reason to differ by
+    # even one character, unlike two independent generations.
+    for path in sorted((prefix_run / "results").glob("completions_*.json")):
+        scheme = path.stem.removeprefix("completions_")
+        source_path = source_run / "results" / f"completions_{scheme}.json"
+        if not source_path.is_file():
+            raise SystemExit(
+                f"{prefix_run.name} has {scheme} but {source_run.name} does "
+                "not, so that scheme was not derived from it")
+        short = read_json(path)["completions"]
+        long = read_json(source_path)["completions"]
+        bad = [i for i, (a, b) in enumerate(zip(short, long))
+               if not b.startswith(a)]
+        if bad:
+            raise SystemExit(
+                f"{prefix_run.name}: {len(bad)} {scheme} completions are not "
+                f"prefixes of {source_run.name} (first at row {bad[0]}), so "
+                "the manifest's claim of a token-prefix derivation is false")
 
 
 # ---------------------------------------------------------------------------
@@ -353,19 +404,36 @@ def token_budget() -> dict[str, Any]:
                    & (long_labels[RUNG] == "compliance"))
         only48 = int((stable & flip48 & ~flip256).sum())
         only256 = int((stable & ~flip48 & flip256).sum())
+        # Both analyses are reported as siblings rather than one nested inside
+        # the other. Nesting made the restricted result the top-level number
+        # and therefore the one a reader quotes -- and on Phi-3.5-mini the two
+        # disagree sharply, 0.0117 restricted against 0.8450 unrestricted, with
+        # 43 of 500 baselines having moved. The restricted analysis is
+        # conditioned on an outcome the window itself affects, so it describes
+        # a selected stratum of window-stable prompts and cannot stand in for
+        # the corpus. Neither is in the primary family; both are exploratory.
+        unrestricted_48 = int((flip48 & ~flip256).sum())
+        unrestricted_256 = int((~flip48 & flip256).sum())
         block["flip_status"] = {
             "fp16_verdict_changed": int(fp16_moved.sum()),
-            "n_baseline_stable": int(stable.sum()),
-            "flip_only_at_48": only48,
-            "flip_only_at_256": only256,
-            "flip_at_both": int((stable & flip48 & flip256).sum()),
-            "mcnemar_p": exact_mcnemar(only48, only256),
-            "unrestricted": {
-                "flip_only_at_48": int((flip48 & ~flip256).sum()),
-                "flip_only_at_256": int((~flip48 & flip256).sum()),
+            "n_prompts": int(len(fp16_moved)),
+            "inference_status": "exploratory, unadjusted",
+            "restricted_stable_baseline": {
+                "n": int(stable.sum()),
+                "conditions_on": ("prompts whose full-precision verdict did not "
+                                  "change with the window, which the window "
+                                  "itself selects; a stratum, not the corpus"),
+                "flip_only_at_48": only48,
+                "flip_only_at_256": only256,
+                "flip_at_both": int((stable & flip48 & flip256).sum()),
+                "mcnemar_p": exact_mcnemar(only48, only256),
+            },
+            "unrestricted_all_prompts": {
+                "n": int(len(fp16_moved)),
+                "flip_only_at_48": unrestricted_48,
+                "flip_only_at_256": unrestricted_256,
                 "flip_at_both": int((flip48 & flip256).sum()),
-                "mcnemar_p": exact_mcnemar(int((flip48 & ~flip256).sum()),
-                                           int((~flip48 & flip256).sum())),
+                "mcnemar_p": exact_mcnemar(unrestricted_48, unrestricted_256),
             },
         }
         out["models"][model] = block
@@ -375,6 +443,10 @@ def token_budget() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # question 3: how reproducible is greedy decoding
 # ---------------------------------------------------------------------------
+
+
+def _long_pattern_for(model: str) -> str:
+    return next(long for name, _p, long, _x in BEHAVIOURAL if name == model)
 
 
 def generation_drift() -> dict[str, Any]:
@@ -389,7 +461,19 @@ def generation_drift() -> dict[str, Any]:
     Text drift is only interesting if it moves a verdict, so the label
     comparison is the one that matters and both are reported.
     """
-    out: dict[str, Any] = {"models": {}}
+    out: dict[str, Any] = {
+        "models": {},
+        "note": (
+            "This arm and the XSTest prefix check together form a controlled "
+            "comparison of decoding reproducibility. Where batch size was held "
+            "at 8 across both budgets (XSTest), all 900 completions were "
+            "bit-identical prefixes. Where it changed -- 16 at 48 tokens "
+            "against 8 at 256, which is what the published HH-RLHF runs did -- "
+            "9 to 12 per cent of completions took a different path. Greedy "
+            "decoding is reproducible here only when batch composition is held "
+            "fixed, because batch shape sets the order of floating-point "
+            "reductions and a near-tied pair of logits can cross."),
+    }
     for model, published_pattern, _long, prefix_pattern in BEHAVIOURAL:
         published_run, prefix_run = find(published_pattern), find(prefix_pattern)
         require_paired(prefix_run, published_run, "decoder-drift comparison")
@@ -424,6 +508,13 @@ def generation_drift() -> dict[str, Any]:
 
         out["models"][model] = {
             "prefix_run": prefix_run.name, "independent_run": published_run.name,
+            "batch_size": {
+                "independent_48": read_json(
+                    published_run / "manifest.json").get("batch_size"),
+                "source_256": read_json(
+                    find(_long_pattern_for(model)) / "manifest.json"
+                ).get("batch_size"),
+            },
             "text": text, "labels": labels,
             "tables": {
                 "prefix_48": flip_table(prefix_labels, RUNG),
@@ -611,15 +702,28 @@ def xstest_drift_bound(published_run: Path, long_run: Path) -> dict[str, Any]:
     # can be a different merge of the same continuation. A tolerance of eight
     # characters is about two tokens and cannot hide a changed sentence.
     exact = sum(b.startswith(a) for a, b in zip(short, long))
+    # Reported, but NOT used to decide whether the runs are paired. Eight
+    # characters is enough to hold a real word, so a gate that forgives the
+    # last eight is not the "partial final token" allowance it looks like --
+    # it is a gate that forgives a changed word. The pairing decision uses the
+    # exact count and nothing else; the tolerant count stays only to show how
+    # close a near-miss would have been if one ever occurred.
     tolerant = sum(b.startswith(a[:-8]) if len(a) > 8 else b.startswith(a)
                    for a, b in zip(short, long))
     n = len(short)
+    lengths = [len(a) for a in short]
     return {
         "n": n,
         "long_starts_with_short": exact,
+        "diverged": n - exact,
+        "share_diverged": (n - exact) / n,
         "allowing_a_partial_final_token": tolerant,
-        "diverged": n - tolerant,
-        "share_diverged": (n - tolerant) / n,
+        "tolerance_is_diagnostic_only": True,
+        # Recorded so the check cannot be mistaken for a vacuous one: a short
+        # completion of a few characters would be a prefix of almost anything.
+        "shortest_48_token_completion_chars": min(lengths),
+        "median_48_token_completion_chars": int(np.median(lengths)),
+        "median_256_token_completion_chars": int(np.median([len(b) for b in long])),
         "measures": ("text only, and an upper bound: on the HH-RLHF runs, "
                      "where both were measured, about a tenth of completions "
                      "differed in text and about one in a hundred changed its "
@@ -669,10 +773,16 @@ def main() -> int:
                   f"conservative {table['conservative_flips']:3d}  "
                   f"p={table['mcnemar_p']:.4f}")
         flip = block["flip_status"]
-        print(f"      baseline moved on {flip['fp16_verdict_changed']} prompts; "
-              f"flip only at 48: {flip['flip_only_at_48']}, "
-              f"only at 256: {flip['flip_only_at_256']}, "
-              f"p={flip['mcnemar_p']:.4f}")
+        restricted = flip["restricted_stable_baseline"]
+        whole = flip["unrestricted_all_prompts"]
+        print(f"      baseline moved on {flip['fp16_verdict_changed']}"
+              f"/{flip['n_prompts']} prompts")
+        print(f"        all prompts        : {whole['flip_only_at_48']} vs "
+              f"{whole['flip_only_at_256']}  p={whole['mcnemar_p']:.4f}")
+        print(f"        stable baseline    : {restricted['flip_only_at_48']} vs "
+              f"{restricted['flip_only_at_256']}  "
+              f"p={restricted['mcnemar_p']:.4f}  "
+              f"(n={restricted['n']}, a selected stratum)")
 
     print("\n=== 3. greedy decoding reproducibility ===")
     for model, block in stats["generation_drift"]["models"].items():
