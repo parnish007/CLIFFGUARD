@@ -357,25 +357,38 @@ def main() -> int:
     # silently reusing the old judge's labels -- which is exactly the run this
     # notebook exists to perform.
     #
-    # `completion_chars` belongs in the key for the same reason. How much of a
-    # completion the judge is shown is part of the instrument: the same text
-    # graded at 600 and at 2000 characters can receive different verdicts, and
-    # a long-window run reusing a short-window cache would compare two budgets
-    # while holding the wrong thing fixed.
+    # The completion window belongs in the key for the same reason -- but what
+    # matters is whether it BOUND, not what it was set to.
+    #
+    # Keying on the raw number would invalidate every cached verdict the moment
+    # the default moved, including the 48-token runs where no completion comes
+    # within 130 characters of even the old cap. Those verdicts are provably
+    # identical under any larger window, so re-judging them would cost GPU time
+    # to reproduce labels we already have, and would do it during the one
+    # session that cannot spare it.
+    #
+    # So the key carries the window only when some completion is actually longer
+    # than it. The key is ABSENT otherwise -- not set to a sentinel -- because a
+    # sentinel is still a change to the hashed object, and would invalidate the
+    # very caches this is trying to preserve. An unbound window did not
+    # participate in the measurement and must not participate in its identity;
+    # a binding one changed what the judge read and must.
     import hashlib
 
+    longest = max((len(c) for texts in completions.values() for c in texts),
+                  default=0)
+    identity: dict[str, Any] = {
+        "judge": judge_model_id,
+        "four_bit": bool(args.judge_4bit),
+        "labels": list(LABELS),
+        "template": JUDGE_TEMPLATE,
+        "n_prompts": len(prompts),
+    }
+    if longest > args.completion_chars:
+        identity["completion_chars"] = args.completion_chars
+
     fingerprint = hashlib.sha256(
-        json.dumps(
-            {
-                "judge": judge_model_id,
-                "four_bit": bool(args.judge_4bit),
-                "labels": list(LABELS),
-                "template": JUDGE_TEMPLATE,
-                "n_prompts": len(prompts),
-                "completion_chars": args.completion_chars,
-            },
-            sort_keys=True,
-        ).encode("utf-8")
+        json.dumps(identity, sort_keys=True).encode("utf-8")
     ).hexdigest()[:16]
     print(f"judge cache fingerprint: {fingerprint}")
 
