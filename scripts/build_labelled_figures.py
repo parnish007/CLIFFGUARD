@@ -33,35 +33,19 @@ from matplotlib.ticker import PercentFormatter  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.analyse_leakage import pivots  # noqa: E402
+from scripts import figstyle  # noqa: E402
 
 # Shared with build_paper_figures.py so the two sets of plates look like one
 # document. Colour-blind safe; marker and dash carry the same information as
 # hue for greyscale print.
-MODEL_STYLE = {
-    "Qwen2.5-3B": ("#0B7285", "s", "-"),
-    "Phi-3.5-mini": ("#E8590C", "^", "--"),
-    "SmolLM2-1.7B": ("#5F3DC4", "o", "-."),
-}
-CLASS_COLOUR = {
-    "refusal": "#1864AB",
-    "deflection": "#4DABF7",
-    "disclaimer": "#B197FC",
-    "compliance": "#C92A2A",
-    "unclear": "#CED4DA",
-    "degenerate": "#868E96",
-}
-# Written out rather than truncated at plot time: slicing the class names to
-# seven characters produced "complia" and "degener" on the axis.
-CLASS_SHORT = {
-    "refusal": "refuse",
-    "deflection": "deflect",
-    "disclaimer": "disclaim",
-    "compliance": "comply",
-    "unclear": "unclear",
-    "degenerate": "degen",
-}
-MARKER_RED = "#C92A2A"   # the phrase-list arm, as in build_paper_figures.py
-TEXT_WIDTH_IN = 6.30
+figstyle.apply()
+
+MODEL_STYLE = figstyle.MODEL_STYLE
+CLASS_COLOUR = figstyle.CLASS_COLOUR
+CLASS_SHORT = figstyle.CLASS_SHORT
+MARKER_RED = figstyle.UNSAFE
+TEXT_WIDTH_IN = figstyle.TEXT_WIDTH
+save = figstyle.save
 
 RUNS = {
     "Qwen2.5-3B": "20260808-154229_069d48d_lab-qwen3b-xstest",
@@ -83,32 +67,6 @@ SCHEMES = ["FP16", "RTN_8B", "RTN_7B", "RTN_6B", "RTN_5B", "RTN_4B", "RTN_3B", "
 RUNG_LABEL = {"FP16": "16", "RTN_8B": "8.5", "RTN_7B": "7.5",
               "RTN_6B": "6.5", "RTN_5B": "5.5", "RTN_4B": "4.5",
               "RTN_3B": "3.5", "RTN_2B": "2.5"}
-
-plt.rcParams.update({
-    "font.size": 9,
-    "axes.titlesize": 9.5,
-    "axes.labelsize": 9,
-    "legend.fontsize": 8,
-    "xtick.labelsize": 8,
-    "ytick.labelsize": 8,
-    "axes.spines.top": False,
-    "axes.spines.right": False,
-    "axes.grid": True,
-    "grid.alpha": 0.22,
-    "grid.linewidth": 0.6,
-    "figure.dpi": 220,
-    "savefig.bbox": "tight",
-    "pdf.fonttype": 42,
-})
-
-
-def save(fig: Any, out: Path, name: str) -> None:
-    out.mkdir(parents=True, exist_ok=True)
-    for ext in ("pdf", "png"):
-        fig.savefig(out / f"{name}.{ext}")
-    plt.close(fig)
-    print(f"  {name}.pdf / .png")
-
 
 def load(repo: Path) -> dict[str, dict[str, Any]]:
     """Everything the figures need, read once from the run directories."""
@@ -151,7 +109,7 @@ def fig_saturation(data: dict[str, Any], out: Path) -> None:
     and it has no area anywhere in the plate, at any rung, in any model,
     including the full-precision reference each rung is compared against.
     """
-    fig, axes = plt.subplots(1, 3, figsize=(TEXT_WIDTH_IN, 2.35), sharey=True)
+    fig, axes = plt.subplots(1, 3, figsize=(TEXT_WIDTH_IN, 3.5), sharey=True)
     order = ["refusal", "deflection", "disclaimer", "unclear", "degenerate",
              "compliance"]
     for ax, (model, d) in zip(axes, data.items()):
@@ -165,18 +123,17 @@ def fig_saturation(data: dict[str, Any], out: Path) -> None:
                    label=cls if ax is axes[0] else None)
             bottoms = [b + v for b, v in zip(bottoms, vals)]
         ax.set_xticks(range(len(schemes)))
-        ax.set_xticklabels([RUNG_LABEL[s] for s in schemes], fontsize=7)
-        ax.set_title(model, pad=4)
+        ax.set_xticklabels([RUNG_LABEL[s] for s in schemes])
+        figstyle.panel_title(ax, chr(ord("a") + list(axes).index(ax)), model)
         ax.set_ylim(0, 100)
         ax.yaxis.set_major_formatter(PercentFormatter())
-        ax.grid(axis="x", visible=False)
+        figstyle.ygrid(ax)
     axes[0].set_ylabel("harmful prompts")
     axes[1].set_xlabel("stored bits / parameter")
     handles, labels = axes[0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="lower center", ncol=6, frameon=False,
-               bbox_to_anchor=(0.5, -0.13))
-    fig.suptitle("The safety endpoint never fires: 'compliance' is absent at "
-                 "every rung", y=1.02, fontsize=9.5)
+    figstyle.shared_legend(fig, handles, labels, ncol=3,
+                           note="Stack colours = the judge's completion classes.",
+                           reserve=0.30)
     save(fig, out, "fig_labelled_saturation")
 
 
@@ -203,7 +160,7 @@ def fig_truncation(data: dict[str, Any], out: Path) -> None:
             "which this figure plots.")
     stats = json.loads(stats_path.read_text(encoding="utf-8"))
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(TEXT_WIDTH_IN, 2.4))
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(TEXT_WIDTH_IN, 3.5))
     for model, d in data.items():
         colour, marker, dash = MODEL_STYLE[model]
         schemes = [s for s in SCHEMES if s in d["completions"]]
@@ -218,18 +175,18 @@ def fig_truncation(data: dict[str, Any], out: Path) -> None:
                  markersize=3.4, linewidth=1.3, label=model)
 
     for ax, title in ((ax1, "completions reaching the 48-token cap"),
-                      (ax2, "judged 'compliance', benign prompts")):
+                       (ax2, "Judged compliance, benign prompts")):
         ax.set_xticks(range(len(SCHEMES)))
-        ax.set_xticklabels([RUNG_LABEL[s] for s in SCHEMES], fontsize=7)
+        ax.set_xticklabels([RUNG_LABEL[s] for s in SCHEMES])
         ax.set_xlabel("stored bits / parameter")
-        ax.set_title(title, pad=4, fontsize=8.5)
+        figstyle.panel_title(ax, "a" if ax is ax1 else "b", title)
         ax.yaxis.set_major_formatter(PercentFormatter(decimals=0))
+        figstyle.ygrid(ax)
     ax1.set_ylim(0, 105)
     ax2.set_ylim(0, 30)
-    ax1.legend(frameon=False, loc="lower left")
-    fig.suptitle("A 48-token budget is the ceiling on the compliance class",
-                 y=1.10, fontsize=9.5)
-    fig.subplots_adjust(wspace=0.30)
+    handles, labels = ax1.get_legend_handles_labels()
+    figstyle.shared_legend(fig, handles, labels, ncol=3,
+                           note="Lines show the three model families.")
     save(fig, out, "fig_labelled_truncation")
 
 
@@ -243,7 +200,7 @@ def fig_matrix(data: dict[str, Any], out: Path) -> None:
     """
     order = ["refusal", "deflection", "compliance", "disclaimer", "unclear",
              "degenerate"]
-    fig, axes = plt.subplots(1, 3, figsize=(TEXT_WIDTH_IN, 1.95))
+    fig, axes = plt.subplots(1, 3, figsize=(TEXT_WIDTH_IN, 2.9))
     for ax, (model, d) in zip(axes, data.items()):
         grid = [[counts(d["resolved"]["FP16"], d["harm"], cls)[c]
                  for c in order] for cls in ("harmful", "benign")]
@@ -253,22 +210,21 @@ def fig_matrix(data: dict[str, Any], out: Path) -> None:
                 # The empty safety cell is the point of the figure, so it is
                 # marked rather than left as an unremarkable white square.
                 emphasis = (i == 0 and order[j] == "compliance")
-                ax.text(j, i, str(v), ha="center", va="center", fontsize=7,
+                ax.text(j, i, str(v), ha="center", va="center", fontsize=7.5,
                         color=("#C92A2A" if emphasis else
                                "white" if v > 75 else "#212529"),
                         fontweight="bold" if emphasis else "normal")
         ax.set_xticks(range(len(order)))
-        ax.set_xticklabels([CLASS_SHORT[c] for c in order], rotation=45,
-                           ha="right", fontsize=6.5)
+        ax.set_xticklabels([CLASS_SHORT[c] for c in order], rotation=90,
+                           ha="right")
         ax.set_yticks([0, 1])
         ax.set_yticklabels(["harmful", "benign"] if ax is axes[0] else ["", ""],
-                           fontsize=7)
-        ax.set_title(model, pad=4, fontsize=8.5)
-        ax.grid(visible=False)
-    fig.colorbar(im, ax=axes, fraction=0.02, pad=0.02).set_label(
-        "prompts (of 150)", fontsize=7)
-    fig.suptitle("Full precision, the two axes crossed — the safety cell is "
-                 "empty before quantization", y=1.06, fontsize=9.5)
+                           fontsize=7.5)
+        figstyle.panel_title(ax, chr(ord("a") + list(axes).index(ax)), model)
+    fig.colorbar(im, ax=axes, fraction=0.02, pad=0.02).set_label("prompts (of 150)")
+    fig.subplots_adjust(left=0.08, right=0.88, bottom=0.34, top=0.88, wspace=0.64)
+    fig.text(0.5, 0.035, "Rows = prompt labels; columns = judge verdicts.",
+             ha="center", fontsize=8, color="#404040")
     save(fig, out, "fig_labelled_matrix_fp16")
 
 
@@ -283,7 +239,7 @@ def fig_unadjudicated(data: dict[str, Any], out: Path) -> None:
     plotted because a zero resting on 72 unread completions and a zero resting
     on 4 are not the same zero.
     """
-    fig, ax = plt.subplots(figsize=(TEXT_WIDTH_IN, 2.3))
+    fig, ax = plt.subplots(figsize=(TEXT_WIDTH_IN, 3.4))
     width = 0.26
     for k, (model, d) in enumerate(data.items()):
         colour, _, _ = MODEL_STYLE[model]
@@ -300,21 +256,23 @@ def fig_unadjudicated(data: dict[str, Any], out: Path) -> None:
         ax.bar(xs, flagged, width=width, color=colour, label=model,
                edgecolor="white", linewidth=0.3)
     ax.set_xticks(range(len(SCHEMES)))
-    ax.set_xticklabels([RUNG_LABEL[s] for s in SCHEMES], fontsize=7)
+    ax.set_xticklabels([RUNG_LABEL[s] for s in SCHEMES])
     ax.set_xlabel("stored bits / parameter")
     ax.set_ylabel("harmful prompts (of 150)")
     ax.set_ylim(0, 88)
-    ax.set_title("Withheld verdicts that match a turn toward answering — "
-                 "unadjudicated, not harmful", pad=6)
-    ax.legend(frameon=False, ncol=3, loc="upper center",
-              bbox_to_anchor=(0.5, -0.28))
+    figstyle.panel_title(ax, None, "Withheld verdicts matching a turn toward answering")
+    figstyle.ygrid(ax)
     # Without this the empty 3- and 2-bit columns read as safety improving at
     # the hardest rungs, when they are the model having stopped producing
     # language altogether.
     ax.text(0.99, 0.95, "empty at 3-2 bits because output is degenerate,\n"
                         "not because the models became safer",
-            transform=ax.transAxes, ha="right", va="top", fontsize=7,
+            transform=ax.transAxes, ha="right", va="top", fontsize=7.5,
             color="#495057")
+    handles, labels = ax.get_legend_handles_labels()
+    figstyle.shared_legend(
+        fig, handles, labels, ncol=3,
+        note="Counts are unadjudicated completions, not harmful completions.")
     save(fig, out, "fig_labelled_unadjudicated")
 
 
@@ -334,7 +292,7 @@ def fig_marker_gap(data: dict[str, Any], out: Path) -> None:
     """
     from scripts.run_behavioural_ladder import has_refusal_marker
 
-    fig, ax = plt.subplots(figsize=(TEXT_WIDTH_IN, 2.15))
+    fig, ax = plt.subplots(figsize=(TEXT_WIDTH_IN, 3.3))
     models = list(data)
     for row, model in enumerate(models):
         d = data[model]
@@ -351,21 +309,18 @@ def fig_marker_gap(data: dict[str, Any], out: Path) -> None:
         ax.scatter([declines], [row], s=52, color=colour, marker="o",
                    zorder=3, label="five-way judge" if row == 0 else None)
         ax.text((marked + declines) / 2, row + 0.22,
-                f"{marked / declines:.0%} recall", ha="center", fontsize=7,
+                f"{marked / declines:.0%} recall", ha="center", fontsize=7.5,
                 color="#495057")
     ax.set_yticks(range(len(models)))
     ax.set_yticklabels(models, fontsize=8)
-    # Headroom above the top row for the legend, which otherwise lands on the
-    # bottom dumbbell.
-    ax.set_ylim(-0.45, len(models) - 0.10)
+    ax.set_ylim(-0.45, len(models) - 0.45)
     ax.set_xlim(0, 310)
     ax.set_xlabel("full-precision completions placed in a declining class "
                   "(of 300)")
-    ax.set_title("The same phrase list reads three families three different "
-                 "ways", pad=18)
-    ax.legend(frameon=False, loc="upper center", ncol=2,
-              bbox_to_anchor=(0.5, 1.10))
-    ax.grid(axis="y", visible=False)
+    figstyle.panel_title(ax, None, "The same phrase list reads families differently")
+    figstyle.xgrid(ax)
+    handles, labels = ax.get_legend_handles_labels()
+    figstyle.shared_legend(fig, handles, labels, ncol=2)
     save(fig, out, "fig_labelled_marker_gap")
 
 
@@ -385,7 +340,7 @@ def fig_utility(repo: Path, out: Path) -> None:
         encoding="utf-8"))
     order = {"Qwen2.5-3B": "qwen3b", "Phi-3.5-mini": "phi35",
              "SmolLM2-1.7B": "smol17"}
-    fig, axes = plt.subplots(1, 3, figsize=(TEXT_WIDTH_IN, 2.3), sharey=True)
+    fig, axes = plt.subplots(1, 3, figsize=(TEXT_WIDTH_IN, 3.5), sharey=True)
     for ax, (model, key) in zip(axes, order.items()):
         block = next((v for k, v in stats.items() if key in k), None)
         if block is None:
@@ -405,17 +360,17 @@ def fig_utility(repo: Path, out: Path) -> None:
                                      [u - r for u, r in zip(upper, rates)]],
                     fmt="none", ecolor="#343A40", elinewidth=0.8, capsize=2.2)
         ax.set_xticks(list(xs))
-        ax.set_xticklabels([RUNG_LABEL[r["scheme"]] for r in rows], fontsize=7)
-        ax.set_title(model, pad=4, fontsize=8.5)
+        ax.set_xticklabels([RUNG_LABEL[r["scheme"]] for r in rows])
+        figstyle.panel_title(ax, chr(ord("a") + list(axes).index(ax)), model)
         ax.yaxis.set_major_formatter(PercentFormatter(decimals=0))
         ax.set_ylim(0, 24)
+        figstyle.ygrid(ax)
     axes[0].set_ylabel("benign prompts (of 150)")
     axes[1].set_xlabel("stored bits / parameter")
     handles, labels = axes[0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="lower center", ncol=2, frameon=False,
-               bbox_to_anchor=(0.5, -0.14))
-    fig.suptitle("Usefulness lost on benign prompts, with one-sided 95% upper "
-                 "bounds", y=1.03, fontsize=9.5)
+    figstyle.shared_legend(
+        fig, handles, labels, ncol=2,
+        note="Hatched bars = loss from degenerate output; whiskers = one-sided 95% upper bounds.")
     save(fig, out, "fig_labelled_utility")
 
 

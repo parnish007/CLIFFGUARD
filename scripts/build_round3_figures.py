@@ -32,68 +32,18 @@ from matplotlib.path import Path as MplPath  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-# Shared with build_paper_figures.py and build_labelled_figures.py so all three
-# sets of plates look like one document.
-MODEL_STYLE = {
-    "Qwen2.5-3B": ("#0B7285", "s", "-"),
-    "Phi-3.5-mini": ("#E8590C", "^", "--"),
-    "SmolLM2-1.7B": ("#5F3DC4", "o", "-."),
-}
-CLASS_COLOUR = {
-    "refusal": "#1864AB",
-    "deflection": "#4DABF7",
-    "disclaimer": "#B197FC",
-    "compliance": "#C92A2A",
-    "unclear": "#CED4DA",
-    "degenerate": "#868E96",
-}
-CLASS_SHORT = {
-    "refusal": "refuse", "deflection": "deflect", "disclaimer": "disclaim",
-    "compliance": "comply", "unclear": "unclear", "degenerate": "degen",
-}
-UNSAFE_RED, CONSERVATIVE_BLUE = "#C92A2A", "#1864AB"
+from scripts import figstyle  # noqa: E402
+
+figstyle.apply()
+
+MODEL_STYLE = figstyle.MODEL_STYLE
+CLASS_COLOUR = figstyle.CLASS_COLOUR
+CLASS_SHORT = figstyle.CLASS_SHORT
+UNSAFE_RED, CONSERVATIVE_BLUE = figstyle.UNSAFE, figstyle.CONSERVATIVE
 INK, MUTED, HAIRLINE = "#212529", "#6C757D", "#DEE2E6"
-TEXT_WIDTH_IN = 6.30
+TEXT_WIDTH_IN = figstyle.TEXT_WIDTH
 MODEL_ORDER = ("Qwen2.5-3B", "Phi-3.5-mini", "SmolLM2-1.7B")
-
-# Type scale one step larger than the other plates in this paper. These figures
-# carry counts that a reader is expected to read off rather than compare by
-# eye, and the earlier set was set at a size that survives a full-width figure
-# but not a three-panel one.
-plt.rcParams.update({
-    "font.family": "sans-serif",
-    "font.sans-serif": ["DejaVu Sans"],
-    "font.size": 9.5,
-    "axes.titlesize": 10,
-    "axes.labelsize": 9,
-    "legend.fontsize": 8.5,
-    "xtick.labelsize": 8.5,
-    "ytick.labelsize": 8.5,
-    "axes.edgecolor": "#ADB5BD",
-    "axes.linewidth": 0.8,
-    "axes.labelcolor": INK,
-    "text.color": INK,
-    "xtick.color": MUTED,
-    "ytick.color": MUTED,
-    "xtick.major.width": 0.8,
-    "ytick.major.width": 0.8,
-    "axes.spines.top": False,
-    "axes.spines.right": False,
-    "axes.grid": False,
-    "figure.dpi": 300,
-    "savefig.bbox": "tight",
-    "savefig.pad_inches": 0.03,
-    "pdf.fonttype": 42,
-    "ps.fonttype": 42,
-})
-
-
-def save(fig: Any, out: Path, name: str) -> None:
-    out.mkdir(parents=True, exist_ok=True)
-    for ext in ("pdf", "png"):
-        fig.savefig(out / f"{name}.{ext}")
-    plt.close(fig)
-    print(f"  {name}.pdf / .png")
+save = figstyle.save
 
 
 def fmt_p(p: float) -> str:
@@ -103,17 +53,6 @@ def fmt_p(p: float) -> str:
     if p >= 0.995:
         return "p ≈ 1"
     return f"p = {p:.3f}"
-
-
-def panel_tag(ax: Any, letter: str) -> None:
-    ax.text(-0.02, 1.16, letter, transform=ax.transAxes, fontsize=10.5,
-            fontweight="bold", va="top", ha="right", color=INK)
-
-
-def light_xgrid(ax: Any) -> None:
-    ax.set_axisbelow(True)
-    ax.grid(axis="x", color=HAIRLINE, linewidth=0.7, alpha=1.0)
-    ax.grid(axis="y", visible=False)
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +81,7 @@ def fig_scorer(stats: dict[str, Any], out: Path) -> None:
     # model. Two panels meant two of everything -- two axis labels, two sets
     # of direction annotations -- competing for the same strip of space under
     # the plot, and they collided. One axis needs one of each.
-    fig, ax = plt.subplots(figsize=(TEXT_WIDTH_IN, 2.6))
+    fig, ax = plt.subplots(figsize=(TEXT_WIDTH_IN, 3.4))
 
     largest = max(max(present[m]["tables"][mode]["unsafe_flips"],
                       present[m]["tables"][mode]["conservative_flips"])
@@ -190,7 +129,7 @@ def fig_scorer(stats: dict[str, Any], out: Path) -> None:
                 color=MODEL_STYLE[model][0], clip_on=False)
 
     ax.axvline(0, color="#495057", linewidth=1.0, zorder=2)
-    light_xgrid(ax)
+    figstyle.xgrid(ax)
     ax.set_xlim(-limit, limit)
     ax.set_ylim(-0.7, len(entries) - 0.3)
     ax.set_yticks(range(len(entries)))
@@ -203,11 +142,10 @@ def fig_scorer(stats: dict[str, Any], out: Path) -> None:
     ax.set_xticklabels([str(abs(t)) for t in ticks])
     ax.set_xlabel("← unsafe flips        prompts, of 500        "
                   "conservative flips →", labelpad=7)
-    ax.set_title("Full precision against 4.5 bits, re-graded on identical text",
-                 loc="left", fontweight="bold", pad=10)
-    panel_tag(ax, "a")
+    figstyle.panel_title(ax, None,
+                         "Full precision against 4.5 bits, re-graded on identical text")
 
-    fig.tight_layout()
+    figstyle.note_only(fig, "Blue = conservative flips; red = unsafe flips.")
     save(fig, out, "fig_round3_scorer")
 
 
@@ -261,7 +199,7 @@ def fig_budget(stats: dict[str, Any], out: Path) -> None:
     models = [m for m in MODEL_ORDER if m in present]
     order = ["refusal", "deflection", "disclaimer", "compliance"]
 
-    fig, axes = plt.subplots(1, len(models), figsize=(TEXT_WIDTH_IN, 3.0))
+    fig, axes = plt.subplots(1, len(models), figsize=(TEXT_WIDTH_IN, 4.1))
     axes = list(np.atleast_1d(axes))
     gap, x0, x1 = 3.0, 0.0, 1.0
     total = 150
@@ -322,6 +260,8 @@ def fig_budget(stats: dict[str, Any], out: Path) -> None:
                         ha: str, dx: float) -> None:
             placed: list[float] = []
             for name, (base, height) in positions.items():
+                if height < 2:
+                    continue
                 y = base + height / 2
                 while any(abs(y - other) < 5.0 for other in placed):
                     y += 5.0
@@ -339,13 +279,9 @@ def fig_budget(stats: dict[str, Any], out: Path) -> None:
         ax.set_xticklabels(["48", "256"], fontsize=9, color=INK)
         ax.set_yticks([])
         ax.tick_params(axis="x", length=0)
-        for spine in ax.spines.values():
-            spine.set_visible(False)
-        ax.set_title(model, color=MODEL_STYLE[model][0], fontweight="bold",
-                     pad=10)
+        figstyle.panel_title(ax, chr(ord("a") + index), model)
         if index == 0:
             ax.set_ylabel("150 harmful prompts", labelpad=2)
-            panel_tag(ax, "b")
 
         # The harmful-compliance cell is the one number a reader came for, and
         # at 1 of 150 it is a hairline the stack label alone will not rescue.
@@ -361,12 +297,11 @@ def fig_budget(stats: dict[str, Any], out: Path) -> None:
                 fontweight="normal" if empty else "bold",
                 color=MUTED if empty else CLASS_COLOUR["compliance"])
 
-    fig.legend(handles=[Patch(facecolor=CLASS_COLOUR[k], label=CLASS_SHORT[k])
-                        for k in order],
-               loc="lower center", ncol=4, frameon=False,
-               bbox_to_anchor=(0.5, -0.05))
-    fig.supxlabel("generated tokens", fontsize=9, y=0.045)
-    fig.tight_layout()
+    figstyle.shared_legend(
+        fig, [Patch(facecolor=CLASS_COLOUR[k]) for k in order],
+        [CLASS_SHORT[k] for k in order], ncol=4,
+        note="Ribbons show verdict transitions from 48 to 256 generated tokens.",
+        reserve=0.28)
     save(fig, out, "fig_round3_budget")
 
 
@@ -388,7 +323,7 @@ def fig_reproducibility(stats: dict[str, Any], out: Path) -> None:
     reproducible and the labels very nearly are, and the gap between the pair
     is the thing to look at.
     """
-    fig, ax = plt.subplots(figsize=(TEXT_WIDTH_IN, 3.7))
+    fig, ax = plt.subplots(figsize=(TEXT_WIDTH_IN, 4.3))
 
     # Group headers occupy their own y positions so they can never sit on a
     # bar or a tick label.
@@ -422,13 +357,17 @@ def fig_reproducibility(stats: dict[str, Any], out: Path) -> None:
             ax.text(-0.6, y, entry["header"], ha="left", va="center",
                     fontsize=8.5, color=MUTED, style="italic")
             continue
-        colour = MODEL_STYLE[entry["model"]][0]
-        ax.barh(y + height / 2, entry["text"], height=height, color=colour,
+        # Two colours, one meaning each: grey is text, red is verdict. Colouring
+        # the text bar by model looked richer and was wrong -- the legend swatch
+        # said grey while the bars were blue, red and green, and Phi's text bar
+        # was the same red as every verdict bar. The model is already named on
+        # the axis, so it does not need a second encoding.
+        ax.barh(y + height / 2, entry["text"], height=height, color=NEUTRAL,
                 edgecolor="white", linewidth=0.7, zorder=3)
         ax.barh(y - height / 2, entry["verdict"], height=height,
                 color=UNSAFE_RED, edgecolor="white", linewidth=0.7, zorder=3)
         ax.text(entry["text"] + 0.22, y + height / 2, f'{entry["text"]:.1f}%',
-                va="center", fontsize=8.5, color=colour, fontweight="bold")
+                va="center", fontsize=8.5, color="#404040", fontweight="bold")
         ax.text(entry["verdict"] + 0.22, y - height / 2,
                 f'{entry["verdict"]:.1f}%', va="center", fontsize=8.5,
                 color=UNSAFE_RED)
@@ -440,16 +379,12 @@ def fig_reproducibility(stats: dict[str, Any], out: Path) -> None:
     ax.set_ylim(-0.8, len(entries) - 0.2)
     ax.set_xlim(0, 15.2)
     ax.set_xlabel("percent of prompts")
-    light_xgrid(ax)
+    figstyle.xgrid(ax)
     ax.tick_params(axis="y", length=0)
-    ax.set_title("Generated twice under greedy decoding", loc="left",
-                 fontweight="bold", pad=10)
-    ax.legend(handles=[
-        Patch(facecolor=MUTED, label="generated text differs"),
-        Patch(facecolor=UNSAFE_RED, label="verdict differs")],
-        loc="lower right", frameon=False, fontsize=8.5)
-
-    fig.tight_layout()
+    figstyle.panel_title(ax, None, "Generated twice under greedy decoding")
+    figstyle.shared_legend(
+        fig, [Patch(facecolor=MUTED), Patch(facecolor=UNSAFE_RED)],
+        ["generated text differs", "verdict differs"], ncol=2)
     save(fig, out, "fig_round3_reproducibility")
 
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import sys
 from typing import Any
 
 import matplotlib
@@ -20,45 +21,20 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.ticker import PercentFormatter  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from scripts import figstyle  # noqa: E402
+
 # Colour-blind-safe, and nothing relies on hue alone: markers and dash patterns
 # carry the same information for greyscale print.
-JUDGE = "#0B7285"
-MARKER = "#C92A2A"
-DEGEN = "#868E96"
-MODEL_STYLE = {
-    "Qwen2.5-1.5B": ("#5F3DC4", "o", "-"),
-    "Qwen2.5-3B": ("#0B7285", "s", "-"),
-    "Phi-3.5-mini": ("#E8590C", "^", "--"),
-}
+figstyle.apply()
 
-# A4 with 2.5 cm margins leaves a 16.0 cm text block = 6.30 in. Figures are sized
-# against that constant rather than eyeballed, and \includegraphics uses
-# \linewidth, so nothing can overflow into the margin.
-TEXT_WIDTH_IN = 6.30
-
-plt.rcParams.update({
-    "font.size": 9,
-    "axes.titlesize": 9.5,
-    "axes.labelsize": 9,
-    "legend.fontsize": 8,
-    "xtick.labelsize": 8,
-    "ytick.labelsize": 8,
-    "axes.spines.top": False,
-    "axes.spines.right": False,
-    "axes.grid": True,
-    "grid.alpha": 0.22,
-    "grid.linewidth": 0.6,
-    "figure.dpi": 220,
-    "savefig.bbox": "tight",
-    "pdf.fonttype": 42,
-})
-
-
-def save(fig: Any, out: Path, name: str) -> None:
-    for ext in ("pdf", "png"):
-        fig.savefig(out / f"{name}.{ext}")
-    plt.close(fig)
-    print(f"  {name}.pdf / .png")
+JUDGE = figstyle.CONSERVATIVE
+MARKER = figstyle.UNSAFE
+DEGEN = figstyle.NEUTRAL
+MODEL_STYLE = figstyle.MODEL_STYLE
+TEXT_WIDTH_IN = figstyle.TEXT_WIDTH
+save = figstyle.save
 
 
 def rung_axis(ax: Any, rows: list[dict[str, Any]]) -> list[int]:
@@ -92,11 +68,11 @@ def fig_artifact(review: dict[str, Any], out: Path) -> None:
     gate is the entire story.
     """
     models = list(review["gate_by_grader"])
-    fig, axes = plt.subplots(1, len(models), figsize=(TEXT_WIDTH_IN, 2.9),
-                             sharey=True, constrained_layout=True)
+    fig, axes = plt.subplots(1, len(models), figsize=(TEXT_WIDTH_IN, 3.7),
+                             sharey=True)
     axes = list(axes) if len(models) > 1 else [axes]
 
-    for ax, model in zip(axes, models):
+    for index, (ax, model) in enumerate(zip(axes, models)):
         rows = review["gate_by_grader"][model]
         x = rung_axis(ax, rows)
         for i, r in enumerate(rows):
@@ -112,17 +88,16 @@ def fig_artifact(review: dict[str, Any], out: Path) -> None:
         ax.plot(x, [100 * r["judge_composite"] for r in rows],
                 color=JUDGE, marker="o", ls="-", lw=1.9, ms=5,
                 label="judge, composite gate", zorder=4)
-        ax.set_title(model)
+        figstyle.panel_title(ax, chr(ord("a") + index), model)
         ax.set_ylim(-1.5, 43)
         ax.yaxis.set_major_formatter(PercentFormatter(decimals=0))
+        figstyle.ygrid(ax)
 
     axes[0].set_ylabel(r"refusal $\to$ compliance")
-    axes[0].legend(loc="upper left", frameon=False)
-    axes[0].text(0.035, 0.40, "shaded rungs:\nmodel is degenerate",
-                 transform=axes[0].transAxes, ha="left", va="center",
-                 fontsize=7.5, color="#495057")
-    fig.suptitle("The cliff needs both a weak gate and a weak grader",
-                 fontsize=10.5)
+    handles, labels = axes[0].get_legend_handles_labels()
+    figstyle.shared_legend(
+        fig, handles, labels, ncol=3,
+        note="Shaded rungs = model is degenerate.")
     save(fig, out, "fig_artifact")
 
 
@@ -135,8 +110,7 @@ def fig_capability(review: dict[str, Any], out: Path) -> None:
     run's degeneracy-gated counts, so Qwen2.5-1.5B at 2.5 bits was plotted as
     0/200 beside a table saying 2/200.
     """
-    fig, ax = plt.subplots(figsize=(TEXT_WIDTH_IN * 0.66, 2.9),
-                           constrained_layout=True)
+    fig, ax = plt.subplots(figsize=(TEXT_WIDTH_IN * 0.66, 3.5))
     reference: list[dict[str, Any]] = []
     blocks = {m: b for m, b in review["gsm8k"].items() if not m.startswith("_")}
     for model, block in blocks.items():
@@ -154,8 +128,10 @@ def fig_capability(review: dict[str, Any], out: Path) -> None:
     ax.set_ylabel("GSM8K accuracy")
     ax.set_ylim(-2, 40)
     ax.yaxis.set_major_formatter(PercentFormatter(decimals=0))
-    ax.legend(loc="lower left", frameon=False)
-    ax.set_title("Capability collapses at a model-specific bit-width")
+    figstyle.panel_title(ax, None, "Capability collapses at a model-specific bit-width")
+    figstyle.ygrid(ax)
+    handles, labels = ax.get_legend_handles_labels()
+    figstyle.shared_legend(fig, handles, labels, ncol=1, reserve=0.28)
     save(fig, out, "fig_capability")
 
 
@@ -166,8 +142,7 @@ def fig_probe(review: dict[str, Any], out: Path) -> None:
     it the collapse at the lowest rungs looks far more precisely located than
     the data supports.
     """
-    fig, ax = plt.subplots(figsize=(TEXT_WIDTH_IN * 0.70, 3.0),
-                           constrained_layout=True)
+    fig, ax = plt.subplots(figsize=(TEXT_WIDTH_IN * 0.70, 3.7))
     reference: list[dict[str, Any]] = []
     for model, block in review["probe"].items():
         colour, marker, dash = MODEL_STYLE.get(model, ("#333333", "o", "-"))
@@ -185,9 +160,12 @@ def fig_probe(review: dict[str, Any], out: Path) -> None:
     rung_axis(ax, reference)
     ax.set_ylabel("frozen-probe $d'$ retained")
     ax.yaxis.set_major_formatter(PercentFormatter(decimals=0))
-    ax.legend(loc="lower left", frameon=False)
-    ax.set_title("Near-flat over 8.5--4.5 bits, where behaviour drifts;\n"
-                 "Phi-3.5-mini is already at 63% by its 3.5-bit shift")
+    figstyle.panel_title(ax, None, "Frozen-probe retention along the ladder")
+    figstyle.ygrid(ax)
+    handles, labels = ax.get_legend_handles_labels()
+    figstyle.shared_legend(
+        fig, handles, labels, ncol=3,
+        note="Shaded bands = 2.5--97.5% retention across replicates.")
     save(fig, out, "fig_probe")
 
 
@@ -197,13 +175,13 @@ def fig_degeneracy(data: dict[str, Any], out: Path) -> None:
              else next(iter(data["behavioural"])))
     rows = sorted(data["behavioural"][model]["rows"], key=lambda r: -r["bits"])
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(TEXT_WIDTH_IN, 2.7),
-                                   constrained_layout=True)
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(TEXT_WIDTH_IN, 3.6))
     x = rung_axis(ax1, rows)
     ax1.plot(x, [r["median_nll"] for r in rows], color=MARKER, marker="s",
              lw=1.7, ms=5)
     ax1.set_ylabel("median NLL under FP16")
-    ax1.set_title("Perplexity is not monotone")
+    figstyle.panel_title(ax1, "a", "Perplexity is not monotone")
+    figstyle.ygrid(ax1)
     last, prev = rows[-1], rows[-2]
     ax1.annotate(
         f"{last['bits']:.1f} bits scores LOWER\nthan {prev['bits']:.1f}:\nrepetition is predictable",
@@ -222,9 +200,11 @@ def fig_degeneracy(data: dict[str, Any], out: Path) -> None:
              ls=":", lw=1.7, ms=5, label="alphabetic fraction")
     ax2.set_ylabel("ratio")
     ax2.set_ylim(-0.03, 1.10)
-    ax2.legend(loc="center left", frameon=False)
-    ax2.set_title("Surface statistics separate the regimes")
-    fig.suptitle("Detecting degeneracy needs more than perplexity", fontsize=10.5)
+    ax2.set_yticks([0.0, 0.2, 0.4, 0.6, 0.8, 1.0])
+    figstyle.panel_title(ax2, "b", "Surface statistics separate the regimes")
+    figstyle.ygrid(ax2)
+    handles, labels = ax2.get_legend_handles_labels()
+    figstyle.shared_legend(fig, handles, labels, ncol=3)
     save(fig, out, "fig_degeneracy")
 
 
@@ -239,8 +219,7 @@ def fig_marker_sensitivity(data: dict[str, Any], out: Path) -> None:
     schemes = sorted({s for v in variants.values() for s in v},
                      key=lambda s: -int(s.split("_")[1][:-1]))
 
-    fig, ax = plt.subplots(figsize=(TEXT_WIDTH_IN * 0.72, 2.9),
-                           constrained_layout=True)
+    fig, ax = plt.subplots(figsize=(TEXT_WIDTH_IN * 0.72, 3.5))
     for i, (name, row) in enumerate(variants.items()):
         ax.plot(range(len(schemes)), [100 * row.get(s, 0.0) for s in schemes],
                 marker="o", lw=1.6, ms=4.5, label=name,
@@ -252,9 +231,11 @@ def fig_marker_sensitivity(data: dict[str, Any], out: Path) -> None:
     ax.set_xlabel("code bits")
     ax.set_ylabel(r"apparent refusal $\to$ compliance")
     ax.yaxis.set_major_formatter(PercentFormatter(decimals=0))
-    ax.legend(frameon=False, title="marker list", title_fontsize=8,
-              loc="upper left")
-    ax.set_title(f"One choice of strings moves the headline ({model})")
+    figstyle.panel_title(ax, None, f"One choice of strings moves the headline ({model})")
+    figstyle.ygrid(ax)
+    handles, labels = ax.get_legend_handles_labels()
+    figstyle.shared_legend(fig, handles, labels, ncol=2,
+                           note="Legend entries name the phrase lists.", reserve=0.28)
     save(fig, out, "fig_marker_sensitivity")
 
 
@@ -269,8 +250,7 @@ def fig_refusal_law(review: dict[str, Any], out: Path) -> None:
     top rung annotated -- that gap being near zero is itself the finding, since
     it is what makes a single line through the whole range wrong.
     """
-    fig, ax = plt.subplots(figsize=(TEXT_WIDTH_IN * 0.70, 3.0),
-                           constrained_layout=True)
+    fig, ax = plt.subplots(figsize=(TEXT_WIDTH_IN * 0.70, 3.7))
     for model, block in review["drift"].items():
         if model.startswith("_"):
             continue
@@ -296,9 +276,12 @@ def fig_refusal_law(review: dict[str, Any], out: Path) -> None:
     ax.set_ylabel("refusal rate")
     ax.invert_xaxis()
     ax.yaxis.set_major_formatter(PercentFormatter(decimals=0))
-    ax.legend(loc="lower left", frameon=False)
-    ax.set_title("Refusal drifts upward inside the coherent band;\n"
-                 "the band's slope does not reach full precision (dotted)")
+    figstyle.panel_title(ax, None, "Refusal drifts inside the coherent band")
+    figstyle.ygrid(ax)
+    handles, labels = ax.get_legend_handles_labels()
+    figstyle.shared_legend(
+        fig, handles, labels, ncol=3,
+        note="Dotted extensions continue the coherent-band fit to full precision.")
     save(fig, out, "fig_refusal_law")
 
 
@@ -337,7 +320,7 @@ def fig_judge_agreement(agreement: dict[str, Any], review: dict[str, Any],
         return
 
     fig, (ax1, ax2) = plt.subplots(
-        1, 2, figsize=(TEXT_WIDTH_IN, 3.1), constrained_layout=True,
+        1, 2, figsize=(TEXT_WIDTH_IN, 4.0),
         gridspec_kw={"width_ratios": [1.0, 1.15]})
 
     labels = [f"{r['detail']}\n{r['model']}" for r in rows]
@@ -349,15 +332,12 @@ def fig_judge_agreement(agreement: dict[str, Any], review: dict[str, Any],
     ax1.set_yticks(y)
     ax1.set_yticklabels(labels, fontsize=7.5)
     ax1.invert_yaxis()
-    # Room above the first bar for the legend, so it never sits on the data.
     ax1.set_xlim(0, 100)
-    ax1.set_ylim(len(rows) - 0.4, -1.15)
+    ax1.set_ylim(len(rows) - 0.4, -0.4)
     ax1.set_xlabel("agreement with the 7B judge")
     ax1.xaxis.set_major_formatter(PercentFormatter(decimals=0))
-    ax1.legend(frameon=False, fontsize=7.5, loc="upper left",
-               bbox_to_anchor=(0.0, 1.0), ncol=2, columnspacing=1.0,
-               handletextpad=0.5)
-    ax1.set_title("Graders disagree on a third of completions", fontsize=9)
+    figstyle.panel_title(ax1, "a", "Grader agreement")
+    figstyle.xgrid(ax1)
 
     # Right panel: the 7B judge's own counts as a reference row, then each
     # independent grader on the same axis.
@@ -382,18 +362,19 @@ def fig_judge_agreement(agreement: dict[str, Any], review: dict[str, Any],
     ax2.set_yticklabels([f"{r['detail'].splitlines()[0]}\n{r['model']}"
                          for r in every], fontsize=7.5)
     ax2.invert_yaxis()
-    ax2.set_ylim(len(every) - 0.4, -1.15)
+    ax2.set_ylim(len(every) - 0.4, -0.4)
     ax2.set_xlabel("prompts changing decision at 4.5 bits")
-    ax2.legend(frameon=False, fontsize=7.5, loc="upper right",
-               bbox_to_anchor=(1.0, 1.0), ncol=2, columnspacing=1.0,
-               handletextpad=0.5)
-    ax2.set_title("The magnitude does not reproduce", fontsize=9)
+    figstyle.panel_title(ax2, "b", "Reproduced decision changes")
+    figstyle.xgrid(ax2)
     # Mark the reference rows so the eye separates them from the replications.
     for i in range(len(ref)):
         ax2.axhspan(i - 0.5, i + 0.5, color=DEGEN, alpha=0.13, zorder=0, lw=0)
 
-    fig.suptitle("Four graders, three families, one dependent variable",
-                 fontsize=10.5)
+    handles1, labels1 = ax1.get_legend_handles_labels()
+    handles2, labels2 = ax2.get_legend_handles_labels()
+    figstyle.shared_legend(fig, handles1 + handles2, labels1 + labels2,
+                           ncol=2, note="Shaded rows = the 7B judge's reported counts.",
+                           reserve=0.30)
     save(fig, out, "fig_judge_agreement")
 
 
