@@ -412,10 +412,15 @@ def test_a_paired_claim_is_only_made_where_pairing_was_verified() -> None:
         paired = transitions["paired_on_identical_generation"]
         assert paired == (drift.get("diverged") == 0), (
             f"{model}: the pairing flag disagrees with the drift measurement")
-        if not paired:
-            assert "warning" in transitions, (
-                f"{model}: transitions reported on unpaired generations "
-                "without saying so")
+        if paired:
+            assert "all_prompts" in transitions
+        else:
+            # Withheld outright. A warning printed beside a number is no
+            # defence: the number gets quoted and the warning does not travel
+            # with it.
+            assert "withheld" in transitions and "all_prompts" not in transitions, (
+                f"{model}: per-prompt transitions must not be emitted at all "
+                "when the two budgets are different generations")
 
 
 @pytest.mark.skipif(not (REPO / "docs" / "paper" / "round3_stats.json").exists(),

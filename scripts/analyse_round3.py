@@ -464,15 +464,27 @@ def generation_drift() -> dict[str, Any]:
     out: dict[str, Any] = {
         "models": {},
         "note": (
-            "This arm and the XSTest prefix check together form a controlled "
-            "comparison of decoding reproducibility. Where batch size was held "
-            "at 8 across both budgets (XSTest), all 900 completions were "
-            "bit-identical prefixes. Where it changed -- 16 at 48 tokens "
-            "against 8 at 256, which is what the published HH-RLHF runs did -- "
-            "9 to 12 per cent of completions took a different path. Greedy "
-            "decoding is reproducible here only when batch composition is held "
-            "fixed, because batch shape sets the order of floating-point "
-            "reductions and a near-tied pair of logits can cross."),
+            "Greedy decoding did not reproduce across these runs: 46 to 62 of "
+            "500 completions per model and scheme differ, with the first "
+            "divergence at a median of 104 to 146 characters into completions "
+            "whose median length is 203 to 250. That is the finding. Only 1 to "
+            "5 verdicts move as a result, so the label pipeline absorbs nearly "
+            "all of it.\n\n"
+            "An ASSOCIATION, offered as such and not as a mechanism: the two "
+            "arms differ in batch size in the direction one would expect. "
+            "HH-RLHF generated at batch 16 for 48 tokens and batch 8 for 256, "
+            "and drifts; XSTest used batch 8 at both, and every one of its 900 "
+            "completions agrees exactly. Batch shape does set the order of "
+            "floating-point reductions, so a near-tied pair of logits crossing "
+            "is a plausible route -- but this is two conditions, not an "
+            "experiment, and the arms differ in corpus and model set as well.\n\n"
+            "One rival explanation can be ruled out. Library version does not "
+            "account for it: the XSTest pair spans transformers 4.57.6 and "
+            "5.13.1 and agrees exactly, while the HH-RLHF pair shares 5.13.1 "
+            "and diverges. If anything the version difference sits on the arm "
+            "that reproduces. Settling the rest needs a same-model, "
+            "same-prompt batch-8 against batch-16 replication, which this "
+            "round did not run."),
     }
     for model, published_pattern, _long, prefix_pattern in BEHAVIOURAL:
         published_run, prefix_run = find(published_pattern), find(prefix_pattern)
@@ -554,18 +566,27 @@ def xstest_window() -> dict[str, Any]:
         "note": (
             "XSTest has no derived prefix run: its two budgets are separate "
             "generation passes, so pairing them is a claim that needs "
-            "checking rather than assuming. It checks out. Every one of the "
-            "300 completions at 48 tokens is an exact character prefix of its "
-            "256-token counterpart, in all three models, against a median "
-            "long completion four times the length -- see "
-            "`decoder_drift_bound`. The two budgets therefore describe the "
-            "same act of decoding and the window is the only thing that "
-            "differs, so per-prompt transitions are meaningful here.\n\n"
-            "This is worth stating because the equivalent check FAILS on "
-            "HH-RLHF, where the independently generated 48-token run differs "
-            "from the 256-token generation on 9-12% of prompts. Two runs "
-            "being greedy is not sufficient for them to agree; it has to be "
-            "measured each time."),
+            "checking rather than assuming. At the level that matters it "
+            "checks out. Every one of the 300 completions at 48 tokens is an "
+            "exact character prefix of its 256-token counterpart, in all "
+            "three models, against a median long completion four times the "
+            "length -- see `decoder_drift_bound`. The two gradings therefore "
+            "read one generation at two lengths, which is the property the "
+            "per-prompt transitions need.\n\n"
+            "What is NOT established is that the window is the only "
+            "difference between the two RUNS. They were produced on different "
+            "days under different library versions (transformers 4.57.6 at 48 "
+            "tokens, 5.13.1 at 256) and different code revisions. Those "
+            "differences demonstrably did not perturb the first 48 tokens of "
+            "any of the 900 completions, which is the strongest available "
+            "evidence that they did not perturb the continuation either -- but "
+            "it is evidence about the prefix, not proof about the rest, and a "
+            "reader should treat the budget as the intervention of interest "
+            "rather than the only thing that changed.\n\n"
+            "The equivalent check FAILS on HH-RLHF, where the independently "
+            "generated 48-token run differs from the 256-token generation on "
+            "9-12% of prompts. Two runs being greedy is not sufficient for "
+            "them to agree; it has to be measured each time."),
     }
     for model, published_pattern, long_pattern in XSTEST:
         block: dict[str, Any] = {}
@@ -638,6 +659,13 @@ def xstest_window() -> dict[str, Any]:
                        "XSTest budget comparison")
         block["decoder_drift_bound"] = xstest_drift_bound(
             find(published_pattern), find(long_pattern))
+        # What differs between the two runs besides the budget, recorded so the
+        # caveat in `note` is checkable rather than asserted.
+        block["provenance"] = {
+            budget: _provenance(find(pattern))
+            for budget, pattern in (("tokens_48", published_pattern),
+                                    ("tokens_256", long_pattern))
+        }
 
         # Per-prompt transitions, licensed by the prefix check above. Both
         # sides use the corrected scorer, so the scorer is held fixed and the
@@ -649,18 +677,29 @@ def xstest_window() -> dict[str, Any]:
             drift = block["decoder_drift_bound"]
             paired_ok = drift.get("diverged") == 0
             harmful = block["tokens_48"]["_harmful"]
-            block["budget_transitions"] = {
-                "paired_on_identical_generation": paired_ok,
-                "all_prompts": per_prompt_movement(short_labels, long_labels),
-                "harmful_only": per_prompt_movement(short_labels[harmful],
-                                                    long_labels[harmful]),
-                "benign_only": per_prompt_movement(short_labels[~harmful],
-                                                   long_labels[~harmful]),
-            }
-            if not paired_ok:
-                block["budget_transitions"]["warning"] = (
-                    "the two budgets are NOT on the same generation, so these "
-                    "transitions confound the window with decoder drift")
+            if paired_ok:
+                block["budget_transitions"] = {
+                    "paired_on_identical_generation": True,
+                    "inference_status": "exploratory, unadjusted",
+                    "all_prompts": per_prompt_movement(short_labels, long_labels),
+                    "harmful_only": per_prompt_movement(short_labels[harmful],
+                                                        long_labels[harmful]),
+                    "benign_only": per_prompt_movement(short_labels[~harmful],
+                                                       long_labels[~harmful]),
+                }
+            else:
+                # Withheld, not warned about. A per-prompt transition between
+                # two different generations is not a window effect, and a
+                # warning beside a number is no defence -- the number gets
+                # quoted and the warning does not travel with it.
+                block["budget_transitions"] = {
+                    "paired_on_identical_generation": False,
+                    "withheld": (
+                        f"{drift.get('diverged')} of {drift.get('n')} "
+                        "completions are not exact prefixes, so the two "
+                        "budgets are different generations and no per-prompt "
+                        "transition between them is a window effect"),
+                }
         for budget in ("tokens_48", "tokens_256"):
             block[budget].pop("_labels", None)
             block[budget].pop("_harmful", None)
@@ -668,16 +707,37 @@ def xstest_window() -> dict[str, Any]:
     return out
 
 
+def _provenance(run: Path) -> dict[str, Any]:
+    """The fields that could differ between two runs and change a generation."""
+    manifest = read_json(run / "manifest.json")
+    environment = manifest.get("environment", {})
+    return {
+        "run": run.name,
+        "git_sha": (manifest.get("git_sha") or "")[:7],
+        "transformers": environment.get("transformers"),
+        "torch": environment.get("torch"),
+        "gpu": environment.get("gpu"),
+        "seed": manifest.get("seed"),
+        "batch_size": manifest.get("batch_size"),
+        "max_new_tokens": manifest.get("max_new_tokens"),
+        "decoding": manifest.get("decoding"),
+    }
+
+
 def xstest_drift_bound(published_run: Path, long_run: Path) -> dict[str, Any]:
     """How much of the XSTest budget difference could just be the decoder?
 
     XSTest has no prefix run, so the window and the decoder cannot be separated
-    by re-grading. They can still be bounded. The 256-token run stored its
-    generation token ids, so the first 48 tokens of that generation can be
-    decoded here on a CPU and compared against the independently generated
-    48-token completions. Where those two texts agree, the two budgets really
-    do start from the same generation and the window is the only difference.
-    Where they disagree, it is not.
+    by re-grading. They can still be checked. If the two passes followed the
+    same path, the shorter completion is a character prefix of the longer one,
+    and that is testable directly on the stored text.
+
+    This compares DECODED STRINGS, not token ids. Character-prefix agreement is
+    therefore strong evidence of an identical decoding trajectory rather than
+    proof of one: two different token sequences could in principle decode to
+    strings in a prefix relation. Nothing weaker is available without a GPU,
+    and on 900 completions with a minimum short length of 123 characters
+    against a median long length near 1000, the evidence is not thin.
 
     This bounds the confound in TEXT, not in verdicts, because grading the
     prefix would need the 7B judge. On the HH-RLHF runs, where both were
