@@ -90,6 +90,43 @@ def _relative_loss(stats: dict[str, Any]) -> str:
     return f"{100 - 100 * row['accuracy'] / block['fp16_accuracy']:.0f}"
 
 
+def _gsm_paired_interval(stats: dict[str, Any]) -> str:
+    r"""Exact 95% interval for the GSM8K accuracy difference at Qwen 4.5 bits.
+
+    Under McNemar the whole signal is in the discordant pairs. With
+    $d = \text{lost} + \text{gained}$ and $p = \text{lost}/d$, the accuracy
+    difference is $(1-2p)\,d/n$, so an exact Clopper-Pearson interval for $p$
+    maps to an exact interval for the difference. The map is DECREASING in $p$
+    -- the upper end of the difference comes from the lower end of $p$ -- and
+    getting that backwards produces an interval that does not contain its own
+    point estimate, which is how the first version of this was caught.
+
+    Exact throughout, to agree with the exact McNemar the paper reports. A
+    normal-approximation interval could exclude zero where the exact test does
+    not, and the paper leans on that test.
+    """
+    from scipy import stats as sps
+
+    row = _gsm_row(stats, "Qwen2.5-3B", 4.5)
+    lost, gained = row["lost"], row["gained"]
+    d, n = lost + gained, 200
+    lo_p = 0.0 if lost == 0 else sps.beta.ppf(0.025, lost, d - lost + 1)
+    hi_p = 1.0 if lost == d else sps.beta.ppf(0.975, lost + 1, d - lost)
+    return f"{100 * (1 - 2 * hi_p) * d / n:.1f} {100 * (1 - 2 * lo_p) * d / n:.1f}"
+
+
+def _gsm_min_resolvable(stats: dict[str, Any]) -> str:
+    """Smallest discordant imbalance the GSM8K design could reject at 0.05."""
+    from scipy import stats as sps
+
+    row = _gsm_row(stats, "Qwen2.5-3B", 4.5)
+    d = row["lost"] + row["gained"]
+    for lost in range(d // 2 + 1, d + 1):
+        if sps.binomtest(lost, d, 0.5).pvalue < 0.05:
+            return f"{lost} {d - lost}"
+    return "none"
+
+
 def _max_conditional(stats: dict[str, Any]) -> str:
     """Largest P(rung complies | FP16 refused) anywhere on either ladder.
 
@@ -118,6 +155,15 @@ def _refused_denominators(stats: dict[str, Any]) -> str:
 
 
 CHECKS: tuple[Check, ...] = (
+    # ---- what n=200 on GSM8K could and could not resolve --------------------
+    Check("GSM8K paired interval",
+          _gsm_paired_interval,
+          lambda v: _rx(r"accuracy difference of \$\[{}, {}\]\$".format(
+              *v.split()))),
+    Check("GSM8K smallest resolvable",
+          _gsm_min_resolvable,
+          lambda v: _rx(r"rejects at \$0\.05\$ is {} against {}".format(
+              *v.split()))),
     # ---- the conditional rate a reviewer asks for beside the joint one -----
     Check("max conditional transition rate",
           _max_conditional,
