@@ -626,6 +626,13 @@ LABELLED_CHECKS: tuple[Check, ...] = (
     *_per_model("benign compliance",
                 lambda d, m: str(d[m]["benign_comply"]),
                 r"{v} (?:times )?on {m}"),
+    # The harmful-deflection counts behind the stratified truncation claim.
+    # Quoted in prose only, so nothing else would catch them drifting.
+    Check("harmful deflections, Phi and SmolLM2",
+          lambda d: " ".join(str(d[m]["harmful_deflect"]) for m in
+                             ("Phi-3.5-mini", "SmolLM2-1.7B")),
+          lambda v: _rx(r"\({} of 150\s+for Phi-3\.5-mini, {} for "
+                        r"SmolLM2-1\.7B\)".format(*v.split()))),
     # Cells quoted only in the caption of the full-precision matrix figure.
     # Captions drift more easily than body text because nothing else reads
     # them, so they are checked the same way the prose is. Both triples run in
