@@ -26,7 +26,9 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
-from matplotlib.patches import Patch  # noqa: E402
+import numpy as np  # noqa: E402
+from matplotlib.patches import Patch, PathPatch  # noqa: E402
+from matplotlib.path import Path as MplPath  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -50,23 +52,39 @@ CLASS_SHORT = {
     "compliance": "comply", "unclear": "unclear", "degenerate": "degen",
 }
 UNSAFE_RED, CONSERVATIVE_BLUE = "#C92A2A", "#1864AB"
+INK, MUTED, HAIRLINE = "#212529", "#6C757D", "#DEE2E6"
 TEXT_WIDTH_IN = 6.30
+MODEL_ORDER = ("Qwen2.5-3B", "Phi-3.5-mini", "SmolLM2-1.7B")
 
+# Type scale one step larger than the other plates in this paper. These figures
+# carry counts that a reader is expected to read off rather than compare by
+# eye, and the earlier set was set at a size that survives a full-width figure
+# but not a three-panel one.
 plt.rcParams.update({
-    "font.size": 9,
-    "axes.titlesize": 9.5,
+    "font.family": "sans-serif",
+    "font.sans-serif": ["DejaVu Sans"],
+    "font.size": 9.5,
+    "axes.titlesize": 10,
     "axes.labelsize": 9,
-    "legend.fontsize": 8,
-    "xtick.labelsize": 8,
-    "ytick.labelsize": 8,
+    "legend.fontsize": 8.5,
+    "xtick.labelsize": 8.5,
+    "ytick.labelsize": 8.5,
+    "axes.edgecolor": "#ADB5BD",
+    "axes.linewidth": 0.8,
+    "axes.labelcolor": INK,
+    "text.color": INK,
+    "xtick.color": MUTED,
+    "ytick.color": MUTED,
+    "xtick.major.width": 0.8,
+    "ytick.major.width": 0.8,
     "axes.spines.top": False,
     "axes.spines.right": False,
-    "axes.grid": True,
-    "grid.alpha": 0.22,
-    "grid.linewidth": 0.6,
-    "figure.dpi": 220,
+    "axes.grid": False,
+    "figure.dpi": 300,
     "savefig.bbox": "tight",
+    "savefig.pad_inches": 0.03,
     "pdf.fonttype": 42,
+    "ps.fonttype": 42,
 })
 
 
@@ -81,10 +99,21 @@ def save(fig: Any, out: Path, name: str) -> None:
 def fmt_p(p: float) -> str:
     """A p-value a reader can compare at a glance, without false precision."""
     if p < 1e-4:
-        return "$p<10^{-4}$"
+        return "p < 0.0001"
     if p >= 0.995:
-        return "$p\\approx1$"
-    return f"$p={p:.3f}$"
+        return "p ≈ 1"
+    return f"p = {p:.3f}"
+
+
+def panel_tag(ax: Any, letter: str) -> None:
+    ax.text(-0.02, 1.16, letter, transform=ax.transAxes, fontsize=10.5,
+            fontweight="bold", va="top", ha="right", color=INK)
+
+
+def light_xgrid(ax: Any) -> None:
+    ax.set_axisbelow(True)
+    ax.grid(axis="x", color=HAIRLINE, linewidth=0.7, alpha=1.0)
+    ax.grid(axis="y", visible=False)
 
 
 # ---------------------------------------------------------------------------
@@ -100,143 +129,243 @@ def fig_scorer(stats: dict[str, Any], out: Path) -> None:
     bar makes the reader do that subtraction; a diverging one shows it as
     asymmetry about zero, and the near-symmetry of Phi's corrected row is then
     the whole finding without a sentence of explanation.
+
+    Direct labelling rather than a legend: two colours with fixed meanings,
+    named once on the axis, cost the reader nothing to remember and save a
+    legend box competing with the bars for the same space.
     """
     present = stats["scorer_sensitivity"]["models"]
-    # Explicit, not dictionary order: the JSON is sorted alphabetically and
-    # would put Phi-3.5-mini first, against the ordering every other figure and
-    # table in the paper uses.
-    models = [m for m in ("Qwen2.5-3B", "Phi-3.5-mini", "SmolLM2-1.7B")
-              if m in present]
-    rows = [("first-token-legacy", "published scorer"),
-            ("letter", "corrected scorer")]
+    models = [m for m in MODEL_ORDER if m in present]
+    rows = [("first-token-legacy", "published"), ("letter", "corrected")]
 
-    fig, axes = plt.subplots(1, len(models), figsize=(TEXT_WIDTH_IN, 2.05),
-                             sharex=True, sharey=True)
-    axes = list(axes) if len(models) > 1 else [axes]
+    # One row per (model, scorer) on a single axis rather than a panel per
+    # model. Two panels meant two of everything -- two axis labels, two sets
+    # of direction annotations -- competing for the same strip of space under
+    # the plot, and they collided. One axis needs one of each.
+    fig, ax = plt.subplots(figsize=(TEXT_WIDTH_IN, 2.6))
 
-    limit = max(t["unsafe_flips"] if k == "u" else t["conservative_flips"]
-                for m in models for mode, _ in rows
-                for t in [present[m]["tables"][mode]] for k in ("u", "c"))
-    limit = limit * 1.35 + 3
+    largest = max(max(present[m]["tables"][mode]["unsafe_flips"],
+                      present[m]["tables"][mode]["conservative_flips"])
+                  for m in models for mode, _ in rows)
+    limit = largest * 1.30 + 4
 
-    for ax, model in zip(axes, models):
-        block = present[model]
-        for i, (mode, _label) in enumerate(rows):
-            table = block["tables"][mode]
-            y = len(rows) - 1 - i
-            unsafe, conservative = table["unsafe_flips"], table["conservative_flips"]
-            ax.barh(y, -unsafe, height=0.46, color=UNSAFE_RED,
-                    edgecolor="white", linewidth=0.6)
-            ax.barh(y, conservative, height=0.46, color=CONSERVATIVE_BLUE,
-                    edgecolor="white", linewidth=0.6)
-            ax.text(-unsafe - limit * 0.035, y, str(unsafe), ha="right",
-                    va="center", fontsize=8, color=UNSAFE_RED, fontweight="bold")
-            ax.text(conservative + limit * 0.035, y, str(conservative), ha="left",
-                    va="center", fontsize=8, color=CONSERVATIVE_BLUE,
-                    fontweight="bold")
-            ax.text(0, y + 0.30, fmt_p(table["mcnemar_p"]), ha="center",
-                    va="bottom", fontsize=7, color="#495057")
+    entries: list[tuple[str, str, dict[str, Any]]] = []
+    for model in models:
+        for mode, label in rows:
+            entries.append((model, label, present[model]["tables"][mode]))
 
-        ax.axvline(0, color="#343A40", linewidth=0.9)
-        ax.set_xlim(-limit, limit)
-        ax.set_ylim(-0.55, len(rows) - 0.25)
-        ax.set_title(model, color=MODEL_STYLE[model][0])
-        ax.grid(axis="y", visible=False)
-        ax.set_xlabel("prompts")
+    for i, (model, label, table) in enumerate(entries):
+        y = len(entries) - 1 - i
+        unsafe, conservative = table["unsafe_flips"], table["conservative_flips"]
+        if label == "corrected":
+            ax.axhspan(y - 0.42, y + 0.42, color="#F1F3F5", zorder=0)
+        ax.barh(y, -unsafe, height=0.5, color=UNSAFE_RED, zorder=3,
+                edgecolor="white", linewidth=0.8)
+        ax.barh(y, conservative, height=0.5, color=CONSERVATIVE_BLUE, zorder=3,
+                edgecolor="white", linewidth=0.8)
+        ax.text(-unsafe - limit * 0.025, y, f"{unsafe}", ha="right",
+                va="center", fontsize=9, color=UNSAFE_RED, fontweight="bold",
+                zorder=4)
+        ax.text(conservative + limit * 0.025, y, f"{conservative}", ha="left",
+                va="center", fontsize=9, color=CONSERVATIVE_BLUE,
+                fontweight="bold", zorder=4)
 
-    # Row labels once, on the shared y axis, so they cannot land on top of a
-    # bar in the second panel.
-    axes[0].set_yticks(range(len(rows)))
-    axes[0].set_yticklabels([label for _, label in reversed(rows)], fontsize=8)
+    # p-values in their own column outside the data area, where they cannot
+    # sit on the bar above. Placed in axes coordinates so the column stays put
+    # whatever the counts are.
+    for i, (_model, _label, table) in enumerate(entries):
+        y = len(entries) - 1 - i
+        ax.text(1.015, y, fmt_p(table["mcnemar_p"]),
+                transform=ax.get_yaxis_transform(), ha="left", va="center",
+                fontsize=8.5, color=MUTED, clip_on=False)
+    ax.text(1.015, len(entries) - 0.35, "McNemar",
+            transform=ax.get_yaxis_transform(), ha="left", va="center",
+            fontsize=8, color=MUTED, style="italic", clip_on=False)
 
-    fig.legend(handles=[Patch(facecolor=UNSAFE_RED, label="unsafe flip"),
-                        Patch(facecolor=CONSERVATIVE_BLUE,
-                              label="conservative flip")],
-               loc="lower center", ncol=2, frameon=False,
-               bbox_to_anchor=(0.5, -0.10))
-    fig.suptitle("Full precision against 4.5 bits, re-graded on identical text",
-                 fontsize=9.5, y=1.03)
+    # Model names once, spanning their two rows, in the model's own colour.
+    for index, model in enumerate(models):
+        top = len(entries) - 1 - index * len(rows)
+        ax.text(-0.30, top - 0.5, model, transform=ax.get_yaxis_transform(),
+                ha="left", va="center", fontsize=9.5, fontweight="bold",
+                color=MODEL_STYLE[model][0], clip_on=False)
+
+    ax.axvline(0, color="#495057", linewidth=1.0, zorder=2)
+    light_xgrid(ax)
+    ax.set_xlim(-limit, limit)
+    ax.set_ylim(-0.7, len(entries) - 0.3)
+    ax.set_yticks(range(len(entries)))
+    ax.set_yticklabels([label for _model, label, _t in reversed(entries)],
+                       fontsize=9, color=INK)
+    ax.tick_params(axis="y", length=0)
+
+    ticks = [t for t in (-40, -20, 0, 20, 40) if abs(t) < limit]
+    ax.set_xticks(ticks)
+    ax.set_xticklabels([str(abs(t)) for t in ticks])
+    ax.set_xlabel("← unsafe flips        prompts, of 500        "
+                  "conservative flips →", labelpad=7)
+    ax.set_title("Full precision against 4.5 bits, re-graded on identical text",
+                 loc="left", fontweight="bold", pad=10)
+    panel_tag(ax, "a")
+
     fig.tight_layout()
     save(fig, out, "fig_round3_scorer")
 
 
 # ---------------------------------------------------------------------------
-# plate 2: the generation budget
+# plate 2: the generation budget, drawn as the flow it is
 # ---------------------------------------------------------------------------
 
 
-def fig_budget(stats: dict[str, Any], out: Path) -> None:
-    """Where the extra 208 tokens send the verdict, harmful and benign apart.
+def _ribbon(ax: Any, x0: float, x1: float, y0: float, y1: float,
+            thickness0: float, thickness1: float, colour: str,
+            alpha: float) -> None:
+    """One class-to-class flow, as a filled cubic band.
 
-    Stacked composition at each budget rather than a single rate, because the
-    movement here is almost entirely BETWEEN the withholding classes -- refusal
-    into deflection -- and a plot of the compliance rate alone would show a
-    flat line and report that nothing happened.
+    A stacked bar at each budget shows two compositions and leaves the reader
+    to difference them. These transitions are measured per prompt, so the
+    movement itself can be drawn, and the dominant flow -- refusal into
+    deflection -- becomes the visible object rather than an inference.
+    """
+    control = (x0 + x1) / 2
+    # One closed path: along the upper edge as a cubic, straight down the far
+    # side, back along the lower edge as a second cubic, closed. Built in a
+    # single vertex list because a Path must begin with MOVETO, so the two
+    # curves cannot be assembled from separate Path objects.
+    vertices = [
+        (x0, y0),
+        (control, y0), (control, y1), (x1, y1),          # upper edge
+        (x1, y1 + thickness1),                            # far side
+        (control, y1 + thickness1), (control, y0 + thickness0),
+        (x0, y0 + thickness0),                            # lower edge
+        (x0, y0),
+    ]
+    codes = [
+        MplPath.MOVETO,
+        MplPath.CURVE4, MplPath.CURVE4, MplPath.CURVE4,
+        MplPath.LINETO,
+        MplPath.CURVE4, MplPath.CURVE4, MplPath.CURVE4,
+        MplPath.CLOSEPOLY,
+    ]
+    ax.add_patch(PathPatch(MplPath(vertices, codes), facecolor=colour,
+                           edgecolor="none", alpha=alpha, zorder=1))
+
+
+def fig_budget(stats: dict[str, Any], out: Path) -> None:
+    """Where the extra 208 tokens send the verdict, on harmful prompts.
+
+    Harmful prompts only, because that is the class the safety claim is about
+    and because showing both classes at this size would halve every band. The
+    benign movement is reported in the text and in the statistics file.
     """
     present = stats["xstest_window"]["models"]
-    models = [m for m in ("Qwen2.5-3B", "Phi-3.5-mini", "SmolLM2-1.7B")
-              if m in present]
+    models = [m for m in MODEL_ORDER if m in present]
     order = ["refusal", "deflection", "disclaimer", "compliance"]
-    fig, axes = plt.subplots(2, len(models),
-                             figsize=(TEXT_WIDTH_IN, 3.35), sharey=True)
 
-    for column, model in enumerate(models):
+    fig, axes = plt.subplots(1, len(models), figsize=(TEXT_WIDTH_IN, 3.0))
+    axes = list(np.atleast_1d(axes))
+    gap, x0, x1 = 3.0, 0.0, 1.0
+    total = 150
+
+    for index, (ax, model) in enumerate(zip(axes, models)):
         block = present[model]
-        for row, klass in enumerate(("harmful", "benign")):
-            ax = axes[row][column]
-            key = f"{klass}_counts"
-            for x, budget in enumerate(("tokens_48", "tokens_256")):
-                counts = block[budget]["letter"][key]
-                bottom = 0
-                for name in order:
-                    value = counts.get(name, 0)
-                    if not value:
-                        continue
-                    ax.bar(x, value, width=0.62, bottom=bottom,
-                           color=CLASS_COLOUR[name], edgecolor="white",
-                           linewidth=0.7)
-                    if value >= 12:
-                        ax.text(x, bottom + value / 2, str(value), ha="center",
-                                va="center", fontsize=7, color="white",
-                                fontweight="bold")
-                    bottom += value
+        transitions = block.get("budget_transitions", {}).get("harmful_only")
+        if transitions is None:
+            ax.set_axis_off()
+            continue
+        flows = transitions["transitions"]
 
-                # The harmful-compliance cell is the one number in this plate
-                # a reader came for, and at 1 of 150 it is a two-pixel sliver
-                # that a stacked bar hides completely. Called out explicitly:
-                # a zero here is the paper's claim and a one is the exception
-                # to it, and neither should depend on the reader's eyesight.
-                if klass == "harmful":
-                    complied = counts.get("compliance", 0)
-                    ax.annotate(
-                        f"comply {complied}",
-                        xy=(x, 150), xytext=(x, 178),
-                        ha="center", va="bottom", fontsize=7,
-                        color=(CLASS_COLOUR["compliance"] if complied
-                               else "#868E96"),
-                        fontweight="bold" if complied else "normal",
-                        arrowprops=dict(arrowstyle="-", lw=0.7,
-                                        color=(CLASS_COLOUR["compliance"]
-                                               if complied else "#CED4DA")))
-            ax.set_xticks([0, 1])
-            ax.set_xticklabels(["48", "256"])
-            ax.set_xlim(-0.6, 1.6)
-            ax.set_ylim(0, 205 if row == 0 else 158)
-            ax.set_yticks([0, 50, 100, 150])
-            ax.grid(axis="x", visible=False)
-            if column == 0:
-                ax.set_ylabel(f"{klass} prompts")
-            if row == 0:
-                ax.set_title(model, color=MODEL_STYLE[model][0], pad=16)
-            if row == 1:
-                ax.set_xlabel("generated tokens")
+        left_totals = {k: sum(v.values()) for k, v in flows.items()}
+        right_totals: dict[str, int] = {}
+        for targets in flows.values():
+            for name, value in targets.items():
+                right_totals[name] = right_totals.get(name, 0) + value
+
+        def stack(totals: dict[str, int]) -> dict[str, tuple[float, float]]:
+            out_pos: dict[str, tuple[float, float]] = {}
+            cursor = 0.0
+            for name in order:
+                value = totals.get(name, 0)
+                if not value:
+                    continue
+                out_pos[name] = (cursor, float(value))
+                cursor += value + gap
+            return out_pos
+
+        left, right = stack(left_totals), stack(right_totals)
+
+        # Ribbons first, so the solid stacks sit on top of their edges.
+        left_cursor = {k: v[0] for k, v in left.items()}
+        right_cursor = {k: v[0] for k, v in right.items()}
+        for source in order:
+            for target in order:
+                value = flows.get(source, {}).get(target, 0)
+                if not value:
+                    continue
+                y0, y1 = left_cursor[source], right_cursor[target]
+                moved = source != target
+                _ribbon(ax, x0 + 0.075, x1 - 0.075, y0, y1, value, value,
+                        CLASS_COLOUR[source], 0.55 if moved else 0.16)
+                left_cursor[source] += value
+                right_cursor[target] += value
+
+        for positions, x in ((left, x0), (right, x1)):
+            for name, (base, height) in positions.items():
+                ax.add_patch(plt.Rectangle((x - 0.075, base), 0.15, height,
+                                           facecolor=CLASS_COLOUR[name],
+                                           edgecolor="white", linewidth=0.7,
+                                           zorder=3))
+
+        # Counts beside each stack, outward, so they never sit on a ribbon.
+        # Bands under about six prompts are thinner than their own label, so
+        # those are nudged apart rather than allowed to overprint.
+        def label_stack(positions: dict[str, tuple[float, float]], x: float,
+                        ha: str, dx: float) -> None:
+            placed: list[float] = []
+            for name, (base, height) in positions.items():
+                y = base + height / 2
+                while any(abs(y - other) < 5.0 for other in placed):
+                    y += 5.0
+                placed.append(y)
+                ax.text(x + dx, y, f"{int(height)}", ha=ha, va="center",
+                        fontsize=8.5, color=CLASS_COLOUR[name],
+                        fontweight="bold", zorder=4)
+
+        label_stack(left, x0, "right", -0.115)
+        label_stack(right, x1, "left", 0.115)
+
+        ax.set_xlim(-0.42, 1.42)
+        ax.set_ylim(total + 3 * gap + 4, -8)
+        ax.set_xticks([x0, x1])
+        ax.set_xticklabels(["48", "256"], fontsize=9, color=INK)
+        ax.set_yticks([])
+        ax.tick_params(axis="x", length=0)
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+        ax.set_title(model, color=MODEL_STYLE[model][0], fontweight="bold",
+                     pad=10)
+        if index == 0:
+            ax.set_ylabel("150 harmful prompts", labelpad=2)
+            panel_tag(ax, "b")
+
+        # The harmful-compliance cell is the one number a reader came for, and
+        # at 1 of 150 it is a hairline the stack label alone will not rescue.
+        # A single headline per panel, stated whether the cell is empty or not,
+        # because a zero here is the paper's claim and a one is the exception
+        # to it -- and neither should depend on finding a two-pixel band.
+        complied_48 = left_totals.get("compliance", 0)
+        complied_256 = right_totals.get("compliance", 0)
+        empty = not complied_48 and not complied_256
+        ax.text((x0 + x1) / 2, -6.0,
+                f"harmful compliance  {complied_48} → {complied_256}",
+                ha="center", va="center", fontsize=8.5,
+                fontweight="normal" if empty else "bold",
+                color=MUTED if empty else CLASS_COLOUR["compliance"])
 
     fig.legend(handles=[Patch(facecolor=CLASS_COLOUR[k], label=CLASS_SHORT[k])
                         for k in order],
                loc="lower center", ncol=4, frameon=False,
-               bbox_to_anchor=(0.5, -0.06))
-    fig.suptitle("One generation read at two lengths (XSTest, full precision)",
-                 fontsize=9.5, y=1.0)
+               bbox_to_anchor=(0.5, -0.05))
+    fig.supxlabel("generated tokens", fontsize=9, y=0.045)
     fig.tight_layout()
     save(fig, out, "fig_round3_budget")
 
@@ -249,85 +378,76 @@ def fig_budget(stats: dict[str, Any], out: Path) -> None:
 def fig_reproducibility(stats: dict[str, Any], out: Path) -> None:
     """How much text changed, and how little of it reached a verdict.
 
-    Two bars per case, on one axis, because the gap between them IS the result:
-    the generated text is not reproducible and the labels very nearly are. A
-    figure showing only the text divergence would read as a reason to distrust
-    the paper; showing only the label divergence would hide why that is
-    surprising.
-    """
-    fig, (ax, ax2) = plt.subplots(
-        1, 2, figsize=(TEXT_WIDTH_IN, 2.6),
-        gridspec_kw={"width_ratios": [2.0, 1.0]})
+    Paired bars on one full-width axis. An earlier version squeezed a second
+    panel beside this one for the batch-size association and put the verdict
+    percentages in a side column; between them they left no room, and the
+    labels landed on each other. The association is a sentence, not a plate,
+    and it is made in the text instead.
 
-    ordering = ("Qwen2.5-3B", "Phi-3.5-mini", "SmolLM2-1.7B")
-    rows: list[tuple[str, float, float, int]] = []
+    The two bars per row are the result: the generated text is not
+    reproducible and the labels very nearly are, and the gap between the pair
+    is the thing to look at.
+    """
+    fig, ax = plt.subplots(figsize=(TEXT_WIDTH_IN, 3.7))
+
+    # Group headers occupy their own y positions so they can never sit on a
+    # bar or a tick label.
+    entries: list[dict[str, Any]] = []
     drift_models = stats["generation_drift"]["models"]
-    for model in (m for m in ordering if m in drift_models):
+    entries.append({"header": "HH-RLHF, 500 prompts   ·   batch 16 then 8"})
+    for model in (m for m in MODEL_ORDER if m in drift_models):
         block = drift_models[model]
-        batch = block["batch_size"]["independent_48"]
         for scheme in ("FP16", "RTN_4B"):
             text, labels = block["text"][scheme], block["labels"][scheme]
-            rows.append((f"{model}  {scheme}",
-                         100 * text["differ"] / text["n"],
-                         100 * labels["disagree"] / labels["n"], batch))
-    split = len(rows)
+            entries.append({
+                "model": model,
+                "label": f"{model}  {scheme.replace('RTN_4B', '4.5 bits')}",
+                "text": 100 * text["differ"] / text["n"],
+                "verdict": 100 * labels["disagree"] / labels["n"]})
+    entries.append({"spacer": True})
+    entries.append({"header": "XSTest, 300 prompts   ·   batch 8 both"})
     xstest_models = stats["xstest_window"]["models"]
-    for model in (m for m in ordering if m in xstest_models):
-        block = xstest_models[model]
-        drift = block["decoder_drift_bound"]
-        rows.append((f"{model}  FP16", 100 * drift["share_diverged"], 0.0,
-                     block["provenance"]["tokens_48"]["batch_size"]))
+    for model in (m for m in MODEL_ORDER if m in xstest_models):
+        drift = xstest_models[model]["decoder_drift_bound"]
+        entries.append({
+            "model": model, "label": f"{model}  FP16",
+            "text": 100 * drift["share_diverged"], "verdict": 0.0})
 
-    y = range(len(rows))
-    height = 0.36
-    ax.barh([i - height / 2 for i in y], [r[1] for r in rows], height=height,
-            color="#ADB5BD", edgecolor="white", linewidth=0.6,
-            label="generated text differs")
-    ax.barh([i + height / 2 for i in y], [r[2] for r in rows], height=height,
-            color=UNSAFE_RED, edgecolor="white", linewidth=0.6,
-            label="verdict differs")
-    for i, row in enumerate(rows):
-        ax.text(row[1] + 0.22, i - height / 2, f"{row[1]:.1f}%", va="center",
-                fontsize=7, color="#495057")
-        ax.text(max(row[2], 0) + 0.22, i + height / 2, f"{row[2]:.1f}%",
-                va="center", fontsize=7, color=UNSAFE_RED)
-    # The two arms are different corpora and different budgets; a rule between
-    # them stops the eye reading eleven comparable rows.
-    ax.axhline(split - 0.5, color="#CED4DA", linewidth=0.8, zorder=0)
-    ax.text(14.6, split - 0.62, "HH-RLHF, batch 16 vs 8", ha="right",
-            va="bottom", fontsize=7, color="#868E96", style="italic")
-    ax.text(14.6, split - 0.38, "XSTest, batch 8 vs 8", ha="right", va="top",
-            fontsize=7, color="#868E96", style="italic")
-    ax.set_yticks(list(y))
-    ax.set_yticklabels([r[0] for r in rows], fontsize=7)
-    ax.invert_yaxis()
-    ax.set_xlabel("percent of prompts (500 HH-RLHF, 300 XSTest)")
-    ax.set_xlim(0, 15)
-    ax.grid(axis="y", visible=False)
-    ax.legend(loc="lower right", frameon=False, fontsize=7.5)
-    ax.set_title("Greedy decoding, generated twice", loc="left")
+    height, ticks, labels_out = 0.30, [], []
+    for i, entry in enumerate(entries):
+        y = len(entries) - 1 - i
+        if entry.get("spacer"):
+            continue
+        if "header" in entry:
+            ax.text(-0.6, y, entry["header"], ha="left", va="center",
+                    fontsize=8.5, color=MUTED, style="italic")
+            continue
+        colour = MODEL_STYLE[entry["model"]][0]
+        ax.barh(y + height / 2, entry["text"], height=height, color=colour,
+                edgecolor="white", linewidth=0.7, zorder=3)
+        ax.barh(y - height / 2, entry["verdict"], height=height,
+                color=UNSAFE_RED, edgecolor="white", linewidth=0.7, zorder=3)
+        ax.text(entry["text"] + 0.22, y + height / 2, f'{entry["text"]:.1f}%',
+                va="center", fontsize=8.5, color=colour, fontweight="bold")
+        ax.text(entry["verdict"] + 0.22, y - height / 2,
+                f'{entry["verdict"]:.1f}%', va="center", fontsize=8.5,
+                color=UNSAFE_RED)
+        ticks.append(y)
+        labels_out.append(entry["label"])
 
-    # The association, drawn as the two-condition comparison it is. Points are
-    # jittered because three XSTest models all sit exactly on zero and would
-    # otherwise be one dot standing for three.
-    import numpy as np
-
-    rng = np.random.default_rng(0)
-    keys = ["batch 16 vs 8", "batch 8 vs 8"]
-    for x, key in enumerate(keys):
-        values = [r[1] for r in rows
-                  if (r[3] == 16) == (key == "batch 16 vs 8")]
-        ax2.scatter(x + rng.uniform(-0.11, 0.11, len(values)), values, s=28,
-                    zorder=3, color="#343A40", edgecolor="white", linewidth=0.6)
-        ax2.text(x, 14.2, f"n={len(values)}", ha="center", fontsize=7,
-                 color="#868E96")
-    ax2.set_xticks(range(len(keys)))
-    ax2.set_xticklabels(keys, fontsize=7.5)
-    ax2.set_xlim(-0.5, len(keys) - 0.5)
-    ax2.set_ylim(-1.2, 15)
-    ax2.set_ylabel("generated text differs (%)")
-    ax2.grid(axis="x", visible=False)
-    ax2.set_title("An association,\nnot an experiment", loc="left", fontsize=8.5)
+    ax.set_yticks(ticks)
+    ax.set_yticklabels(labels_out, fontsize=8.5, color=INK)
+    ax.set_ylim(-0.8, len(entries) - 0.2)
+    ax.set_xlim(0, 15.2)
+    ax.set_xlabel("percent of prompts")
+    light_xgrid(ax)
+    ax.tick_params(axis="y", length=0)
+    ax.set_title("Generated twice under greedy decoding", loc="left",
+                 fontweight="bold", pad=10)
+    ax.legend(handles=[
+        Patch(facecolor=MUTED, label="generated text differs"),
+        Patch(facecolor=UNSAFE_RED, label="verdict differs")],
+        loc="lower right", frameon=False, fontsize=8.5)
 
     fig.tight_layout()
     save(fig, out, "fig_round3_reproducibility")
