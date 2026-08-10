@@ -306,7 +306,7 @@ CHECKS: tuple[Check, ...] = (
           lambda v: _rx(rf"the factor was {v}")),
     Check("corrected 4.5-bit rate, Phi",
           lambda s: f"{100 * _corrected_rate(s, 'Phi-3.5-mini'):.1f}",
-          lambda v: _rx(rf"\$20/500 = {v}") + r"\\?%\$"),
+          lambda v: _rx(rf"puts Phi-3\.5-mini at \$20/500 = {v}") + r"\\?%\$"),
     # ---- what the refusal class contains ---------------------------------
     Check("audit: new refusals",
           lambda s: str(s["refusal_class_audit"]["Qwen2.5-3B"]["n_new_refusals"]),
