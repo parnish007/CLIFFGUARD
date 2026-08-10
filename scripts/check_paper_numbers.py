@@ -490,15 +490,21 @@ _WORD_NUMBER = {"zero": "0", "one": "1", "two": "2", "three": "3", "four": "4",
                 "five": "5", "six": "6", "seven": "7", "eight": "8",
                 "nine": "9", "ten": "10"}
 
+# The other direction, for checks that must build the spelled-out form the
+# prose actually uses. Recomputed tallies come back as digits.
+_WORDS = {v: k for k, v in _WORD_NUMBER.items()}
+
 
 def _digits(text: str) -> str:
-    """Normalise `three of four` and `3 of 4` to one form.
+    """Normalise `three of the four` and `3 of 4` to one form.
 
-    Prose spells small numbers out; a recomputed tally does not. Without this
-    the consistency check reports a contradiction between two ways of writing
-    the same fact, which trains a reader to ignore it.
+    Prose spells small numbers out and slips an article in where it reads
+    better; a recomputed tally does neither. Without this the consistency check
+    reports a contradiction between two ways of writing the same fact, which
+    trains a reader to ignore it.
     """
-    return " ".join(_WORD_NUMBER.get(w.lower(), w) for w in text.split())
+    words = (w for w in text.split() if w.lower() != "the")
+    return " ".join(_WORD_NUMBER.get(w.lower(), w) for w in words)
 
 
 def _direction_tally(agreement: dict[str, Any]) -> str:
@@ -515,9 +521,16 @@ def _direction_tally(agreement: dict[str, Any]) -> str:
     Two exclusions, both the same ones the agreement range applies. A sweep
     below MIN_GRADED completions cannot support a paired comparison at all, and
     a tie -- no transitions in either direction -- has neither agreed nor
-    disagreed with anything. Under those, the tally is 3 of 4; without the
-    floor it would read 4 of 5, and quoting that would count two four-completion
-    sweeps as evidence.
+    disagreed with anything. Under those the tally is 3 of 4. Drop the floor and
+    it reads 4 of 5, because the one comparison it removes is a ten-completion
+    sweep that pairs five prompts and runs toward refusal.
+
+    Both tallies are now in the manuscript, and that is deliberate: the floored
+    one is what the tables display, and the unfloored one is what the limits
+    section states so that an exclusion favouring our own direction is not made
+    silently. `_paired_tally` recomputes the second from the coverage file, and
+    the two must not be conflated -- this one floors on returned completions,
+    that one on whether any prompt paired at all.
     """
     toward = total = 0
     for models in agreement.values():
@@ -549,13 +562,17 @@ def _agreement_range(agreement: dict[str, Any]) -> str:
 UNIQUE_CHECKS: tuple[UniqueCheck, ...] = (
     UniqueCheck(
         # Catches the self-contradiction directly: any sentence of the form
-        # "<n> of <m> grader comparisons" must agree with the recomputed tally.
-        # The unanimity phrasings that prompted this ("consistent in sign under
-        # every grader we tried") state no numbers at all, so they are caught by
-        # the separate no-unanimity test rather than here.
+        # "<n> of <m> ... grader comparisons" must agree with the recomputed
+        # tally. The filler allows the abstract's "model~$\times$~grader" and a
+        # qualifier or two between the count and the noun, because the phrasing
+        # that has to be checked is the one an author reaches for, not the one
+        # a regex finds convenient. The unanimity phrasings that prompted this
+        # ("consistent in sign under every grader we tried") state no numbers at
+        # all, so the separate no-unanimity test catches those instead.
         "grader direction tally stated consistently",
         lambda s: s["_direction_tally"],
-        r"(\w+ of (?:\w+)) grader comparisons",
+        r"(\w+ of (?:the )?\w+)(?:\s+\w+){0,2}\s+"
+        r"(?:model~\$\\times\$~)?grader comparisons",
     ),
     UniqueCheck(
         "Phi 3.5 retention stated consistently",
@@ -853,6 +870,31 @@ LABELLED_CHECKS: tuple[Check, ...] = (
 )
 
 
+def _paired_tally(cov: dict[str, Any]) -> str:
+    """Direction agreement over every comparison with a paired sample.
+
+    The unfloored counterpart of `_direction_tally`, and both are in the
+    manuscript. That one floors on MIN_GRADED returned completions and reads
+    3 of 4; this one counts every comparison that paired at least one prompt and
+    reads 4 of 5, the extra being a sweep that paired five prompts and also ran
+    toward refusal.
+
+    Reporting only the floored tally would drop a comparison that agrees with
+    us, which errs toward understatement rather than advocacy -- but an unstated
+    exclusion is an unstated exclusion either way, so the paper gives both and
+    this checks the one the other function does not.
+    """
+    toward = total = 0
+    for block in cov.values():
+        for row in block["rows"]:
+            own = row["own"]
+            if own["to_refusal"] == own["to_compliance"]:
+                continue
+            total += 1
+            toward += own["to_refusal"] > own["to_compliance"]
+    return f"{toward} of {total}"
+
+
 def _matched(cov: dict[str, Any], model: str, grader: str,
              side: str) -> str:
     """Transitions on a coverage-matched subset, external or 7B.
@@ -885,6 +927,14 @@ COVERAGE_CHECKS: tuple[Check, ...] = (
                      f"{c['Qwen2.5-3B']['local_all']['to_compliance']}"),
           lambda v: _rx(r"{} transitions toward refusal against {}".format(
               *v.split()))),
+    # The limits section states this tally and the grader section states the
+    # floored one; a reader who sees only one of them must still see a true
+    # sentence, so both are recomputed and neither may drift.
+    Check("paired direction tally",
+          _paired_tally,
+          lambda v: _rx(
+              rf"{_WORDS[v.split()[2]]} paired model~\$\\times\$~grader "
+              rf"comparisons, of which {_WORDS[v.split()[0]]} agree")),
 )
 
 

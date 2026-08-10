@@ -26,8 +26,8 @@ from pathlib import Path
 from typing import Any
 
 
-def fig_regimes(out: Path, stats: dict[str, Any],
-                probe_stats: dict[str, Any]) -> None:
+def fig_regimes(out: Path, stats: dict[str, Any], probe_stats: dict[str, Any],
+                round3: dict[str, Any]) -> None:
     """Three regimes, and what each instrument reports in each.
 
     Emitted as a TikZ fragment rather than a raster. This plate is a schematic
@@ -44,6 +44,13 @@ def fig_regimes(out: Path, stats: dict[str, Any],
     gate = stats["gate_by_grader"]["Qwen2.5-3B"]
     row45 = next(r for r in gate if r["bits"] == 4.5)
     row25 = next(r for r in gate if r["bits"] == 2.5)
+    # The judge's 4.5-bit rate is one of the two rungs the corrected scorer has
+    # re-graded, so the DRIFT panel reports the corrected value. Printing
+    # gate_by_grader's 2.2% there would put the original scorer on the one
+    # plate that claims to be the paper on a page, and would contradict both
+    # the body text and this figure's own caption.
+    corrected45 = round3["scorer_sensitivity"]["models"]["Qwen2.5-3B"][
+        "tables"]["letter"]["unsafe_rate"]
     # The corrected scorer's probe refit, not review_stats.json's. This plate is
     # the paper on one page and it must not be the one place where the original
     # grading survives unlabelled.
@@ -63,7 +70,7 @@ def fig_regimes(out: Path, stats: dict[str, Any],
         ("DRIFT", "8.5 -- 4.5 bits", "cgwarn", "cgwarn!7", [
             (r"refusal shift\,$\dagger$", "1.15 pp / bit", "cgwarn"),
             ("phrase list vs judge",
-             f"{pct(row45['marker_composite'])} vs {pct(row45['judge_composite'])}",
+             f"{pct(row45['marker_composite'])} vs {pct(corrected45)}",
              "cgred"),
             ("degenerate", pct(row45["degenerate_composite"]), ""),
             ("probe $d'$ retained", pct(probe["retained_mean"], 0), "cgsafe"),
@@ -127,14 +134,16 @@ def main() -> int:
 
     stats_path = repo / "docs/paper/review_stats.json"
     probe_path = repo / "docs/paper/probe_corrected.json"
-    if stats_path.exists() and probe_path.exists():
+    round3_path = repo / "docs/paper/round3_stats.json"
+    if all(p.exists() for p in (stats_path, probe_path, round3_path)):
         fig_regimes(args.out,
                     json.loads(stats_path.read_text(encoding="utf-8")),
-                    json.loads(probe_path.read_text(encoding="utf-8")))
+                    json.loads(probe_path.read_text(encoding="utf-8")),
+                    json.loads(round3_path.read_text(encoding="utf-8")))
     else:
-        print("  fig_regimes SKIPPED: review_stats.json or "
-              "probe_corrected.json absent, and this plate carries measured "
-              "numbers rather than placeholders")
+        print("  fig_regimes SKIPPED: one of review_stats.json, "
+              "probe_corrected.json or round3_stats.json is absent, and this "
+              "plate carries measured numbers rather than placeholders")
     return 0
 
 
