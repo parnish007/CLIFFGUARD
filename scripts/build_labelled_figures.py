@@ -148,7 +148,13 @@ def fig_saturation(data: dict[str, Any], out: Path) -> None:
                    label=cls if ax is axes[0] else None)
             bottoms = [b + v for b, v in zip(bottoms, vals)]
         ax.set_xticks(range(len(schemes)))
-        ax.set_xticklabels([RUNG_LABEL[s] for s in schemes])
+        # Eight rungs into a third of the text width leaves each tick about as
+        # much room as "8.5" needs, so upright labels printed as one continuous
+        # string of digits. Angled, they clear each other with room to spare and
+        # the plate stays three panels wide.
+        ax.set_xticklabels([RUNG_LABEL[s] for s in schemes], rotation=45,
+                           ha="right", fontsize=7.5,
+                           rotation_mode="anchor")
         figstyle.panel_title(ax, chr(ord("a") + list(axes).index(ax)), model)
         ax.set_ylim(0, 100)
         ax.yaxis.set_major_formatter(PercentFormatter())
@@ -200,10 +206,13 @@ def fig_truncation(data: dict[str, Any], out: Path) -> None:
         ax2.plot(xs, benign, color=colour, marker=marker, linestyle=dash,
                  markersize=3.4, linewidth=1.3, label=model)
 
-    for ax, title in ((ax1, "completions reaching the 48-token cap"),
-                       (ax2, "Judged compliance, benign prompts")):
+    # Titles cut to the same length and capitalised alike. The longer pair ran
+    # to the panel edges and met in the middle of the plate, and one of them
+    # started lower-case while the other did not.
+    for ax, title in ((ax1, "Truncated at the 48-token cap"),
+                       (ax2, "Compliance on benign prompts")):
         ax.set_xticks(range(len(SCHEMES)))
-        ax.set_xticklabels([RUNG_LABEL[s] for s in SCHEMES])
+        ax.set_xticklabels([RUNG_LABEL[s] for s in SCHEMES], fontsize=8)
         ax.set_xlabel("stored bits / parameter")
         figstyle.panel_title(ax, "a" if ax is ax1 else "b", title)
         ax.yaxis.set_major_formatter(PercentFormatter(decimals=0))
@@ -215,8 +224,7 @@ def fig_truncation(data: dict[str, Any], out: Path) -> None:
     # under each model's own tokenizer and never consults a grader, so marking
     # it as original-scorer would claim a dependence it does not have.
     figstyle.shared_legend(fig, handles, labels, ncol=3,
-                           note="Lines show the three model families. "
-                                "Panel (b) † original label scorer at every "
+                           note="Panel (b) † original label scorer at every "
                                 "rung; panel (a) needs no grader.")
     save(fig, out, "fig_labelled_truncation")
 
@@ -406,10 +414,18 @@ def fig_utility(repo: Path, out: Path) -> None:
         upper = [100 * (r["utility_upper95"] or 0) for r in rows]
         degen = [100 * r["utility_lost_by_class"]["degenerate"] / r["n_benign"]
                  for r in rows]
-        colour, _, _ = MODEL_STYLE[model]
-        ax.bar(xs, rates, width=0.68, color=colour, label="usefulness lost")
-        ax.bar(xs, degen, width=0.68, color="white", edgecolor=colour,
-               hatch="////", linewidth=0.6, label="…of which degenerate")
+        # Not the model's colour. The legend is built from panel (a) and shown
+        # once for the plate, so a per-model hue put a blue swatch above a red
+        # panel and a green one -- and it spent the paper's two loaded colours
+        # on an identity the panel title already carries. These bars mean the
+        # same thing in all three panels: a benign prompt that stopped being
+        # answered, in the blue the rest of the paper uses for withheld, with
+        # the degenerate part in the grey it uses for collapsed output.
+        ax.bar(xs, rates, width=0.68, color=figstyle.CONSERVATIVE,
+               label="usefulness lost")
+        ax.bar(xs, degen, width=0.68, color="white",
+               edgecolor=CLASS_COLOUR["degenerate"], hatch="////",
+               linewidth=0.6, label="…of which degenerate")
         ax.errorbar(xs, rates, yerr=[[0] * len(rows),
                                      [u - r for u, r in zip(upper, rates)]],
                     fmt="none", ecolor="#343A40", elinewidth=0.8, capsize=2.2)

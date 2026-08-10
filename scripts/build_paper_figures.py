@@ -199,7 +199,9 @@ def fig_probe(probe: dict[str, Any], out: Path) -> None:
     labels += ["corrected scorer", "original scorer"]
     figstyle.shared_legend(
         fig, handles, labels, ncol=2,
-        note="Shaded bands = 2.5--97.5% retention across replicates, corrected "
+        # An en dash, not two hyphens. LaTeX turns "--" into one; matplotlib
+        # prints it literally, and this note is drawn by matplotlib.
+        note="Shaded bands = 2.5–97.5% retention across replicates, corrected "
              "scorer.",
         reserve=0.24)
     save(fig, out, "fig_probe")
@@ -245,7 +247,19 @@ def fig_degeneracy(data: dict[str, Any], out: Path) -> None:
 
 
 def fig_marker_sensitivity(data: dict[str, Any], out: Path) -> None:
-    """The same completions, four marker lists, four different answers."""
+    """The same completions, four marker lists, four different answers.
+
+    Three things about this plate are deliberate. The lists are drawn in a ramp
+    of ONE hue, the red this paper spends on the phrase-list estimator
+    everywhere else, because they are four versions of a single instrument and
+    not four different ones -- the earlier viridis ramp made them look like four
+    unrelated series and shared no colour with any other figure. Dark means a
+    longer list, so the section's actual claim is visible as a colour inversion
+    rather than only as an argument. And the axis is stored bits, as everywhere
+    else in the manuscript; it used to be code bits, which is the same ladder
+    shifted by the half-bit of scale-and-zero overhead and left this the one
+    plate whose x axis did not line up with its neighbours.
+    """
     model = next((m for m in ("Qwen2.5-3B", "Phi-3.5-mini")
                   if data["behavioural"].get(m, {}).get("marker_variants")), None)
     if model is None:
@@ -256,23 +270,63 @@ def fig_marker_sensitivity(data: dict[str, Any], out: Path) -> None:
                      key=lambda s: -int(s.split("_")[1][:-1]))
 
     fig, ax = plt.subplots(figsize=(TEXT_WIDTH_IN * 0.72, 3.5))
+    marks = ("o", "s", "^", "D", "v")
     for i, (name, row) in enumerate(variants.items()):
         ax.plot(range(len(schemes)), [100 * row.get(s, 0.0) for s in schemes],
-                marker="o", lw=1.6, ms=4.5, label=name,
-                color=matplotlib.colormaps["viridis"](
-                    0.08 + 0.72 * i / max(1, len(variants) - 1)))
+                marker=marks[i % len(marks)], lw=1.6, ms=4.2, label=name,
+                color=matplotlib.colormaps["Reds"](
+                    0.42 + 0.5 * i / max(1, len(variants) - 1)))
+
+    _mark_inversion(ax, variants, schemes)
+
     ax.set_xticks(range(len(schemes)))
-    ax.set_xticklabels([s.split("_")[1][:-1] for s in schemes])
+    ax.set_xticklabels([f"{int(s.split('_')[1][:-1]) + 0.5:g}" for s in schemes])
     ax.set_xlim(-0.4, len(schemes) - 0.6)
-    ax.set_xlabel("code bits")
+    ax.set_xlabel("stored bits / parameter")
     ax.set_ylabel(r"apparent refusal $\to$ compliance")
     ax.yaxis.set_major_formatter(PercentFormatter(decimals=0))
     figstyle.panel_title(ax, None, f"One choice of strings moves the headline ({model})")
     figstyle.ygrid(ax)
     handles, labels = ax.get_legend_handles_labels()
     figstyle.shared_legend(fig, handles, labels, ncol=2,
-                           note="Legend entries name the phrase lists.", reserve=0.28)
+                           note="Legend names the four nested phrase lists; "
+                                "darker is longer.",
+                           reserve=0.28)
     save(fig, out, "fig_marker_sensitivity")
+
+
+def _mark_inversion(ax: Any, variants: dict[str, Any],
+                    schemes: list[str]) -> None:
+    """Point at the rung where a longer list scores LOWER than a shorter one.
+
+    Section~5's claim is that the phrase-list estimate is non-monotone in the
+    phrase list, and until now the figure only made it available: the four
+    curves lie within a few points of each other in the coherent band, so the
+    one crossing that proves the claim is a couple of pixels wide and no reader
+    would find it. Located rather than hard-coded, so a re-run that moves the
+    inversion moves the annotation, and one that removes it draws nothing at
+    all rather than pointing confidently at open space.
+    """
+    names = list(variants)
+    best = None
+    for j, scheme in enumerate(schemes):
+        for a in range(len(names)):
+            for b in range(a + 1, len(names)):
+                lo = 100 * variants[names[a]].get(scheme, 0.0)
+                hi = 100 * variants[names[b]].get(scheme, 0.0)
+                # names[b] is the longer list, so hi < lo is the inversion.
+                if hi < lo and (best is None or lo - hi > best[0]):
+                    best = (lo - hi, j, lo, hi, names[a], names[b])
+    if best is None:
+        return
+    _gap, j, lo, hi, short, long = best
+    ax.annotate(
+        f"{long} scores {hi:.1f}%\nwhere {short} scores {lo:.1f}%:\n"
+        "a longer list, a smaller number",
+        xy=(j, (lo + hi) / 2), xytext=(0.04, 0.80), textcoords="axes fraction",
+        fontsize=7.6, color="#404040", va="top", linespacing=1.3,
+        arrowprops={"arrowstyle": "-", "color": "#909497", "linewidth": 0.8,
+                    "shrinkB": 3, "connectionstyle": "arc3,rad=-0.18"})
 
 
 def fig_refusal_law(review: dict[str, Any], out: Path) -> None:
@@ -398,13 +452,25 @@ def fig_judge_agreement(agreement: dict[str, Any], review: dict[str, Any],
     ax2.set_yticklabels([f"{r['detail'].splitlines()[0]}\n{r['model']}"
                          for r in every], fontsize=7.5)
     ax2.invert_yaxis()
-    ax2.set_ylim(len(every) - 0.4, -0.4)
+    # Half a row of margin, not 0.4. At 0.4 the first reference band was clipped
+    # by the axes edge and only the second one showed, so the note said "rows"
+    # while the plate shaded one.
+    ax2.set_ylim(len(every) - 0.5, -0.55)
+    ax2.set_xlim(0, 1.13 * max(r["to_refusal"] for r in every))
     ax2.set_xlabel("prompts changing decision at 4.5 bits")
     figstyle.panel_title(ax2, "b", "Reproduced decision changes")
     figstyle.xgrid(ax2)
     # Mark the reference rows so the eye separates them from the replications.
     for i in range(len(ref)):
         ax2.axhspan(i - 0.5, i + 0.5, color=DEGEN, alpha=0.13, zorder=0, lw=0)
+    # The counts, at the bar ends. Several of these bars are one or two prompts
+    # and the whole point of the panel is how few they are, which is a claim
+    # about the number and not about the length of a hairline.
+    for i, row in enumerate(every):
+        for dy, value, colour in ((-height / 2, row["to_refusal"], JUDGE),
+                                  (height / 2, row["to_compliance"], MARKER)):
+            ax2.text(value + 0.6, i + dy, str(value), va="center", ha="left",
+                     fontsize=7.5, color=colour, fontweight="bold")
 
     handles1, labels1 = ax1.get_legend_handles_labels()
     handles2, labels2 = ax2.get_legend_handles_labels()

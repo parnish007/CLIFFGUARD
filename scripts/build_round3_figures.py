@@ -124,12 +124,15 @@ def fig_scorer(stats: dict[str, Any], out: Path) -> None:
             transform=ax.get_yaxis_transform(), ha="left", va="center",
             fontsize=8, color=MUTED, style="italic", clip_on=False)
 
-    # Model names once, spanning their two rows, in the model's own colour.
+    # Model names once, spanning their two rows. Deliberately in ink and not in
+    # the model's own colour: this plate already spends red and blue on the two
+    # directions, and a model name in the same red as the compliance bars reads
+    # as if Phi-3.5-mini were itself the compliance case. One hue, one meaning.
     for index, model in enumerate(models):
         top = len(entries) - 1 - index * len(rows)
         ax.text(-0.30, top - 0.5, model, transform=ax.get_yaxis_transform(),
                 ha="left", va="center", fontsize=9.5, fontweight="bold",
-                color=MODEL_STYLE[model][0], clip_on=False)
+                color=INK, clip_on=False)
 
     ax.axvline(0, color="#495057", linewidth=1.0, zorder=2)
     figstyle.xgrid(ax)
@@ -282,7 +285,11 @@ def fig_budget(stats: dict[str, Any], out: Path) -> None:
         label_stack(right, x1, "left", 0.115)
 
         ax.set_xlim(-0.42, 1.42)
-        ax.set_ylim(total + 3 * gap + 4, -8)
+        # Headroom above the stacks for the compliance line below. At -8 the
+        # line sat on the axes' own top edge and its ascenders printed through
+        # the panel title, which is the one place in the plate a reader has to
+        # be able to read two things at once.
+        ax.set_ylim(total + 3 * gap + 4, -26)
         ax.set_xticks([x0, x1])
         ax.set_xticklabels(["48", "256"], fontsize=9, color=INK)
         ax.set_yticks([])
@@ -299,8 +306,11 @@ def fig_budget(stats: dict[str, Any], out: Path) -> None:
         complied_48 = left_totals.get("compliance", 0)
         complied_256 = right_totals.get("compliance", 0)
         empty = not complied_48 and not complied_256
-        ax.text((x0 + x1) / 2, -6.0,
-                f"harmful compliance  {complied_48} → {complied_256}",
+        # "compliance", not "harmful compliance": the y-label already says these
+        # are 150 harmful prompts, and the longer string was wider than the
+        # panel, so the three of them ran into each other across the plate.
+        ax.text((x0 + x1) / 2, -13.0,
+                f"compliance  {complied_48} → {complied_256}",
                 ha="center", va="center", fontsize=8.5,
                 fontweight="normal" if empty else "bold",
                 color=MUTED if empty else CLASS_COLOUR["compliance"])
@@ -357,6 +367,7 @@ def fig_reproducibility(stats: dict[str, Any], out: Path) -> None:
             "text": 100 * drift["share_diverged"], "verdict": 0.0})
 
     height, ticks, labels_out = 0.30, [], []
+    crowded_pairs: list[tuple[Any, float, float]] = []
     for i, entry in enumerate(entries):
         y = len(entries) - 1 - i
         if entry.get("spacer"):
@@ -374,13 +385,34 @@ def fig_reproducibility(stats: dict[str, Any], out: Path) -> None:
                 edgecolor="white", linewidth=0.7, zorder=3)
         ax.barh(y - height / 2, entry["verdict"], height=height,
                 color=UNSAFE_RED, edgecolor="white", linewidth=0.7, zorder=3)
-        ax.text(entry["text"] + 0.22, y + height / 2, f'{entry["text"]:.1f}%',
-                va="center", fontsize=8.5, color="#404040", fontweight="bold")
-        ax.text(entry["verdict"] + 0.22, y - height / 2,
-                f'{entry["verdict"]:.1f}%', va="center", fontsize=8.5,
-                color=UNSAFE_RED)
+        # Two labels one bar-height apart collide when the two bars end at the
+        # same place, which is exactly what the XSTest rows do: both are 0.0%,
+        # both labels land on x = 0.22, and 0.30 axis units is less than a line
+        # of 8.5pt type. Where the bars separate, label each at its own end;
+        # where they do not, put the pair on one line, in reading order.
+        crowded = abs(entry["text"] - entry["verdict"]) < 1.0
+        label = ax.text(entry["text"] + 0.22, y if crowded else y + height / 2,
+                        f'{entry["text"]:.1f}%', va="center", fontsize=8.5,
+                        color="#404040", fontweight="bold")
+        if crowded:
+            crowded_pairs.append((label, y, entry["verdict"]))
+        else:
+            ax.text(entry["verdict"] + 0.22, y - height / 2,
+                    f'{entry["verdict"]:.1f}%', va="center", fontsize=8.5,
+                    color=UNSAFE_RED)
         ticks.append(y)
         labels_out.append(entry["label"])
+
+    # The crowded rows' second label goes immediately after the first, measured
+    # rather than guessed: the strings are 0.0% here and need not stay that way,
+    # and a hard-coded offset that fits "0.0%" clips "12.4%".
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    for label, y, verdict in crowded_pairs:
+        box = label.get_window_extent(renderer)
+        end = ax.transData.inverted().transform((box.x1, box.y0))[0]
+        ax.text(end + 0.30, y, f"{verdict:.1f}%", va="center", fontsize=8.5,
+                color=UNSAFE_RED)
 
     ax.set_yticks(ticks)
     ax.set_yticklabels(labels_out, fontsize=8.5, color=INK)
