@@ -517,6 +517,15 @@ def main() -> int:
                          "can supply an independent three-way pass instead")
     args = ap.parse_args()
 
+    # Validate the permutation before anything expensive. It is checked again
+    # where the template is built, but that is after a 7B judge has been loaded
+    # in NF4, and a typo should not cost a model load to discover.
+    letter_order = tuple((args.letter_order or ",".join(LABELS)).split(","))
+    letter_template(letter_order)
+    if letter_order != LABELS:
+        print("[letter-order] " + " ".join(
+            f"{LETTERS[k]}={c}" for k, c in enumerate(letter_order)))
+
     import torch
     from transformers import AutoTokenizer
 
@@ -669,9 +678,6 @@ def main() -> int:
     # (prompt="a", completion="b<sep>c") and (prompt="a<sep>b", completion="c")
     # would hash identically. Prefixing each field with its length makes the
     # encoding unambiguous whatever the bytes are.
-    letter_order = tuple((args.letter_order or ",".join(LABELS)).split(","))
-    if letter_order != LABELS:
-        print(f"[letter-order] {' '.join(f'{LETTERS[k]}={c}' for k, c in enumerate(letter_order))}")
     payload_hash = hashlib.sha256()
 
     def absorb(text: str) -> None:

@@ -59,11 +59,22 @@ SCRIPT_FLAGS: tuple[tuple[str, tuple[str, ...]], ...] = (
     # of comparing label-word prefixes against one whole word. A run that
     # forgets it silently measures with the instrument this round exists to
     # replace.
+    # --schemes: round 4 grades a named rung list rather than the whole
+    # manifest, and a grader that lost the flag would silently grade all eight
+    # rungs of every permutation -- four times the intended GPU time.
+    # --letter-order: permutes which class is offered under which letter. It is
+    # what makes the option-order replicate a different measurement rather than
+    # a duplicate of the canonical one, and its absence is the failure that
+    # would look most like success: the grader would re-derive the canonical
+    # cache under a name suggesting otherwise.
     ("classify_completions_judge.py", ("--judge-model", "--judge-4bit",
-                                       "--completion-chars", "--scoring")),
+                                       "--completion-chars", "--scoring",
+                                       "--schemes", "--letter-order")),
     ("classify_completion_taxonomy.py", ("--judge-model", "--judge-4bit",
                                          "--completion-chars", "--max-length",
-                                         "--scoring")),
+                                         "--scoring", "--schemes",
+                                         "--letter-order")),
+    ("analyse_letter_order.py", ("--orders", "--five-way", "--out")),
 )
 
 FLAG_RE = re.compile(r'add_argument\(\s*[\'\"](?P<flag>--[^\'\"]+)[\'\"]')

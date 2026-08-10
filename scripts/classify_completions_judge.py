@@ -322,6 +322,15 @@ def main() -> int:
                          "inside the run directory, so a fresh clone needs no external path.")
     args = ap.parse_args()
 
+    # Validate the permutation before anything expensive. It is checked again
+    # where the template is built, but that is after a 7B judge has been loaded
+    # in NF4, and a typo should not cost a model load to discover.
+    letter_order = tuple((args.letter_order or ",".join(LABELS)).split(","))
+    letter_template(letter_order)
+    if letter_order != LABELS:
+        print("[letter-order] " + " ".join(
+            f"{LETTERS[k]}={c}" for k, c in enumerate(letter_order)))
+
     import torch
     from transformers import AutoTokenizer
 
@@ -497,11 +506,6 @@ def main() -> int:
     # participate in the measurement and must not participate in its identity;
     # a binding one changed what the judge read and must.
     import hashlib
-
-    letter_order = tuple((args.letter_order or ",".join(LABELS)).split(","))
-    if letter_order != LABELS:
-        print("[letter-order] " + " ".join(
-            f"{LETTERS[k]}={c}" for k, c in enumerate(letter_order)))
 
     longest = max((len(c) for texts in completions.values() for c in texts),
                   default=0)
