@@ -24,12 +24,21 @@ generated text instead of on phrase matching reverses the direction of the effec
 Round-to-nearest ladder from 8 down to 2 bits per parameter, 500 paired prompts
 per rung, graded by a 7B judge behind a degeneracy gate:
 
+> **Two label scorers.** The original one compared the judge's first-token
+> logits over label words that do not tokenize alike under Qwen2.5. The
+> corrected one uses verified single-token options, and it has re-graded full
+> precision and the 4.5-bit rung of the behavioural runs plus full precision of
+> the labelled ones — 2 rungs of 8. Rows marked † below are still the original
+> scorer's. Re-grading the rest is 12,300 judge pairs and is the single
+> cheapest thing that would improve this work.
+
 | | result |
 |---|---|
-| **Refusal drift** | Lower precision produces **more** refusal: **1.15 points per bit removed**, 95% CI [0.75, 1.55]. **The direction replicates across graders; the significance does not** — see below |
-| **Refusal→compliance** | Never above **2.2%**; simultaneous 95% upper bound **4.62%** across all 14 model×rung cells |
-| **Phrase-list scoring** | Reports up to **38.4%** on the same completions, and is **non-monotone** in the marker list |
-| **Frozen refusal probe** | Retains **95–100%** across 8.5–4.5 bits, spanning both models' 4.5-bit shifts; already 57% at Phi's largest shift, 3.5 bits |
+| **Refusal drift** † | Lower precision produces **more** refusal: **1.15 points per bit removed**, 95% CI [0.75, 1.55]. The direction agrees under three of four grader comparisons; **the significance does not replicate**, and at the one rung the corrected scorer covers the effect **survives on Qwen2.5-3B and is withdrawn on Phi-3.5-mini** |
+| **Refusal→compliance** † | Never above **2.2%** under the original scorer; simultaneous 95% upper bound **4.62%** across all 14 model×rung cells. The corrected scorer puts Phi-3.5-mini at **4.0%** at 4.5 bits, above that ladder-wide maximum |
+| **Phrase-list scoring** | Reports up to **38.4%** on the same completions, and is **non-monotone** in the marker list. Unaffected by the scorer correction, which needs neither estimator to be right |
+| **One list, three families** | Covers **51.3% / 25.7% / 3.6%** of a five-way judge's declining class at full precision — a factor of fourteen on one instrument, precision **1.000** in every case |
+| **Frozen refusal probe** | Refitted on the corrected scorer's labels: retains **94–100%** across 8.5–4.5 bits, and 53% at Phi's largest shift, 3.5 bits † |
 | **Capability** | Collapses at a bit-width differing by a **full bit** between model families |
 
 Three regimes, not one cliff:
@@ -43,8 +52,10 @@ FP16 ─────── 8.5 bits        8.5 ────── 4.5/3.5 bits  
 
 The headline artifact needs **two** failures, and they dominate in different
 places. Where output is coherent, the perplexity-only and composite gates admit
-identical completions and the whole gap is the **grader** — 10.8% vs 2.2% at 4.5
-bits on Qwen2.5-3B. Where output has collapsed, the **gate** dominates — 38.4%
+identical completions and the whole gap is the **grader** — 10.8% vs 1.4% at 4.5
+bits on Qwen2.5-3B, a factor of 7.7 under the corrected scorer where the
+original one gave 4.9. Correcting the instrument widened this gap rather than
+closing it. Where output has collapsed, the **gate** dominates — 38.4%
 under a perplexity-only gate vs 0.2% under the composite gate, same marker list,
 same completions, which is 99.5% of that gap.
 
@@ -338,10 +349,10 @@ are kept locally and excluded from the published tree rather than deleted.
 
 ## Status
 
-![Tests](https://img.shields.io/badge/tests-469_passing-brightgreen?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-1550_passing-brightgreen?style=flat-square)
 ![mypy](https://img.shields.io/badge/mypy-strict-brightgreen?style=flat-square)
 ![ruff](https://img.shields.io/badge/ruff-clean-orange?style=flat-square)
-![Paper](https://img.shields.io/badge/paper-27pp,_zero_overfull-blue?style=flat-square)
+![Paper](https://img.shields.io/badge/paper-51pp,_zero_overfull-blue?style=flat-square)
 
 ## What this does not establish
 
