@@ -27,11 +27,20 @@ def test_paper_prose_matches_measurements() -> None:
     import json
     import re
 
-    from scripts.check_paper_numbers import CHECKS, DATA_CHECKS
+    from scripts.check_paper_numbers import (
+        CHECKS, DATA_CHECKS, live_tex, load_stats)
 
-    stats = json.loads(STATS.read_text(encoding="utf-8"))
+    # Through the checker's own loader, not json.loads: the probe checks read
+    # the corrected refit spliced over review_stats.json, and a test that
+    # assembled its own object would verify the manuscript against whichever
+    # grading it happened to reconstruct.
+    stats = load_stats()
     data = json.loads((REPO_ROOT / "docs" / "paper" / "data.json").read_text(encoding="utf-8"))
-    text = TEX.read_text(encoding="utf-8")
+    # live_tex, not the raw source: it strips commented-out sentences and the
+    # original-scorer dagger, exactly as the CLI checker does. A test reading
+    # raw source both accepts numbers the reader never sees and rejects ones
+    # they do.
+    text = live_tex(TEX.read_text(encoding="utf-8"))
     missing = [
         (check.label, check.value(data))
         for check in DATA_CHECKS
@@ -58,9 +67,13 @@ def test_checks_are_anchored_to_context() -> None:
     """
     import json
 
-    from scripts.check_paper_numbers import CHECKS
+    from scripts.check_paper_numbers import CHECKS, load_stats
 
-    stats = json.loads(STATS.read_text(encoding="utf-8"))
+    # Through the checker's own loader, not json.loads: the probe checks read
+    # the corrected refit spliced over review_stats.json, and a test that
+    # assembled its own object would verify the manuscript against whichever
+    # grading it happened to reconstruct.
+    stats = load_stats()
     bare = [c.label for c in CHECKS
             if not re.search(r"[A-Za-z]{3}", c.pattern(c.value(stats)))]
     assert not bare, f"checks with no textual context: {bare}"

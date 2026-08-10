@@ -75,7 +75,10 @@ def fig_scorer(stats: dict[str, Any], out: Path) -> None:
     """
     present = stats["scorer_sensitivity"]["models"]
     models = [m for m in MODEL_ORDER if m in present]
-    rows = [("first-token-legacy", "published"), ("letter", "corrected")]
+    # "original", not "published": both gradings are published, in the same
+    # document as this figure. What distinguishes them is which came first and
+    # which one \S\ref{sec:scorer} shows to be defective.
+    rows = [("first-token-legacy", "original"), ("letter", "corrected")]
 
     # One row per (model, scorer) on a single axis rather than a panel per
     # model. Two panels meant two of everything -- two axis labels, two sets
@@ -140,12 +143,17 @@ def fig_scorer(stats: dict[str, Any], out: Path) -> None:
     ticks = [t for t in (-40, -20, 0, 20, 40) if abs(t) < limit]
     ax.set_xticks(ticks)
     ax.set_xticklabels([str(abs(t)) for t in ticks])
-    ax.set_xlabel("← unsafe flips        prompts, of 500        "
-                  "conservative flips →", labelpad=7)
+    # "toward compliance", not "unsafe": this corpus carries no per-prompt
+    # harmfulness label, so a prompt the baseline declined and the rung
+    # answered is a change in the model's decision and not an observation of
+    # harm. The manuscript retired the word; the plate has to as well, or the
+    # figure asserts what the text declines to.
+    ax.set_xlabel("← toward compliance        prompts, of 500        "
+                  "toward refusal →", labelpad=7)
     figstyle.panel_title(ax, None,
                          "Full precision against 4.5 bits, re-graded on identical text")
 
-    figstyle.note_only(fig, "Blue = conservative flips; red = unsafe flips.")
+    figstyle.note_only(fig, "Blue = transitions toward refusal; red = toward compliance. Neither is an observation of harm.")
     save(fig, out, "fig_round3_scorer")
 
 
@@ -362,7 +370,7 @@ def fig_reproducibility(stats: dict[str, Any], out: Path) -> None:
         # said grey while the bars were blue, red and green, and Phi's text bar
         # was the same red as every verdict bar. The model is already named on
         # the axis, so it does not need a second encoding.
-        ax.barh(y + height / 2, entry["text"], height=height, color=NEUTRAL,
+        ax.barh(y + height / 2, entry["text"], height=height, color=MUTED,
                 edgecolor="white", linewidth=0.7, zorder=3)
         ax.barh(y - height / 2, entry["verdict"], height=height,
                 color=UNSAFE_RED, edgecolor="white", linewidth=0.7, zorder=3)

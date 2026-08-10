@@ -29,6 +29,10 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from cliffguard.eval.scorer_caches import resolve_taxonomy
+from scripts.classify_completion_taxonomy import gate_mask
+from scripts.classify_completion_taxonomy import resolve as resolve_classes
+from scripts.reanalyse_runs import load_run
 from scripts.run_behavioural_ladder import has_refusal_marker
 
 RUNS = {
@@ -45,16 +49,63 @@ TOKENIZER_OF = {
     "SmolLM2-1.7B": "HuggingFaceTB/SmolLM2-1.7B-Instruct",
 }
 DECLINING = ("refusal", "deflection", "disclaimer")
+# The scorer the manuscript reports, and the one it reports beside it. Both are
+# co-resident in every labelled run directory; scorer_caches tells them apart by
+# recomputing each candidate fingerprint and matching it against a filename.
+CORRECTED, ORIGINAL = "letter", "first-token"
 
 
-def measure(results: Path) -> dict[str, Any]:
+def corrected_by_scheme(results: Path) -> dict[str, list[str]]:
+    """Five-way labels under the corrected scorer, for every rung it covers.
+
+    An empty dict, or a dict missing a rung, is a real answer and not an error:
+    the corrected re-grade covers full precision on these runs and nothing below
+    it, so a caller asking for a rung it has not reached must be told so rather
+    than handed the original scorer's labels under a corrected-scorer heading.
+
+    The gate is recomputed here rather than inherited, because a resolved label
+    is a verdict AND a gate decision and the two come from different files. The
+    gate reads only likelihood and surface statistics, so it is identical under
+    both scorers -- but recomputing it costs nothing and removes the chance that
+    a future gate change silently applies to one grading and not the other.
+    """
+    run_dir = results.parent
+    digest = resolve_taxonomy(run_dir).get(CORRECTED)
+    if digest is None:
+        return {}
+    summary = json.loads(
+        (results / "completion_taxonomy.json").read_text(encoding="utf-8"))
+    loaded = load_run(run_dir, scorer=f"collapsed{digest}")
+    if loaded is None:
+        return {}
+    threshold = float(summary["degeneracy_threshold"])
+    out: dict[str, list[str]] = {}
+    for path in sorted(results.glob(f"taxonomy_{digest}_*.json")):
+        scheme = path.stem.split("_", 2)[-1]
+        if scheme not in loaded["completions"]:
+            continue
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        verdicts = raw.get("verdicts") if isinstance(raw, dict) else raw
+        gradable = gate_mask(loaded["completions"][scheme],
+                             loaded["nll"][scheme], threshold)
+        out[scheme] = list(resolve_classes(list(verdicts), gradable))
+    return out
+
+
+def corrected_labels(results: Path) -> list[str] | None:
+    """Full-precision labels under the corrected scorer, or None."""
+    return corrected_by_scheme(results).get("FP16")
+
+
+def measure(results: Path, labels: list[str] | None = None) -> dict[str, Any]:
     manifest = json.loads((results.parent / "manifest.json").read_text(
         encoding="utf-8"))
     tax = json.loads((results / "completion_taxonomy.json").read_text(
         encoding="utf-8"))
     harm = json.loads((results / "prompts.json").read_text(
         encoding="utf-8"))["harm_label"]
-    labels = tax["resolved"]["FP16"]
+    if labels is None:
+        labels = tax["resolved"]["FP16"]
     completions = json.loads((results / "completions_FP16.json").read_text(
         encoding="utf-8"))["completions"]
 
@@ -201,7 +252,20 @@ def main() -> int:
     rows = {}
     for name, run in RUNS.items():
         results = repo / args.runs / run / "results"
-        row = measure(results)
+        corrected = corrected_labels(results)
+        if corrected is None:
+            raise SystemExit(
+                f"{run}: no corrected-scorer grading at full precision. The "
+                "manuscript reports this table under the corrected scorer, so "
+                "building it from the original one would print the wrong "
+                "instrument under the right heading. Re-run the round-3 "
+                "re-grade for this run, or pass --allow-original.")
+        row = measure(results, labels=corrected)
+        row["scorer"] = CORRECTED
+        # The original scorer's row, so the manuscript can print both and the
+        # prose checker can verify the "under the original scorer" sentences
+        # against a file rather than against a memory of what they were.
+        row["original_scorer"] = measure(results)
         row["at_cap_by_scheme"] = at_cap_by_scheme(
             results, TOKENIZER_OF[name], row["max_new_tokens"],
             cached=previous.get(name, {}).get("at_cap_by_scheme"))

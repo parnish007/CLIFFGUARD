@@ -10,16 +10,30 @@ on the original scorer's.
 
 So the probe is refitted here on the corrected full-precision labels. Nothing
 about the probe changes -- same layer, same difference-in-means direction, same
-held-out split protocol, same seed. Only the definition of which prompts count
-as refusals moves, which is exactly the quantity the correction changed: 409
-refusals become 353 on Qwen2.5-3B and 435 become 385 on Phi-3.5-mini.
+held-out split protocol, same seed, same replicate count. Only the definition of
+which prompts count as refusals moves, which is exactly the quantity the
+correction changed: 409 refusals become 353 on Qwen2.5-3B and 435 become 385 on
+Phi-3.5-mini.
+
+That "same protocol" is load-bearing enough to be enforced structurally rather
+than described. This script does not reimplement retention; it calls the same
+`probe_retention` the published table came from, twice, with only the scorer
+argument differing. An earlier version did reimplement it, taking the ratio of
+two mean d' values where the published estimator takes the mean of the
+per-split ratios, and the two disagree by 42 points at Qwen2.5-3B's 3.5-bit
+rung -- a difference that has nothing to do with the label correction this
+script exists to measure.
+
+The legacy column is therefore a check as well as a baseline: it should
+reproduce `review_stats.json` cell for cell, and `--assert-baseline` fails if it
+does not.
 
 This runs on a CPU. The activations are already stored per scheme, the labels
 are already graded, and a d' is a projection and two moments.
 
 Usage:
   python scripts/refit_probe_corrected.py
-  python scripts/refit_probe_corrected.py --out docs/paper/probe_corrected.json
+  python scripts/refit_probe_corrected.py --splits 200 --assert-baseline
 """
 
 from __future__ import annotations
@@ -30,25 +44,22 @@ from pathlib import Path
 import sys
 from typing import Any
 
-import numpy as np
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from cliffguard.eval.discriminability import held_out_d_prime
-from scripts.reanalyse_runs import load_run
-from scripts.review_reanalysis import label_matrix
+from scripts.review_reanalysis import probe_retention
 
 REPO = Path(__file__).resolve().parents[1]
 RUNS = REPO / "artifacts" / "runs"
 
-MODELS = (
-    ("Qwen2.5-3B", "*colab-behavioural-qwen3b"),
-    ("Phi-3.5-mini", "*colab-behavioural-phi35"),
-)
-# The scorers to compare. "first-token-legacy" is what the published probe was
-# fitted on; "letter" is the corrected one the behavioural arm now reports.
-SCORERS = ("first-token-legacy", "letter")
-SPLITS, SEED = 20, 0
+PATTERNS = ("*colab-behavioural-qwen3b", "*colab-behavioural-phi35")
+# "first-token-legacy" is what the published probe was fitted on; "letter" is
+# the corrected scorer the behavioural arm now reports.
+PUBLISHED, CORRECTED = "first-token-legacy", "letter"
+# The published table's replicate count. Retention percentiles are a dispersion
+# measure over splits, so a different count is a different quantity.
+SPLITS = 200
+ORDER = ("FP16", "RTN_8B", "RTN_7B", "RTN_6B", "RTN_5B", "RTN_4B", "RTN_3B",
+         "RTN_2B")
 
 
 def find(pattern: str) -> Path:
@@ -58,16 +69,39 @@ def find(pattern: str) -> Path:
     return hits[-1]
 
 
-def fp16_refused(run_dir: Path, scorer: str) -> np.ndarray:
-    """The probe's positive class: prompts full precision refused.
+def rows_by_scheme(block: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {r["scheme"]: r for r in block["rows"]}
 
-    Read through the same label_matrix the behavioural arm uses, so the probe's
-    target and the reported behaviour cannot drift apart again.
+
+def check_baseline(legacy: dict[str, Any], published: dict[str, Any],
+                   tolerance: float) -> list[str]:
+    """Every legacy cell against the published one, to the stated tolerance.
+
+    The point of the corrected refit is that one thing changed. If the arm that
+    changed nothing does not reproduce, then something else changed too and the
+    difference between the two columns is not the label definition.
     """
-    loaded = load_run(run_dir, scorer=scorer)
-    if loaded is None:
-        raise SystemExit(f"{run_dir.name}: not loadable")
-    return label_matrix(loaded, "composite")["FP16"] == "refusal"
+    problems: list[str] = []
+    for model, block in published.items():
+        if model not in legacy:
+            problems.append(f"{model}: not refitted")
+            continue
+        mine, theirs = rows_by_scheme(legacy[model]), rows_by_scheme(block)
+        if legacy[model]["n_positive"] != block["n_positive"]:
+            problems.append(
+                f"{model}: {legacy[model]['n_positive']} positives against the "
+                f"published {block['n_positive']}")
+        for scheme, row in theirs.items():
+            if scheme not in mine:
+                problems.append(f"{model}/{scheme}: missing")
+                continue
+            delta = abs(mine[scheme]["retained_mean"] - row["retained_mean"])
+            if delta > tolerance:
+                problems.append(
+                    f"{model}/{scheme}: retention "
+                    f"{100 * mine[scheme]['retained_mean']:.1f}% against the "
+                    f"published {100 * row['retained_mean']:.1f}%")
+    return problems
 
 
 def main() -> int:
@@ -75,94 +109,80 @@ def main() -> int:
     ap.add_argument("--out", type=Path,
                     default=REPO / "docs" / "paper" / "probe_corrected.json")
     ap.add_argument("--splits", type=int, default=SPLITS)
+    ap.add_argument("--assert-baseline", action="store_true",
+                    help="fail unless the legacy column reproduces "
+                         "review_stats.json")
+    ap.add_argument("--tolerance", type=float, default=1e-9,
+                    help="allowed absolute drift in retention against the "
+                         "published table; the seed is fixed, so the default "
+                         "is exact equality")
     args = ap.parse_args()
+
+    runs = [find(p) for p in PATTERNS]
+    scorers = {}
+    for scorer in (PUBLISHED, CORRECTED):
+        print(f"[{scorer}] {args.splits} replicates")
+        scorers[scorer] = probe_retention(runs, args.splits, "judge",
+                                          scorer=scorer)
+
+    published_path = REPO / "docs" / "paper" / "review_stats.json"
+    published = json.loads(published_path.read_text(encoding="utf-8"))["probe"]
+    problems = check_baseline(scorers[PUBLISHED], published, args.tolerance)
 
     out: dict[str, Any] = {
         "protocol": {
-            "splits": args.splits, "seed": SEED,
-            "direction": "difference in means, fitted on one half, scored on the other",
+            "splits": args.splits,
+            "estimator": ("mean over splits of d'(rung)/d'(FP16), the same "
+                          "probe_retention the published table uses"),
+            "direction": ("difference in means, fitted on one half of the "
+                          "prompts and scored on the disjoint other half"),
             "note": ("Only the label definition differs between the two scorer "
                      "blocks. Layer, direction estimator, split count and seed "
-                     "are identical, so any change in d' is the target moving."),
+                     "are identical, so any change in retention is the target "
+                     "moving."),
+            "baseline_reproduces": not problems,
+            "baseline_problems": problems,
         },
-        "models": {},
+        "scorers": scorers,
     }
-
-    for model, pattern in MODELS:
-        run_dir = find(pattern)
-        activations_dir = run_dir / "activations"
-        if not activations_dir.is_dir():
-            print(f"[skip] {model}: no activations stored")
-            continue
-
-        block: dict[str, Any] = {"run": run_dir.name, "scorers": {}}
-        for scorer in SCORERS:
-            try:
-                refused = fp16_refused(run_dir, scorer)
-            except SystemExit as error:
-                print(f"[skip] {model} / {scorer}: {error}")
-                continue
-
-            per_scheme: dict[str, Any] = {}
-            for path in sorted(activations_dir.glob("*.npy")):
-                scheme = path.stem
-                acts = np.load(path)
-                if acts.shape[0] != len(refused):
-                    per_scheme[scheme] = {
-                        "note": (f"{acts.shape[0]} activation rows against "
-                                 f"{len(refused)} labels; not paired")}
-                    continue
-                positive, negative = acts[refused], acts[~refused]
-                if len(positive) < 4 or len(negative) < 4:
-                    per_scheme[scheme] = {"note": "too few in one class"}
-                    continue
-                mean, sd = held_out_d_prime(positive, negative,
-                                            n_splits=args.splits,
-                                            fires_high=True, seed=SEED)
-                per_scheme[scheme] = {"d_prime": mean, "sd": sd}
-
-            fp16 = per_scheme.get("FP16", {}).get("d_prime")
-            # Retention against this scorer's OWN full-precision d'. Comparing
-            # a corrected rung against the original scorer's baseline would mix
-            # the two targets, which is the error this script exists to undo.
-            for scheme, entry in per_scheme.items():
-                if "d_prime" in entry and fp16:
-                    entry["retained_vs_fp16"] = entry["d_prime"] / fp16
-
-            block["scorers"][scorer] = {
-                "n_refused": int(refused.sum()),
-                "n_prompts": int(len(refused)),
-                "schemes": per_scheme,
-            }
-        out["models"][model] = block
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(out, indent=2, sort_keys=True) + "\n",
                         encoding="utf-8")
-    print(f"wrote {args.out}\n")
+    print(f"\nwrote {args.out}\n")
 
-    order = ["FP16", "RTN_8B", "RTN_7B", "RTN_6B", "RTN_5B", "RTN_4B",
-             "RTN_3B", "RTN_2B"]
-    for model, block in out["models"].items():
+    models = sorted({m for block in scorers.values() for m in block})
+    for model in models:
         print(f"=== {model}")
-        header = "  scheme     " + "".join(
-            f"{s.replace('first-token-legacy', 'original'):>22s}"
-            for s in block["scorers"])
-        print(header)
-        for scheme in order:
+        print(f"  {'scheme':8s} {'original':>20s} {'corrected':>20s}")
+        blocks = {s: scorers[s].get(model) for s in (PUBLISHED, CORRECTED)}
+        for scheme in ORDER:
             cells = ""
-            for scorer, data in block["scorers"].items():
-                entry = data["schemes"].get(scheme, {})
-                if "d_prime" in entry:
-                    cells += (f"{entry['d_prime']:+8.3f}"
-                              f" ({entry.get('retained_vs_fp16', float('nan')):5.0%})"
-                              .rjust(22))
-                else:
-                    cells += f"{'--':>22s}"
-            print(f"  {scheme:10s}{cells}")
-        for scorer, data in block["scorers"].items():
-            print(f"    {scorer:20s} positives {data['n_refused']}/"
-                  f"{data['n_prompts']}")
+            for scorer in (PUBLISHED, CORRECTED):
+                block = blocks[scorer]
+                row = rows_by_scheme(block).get(scheme) if block else None
+                cells += (f"{100 * row['retained_mean']:9.1f}%"
+                          f" [{100 * row['retained_ci_low']:4.0f},"
+                          f"{100 * row['retained_ci_high']:4.0f}]"
+                          if row else f"{'--':>20s}")
+            print(f"  {scheme:8s} {cells}")
+        for scorer in (PUBLISHED, CORRECTED):
+            block = blocks[scorer]
+            if block:
+                print(f"    {scorer:20s} positives {block['n_positive']}/"
+                      f"{block['n_positive'] + block['n_negative']}, "
+                      f"FP16 d' {block['fp16_absolute_dprime']:.3f}")
+
+    if problems:
+        print("\nthe legacy column does NOT reproduce the published table:")
+        for problem in problems:
+            print(f"  {problem}")
+        if args.assert_baseline:
+            return 1
+    else:
+        print("\nthe legacy column reproduces review_stats.json exactly, so the "
+              "difference between the two columns is the label definition and "
+              "nothing else")
     return 0
 
 

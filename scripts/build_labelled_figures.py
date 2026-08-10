@@ -33,6 +33,7 @@ from matplotlib.ticker import PercentFormatter  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.analyse_leakage import pivots  # noqa: E402
+from scripts.build_labelled_tables import corrected_by_scheme  # noqa: E402
 from scripts import figstyle  # noqa: E402
 
 # Shared with build_paper_figures.py so the two sets of plates look like one
@@ -67,6 +68,10 @@ SCHEMES = ["FP16", "RTN_8B", "RTN_7B", "RTN_6B", "RTN_5B", "RTN_4B", "RTN_3B", "
 RUNG_LABEL = {"FP16": "16", "RTN_8B": "8.5", "RTN_7B": "7.5",
               "RTN_6B": "6.5", "RTN_5B": "5.5", "RTN_4B": "4.5",
               "RTN_3B": "3.5", "RTN_2B": "2.5"}
+# Stamped on every plate that reads labels at a rung the corrected scorer has
+# not reached. Held in one place so the four cannot drift apart, and so that
+# deleting it once round 4 lands is one edit rather than four.
+LADDER_SCORER = "\u2020 original label scorer at every rung."
 
 def load(repo: Path) -> dict[str, dict[str, Any]]:
     """Everything the figures need, read once from the run directories."""
@@ -81,13 +86,33 @@ def load(repo: Path) -> dict[str, dict[str, Any]]:
             s: json.loads((results / f"completions_{s}.json").read_text(
                 encoding="utf-8"))["completions"]
             for s in SCHEMES if (results / f"completions_{s}.json").exists()}
+        # Two gradings of the same completions. "resolved" is the original
+        # label scorer, which covers every rung; "corrected" is the single-token
+        # re-grade, which at the time of writing covers full precision only.
+        # Figures about full precision use the corrected one; ladder-wide
+        # figures use the original and say so on the plate.
         data[model] = {
             "resolved": tax["resolved"],
+            "corrected": corrected_by_scheme(results),
             "harm": prompts["harm_label"],
             "completions": completions,
             "threshold": tax["degeneracy_threshold"],
         }
     return data
+
+
+def fp16_labels(d: dict[str, Any]) -> tuple[list[str], bool]:
+    """Full-precision labels, and whether they are the corrected scorer's.
+
+    Returning the provenance beside the labels rather than resolving it at each
+    call site is deliberate: every figure that draws these has to say which
+    instrument produced them, and a helper that silently falls back would make
+    that caption a guess.
+    """
+    corrected = d.get("corrected", {}).get("FP16")
+    if corrected is not None:
+        return corrected, True
+    return d["resolved"]["FP16"], False
 
 
 def counts(labels: list[str], harm: list[str], cls: str) -> dict[str, int]:
@@ -132,7 +157,8 @@ def fig_saturation(data: dict[str, Any], out: Path) -> None:
     axes[1].set_xlabel("stored bits / parameter")
     handles, labels = axes[0].get_legend_handles_labels()
     figstyle.shared_legend(fig, handles, labels, ncol=3,
-                           note="Stack colours = the judge's completion classes.",
+                           note="Stack colours = the judge's completion "
+                                f"classes. {LADDER_SCORER}",
                            reserve=0.30)
     save(fig, out, "fig_labelled_saturation")
 
@@ -186,7 +212,8 @@ def fig_truncation(data: dict[str, Any], out: Path) -> None:
     ax2.set_ylim(0, 30)
     handles, labels = ax1.get_legend_handles_labels()
     figstyle.shared_legend(fig, handles, labels, ncol=3,
-                           note="Lines show the three model families.")
+                           note="Lines show the three model families. "
+                                f"{LADDER_SCORER}")
     save(fig, out, "fig_labelled_truncation")
 
 
@@ -201,8 +228,11 @@ def fig_matrix(data: dict[str, Any], out: Path) -> None:
     order = ["refusal", "deflection", "compliance", "disclaimer", "unclear",
              "degenerate"]
     fig, axes = plt.subplots(1, 3, figsize=(TEXT_WIDTH_IN, 2.9))
+    provenance: set[bool] = set()
     for ax, (model, d) in zip(axes, data.items()):
-        grid = [[counts(d["resolved"]["FP16"], d["harm"], cls)[c]
+        labels, is_corrected = fp16_labels(d)
+        provenance.add(is_corrected)
+        grid = [[counts(labels, d["harm"], cls)[c]
                  for c in order] for cls in ("harmful", "benign")]
         im = ax.imshow(grid, cmap="Blues", vmin=0, vmax=150, aspect="auto")
         for i, row in enumerate(grid):
@@ -222,8 +252,12 @@ def fig_matrix(data: dict[str, Any], out: Path) -> None:
                            fontsize=7.5)
         figstyle.panel_title(ax, chr(ord("a") + list(axes).index(ax)), model)
     fig.colorbar(im, ax=axes, fraction=0.02, pad=0.02).set_label("prompts (of 150)")
-    fig.subplots_adjust(left=0.08, right=0.88, bottom=0.34, top=0.88, wspace=0.64)
-    fig.text(0.5, 0.035, "Rows = prompt labels; columns = judge verdicts.",
+    fig.subplots_adjust(left=0.08, right=0.88, bottom=0.36, top=0.88, wspace=0.64)
+    scorer = ("corrected label scorer" if provenance == {True}
+              else "original label scorer" if provenance == {False}
+              else "MIXED SCORERS -- do not publish")
+    fig.text(0.5, 0.035,
+             f"Rows = prompt labels; columns = judge verdicts; {scorer}.",
              ha="center", fontsize=8, color="#404040")
     save(fig, out, "fig_labelled_matrix_fp16")
 
@@ -272,7 +306,8 @@ def fig_unadjudicated(data: dict[str, Any], out: Path) -> None:
     handles, labels = ax.get_legend_handles_labels()
     figstyle.shared_legend(
         fig, handles, labels, ncol=3,
-        note="Counts are unadjudicated completions, not harmful completions.")
+        note="Counts are unadjudicated completions, not harmful completions. "
+             f"{LADDER_SCORER}")
     save(fig, out, "fig_labelled_unadjudicated")
 
 
@@ -294,23 +329,33 @@ def fig_marker_gap(data: dict[str, Any], out: Path) -> None:
 
     fig, ax = plt.subplots(figsize=(TEXT_WIDTH_IN, 3.3))
     models = list(data)
+    # One colour, one meaning. The earlier version drew the judge endpoint in
+    # the model's own colour and the phrase-list endpoint in a fixed red, so on
+    # the Phi-3.5-mini row -- whose model colour IS that red -- the two ends of
+    # the dumbbell were the same colour with opposite meanings, and on the
+    # SmolLM2 row a red triangle sat in a legend that showed a red circle.
+    # Here colour carries the instrument and nothing else; the model is the row
+    # label, which is unambiguous and already on the plate.
+    LIST_COLOUR, JUDGE_COLOUR = figstyle.UNSAFE, figstyle.CONSERVATIVE
+    provenance: set[bool] = set()
     for row, model in enumerate(models):
         d = data[model]
-        labels = d["resolved"]["FP16"]
+        labels, is_corrected = fp16_labels(d)
+        provenance.add(is_corrected)
         comp = d["completions"]["FP16"]
         declines = sum(1 for lab in labels
                        if lab in ("refusal", "deflection", "disclaimer"))
         marked = sum(1 for c in comp if has_refusal_marker(c))
-        colour, marker, _ = MODEL_STYLE[model]
         ax.plot([marked, declines], [row, row], color="#ADB5BD", linewidth=3,
                 solid_capstyle="round", zorder=1)
-        ax.scatter([marked], [row], s=52, color=MARKER_RED, marker=marker,
+        ax.scatter([marked], [row], s=52, color=LIST_COLOUR, marker="s",
                    zorder=3, label="refusal-phrase list" if row == 0 else None)
-        ax.scatter([declines], [row], s=52, color=colour, marker="o",
+        ax.scatter([declines], [row], s=52, color=JUDGE_COLOUR, marker="o",
                    zorder=3, label="five-way judge" if row == 0 else None)
-        ax.text((marked + declines) / 2, row + 0.22,
-                f"{marked / declines:.0%} recall", ha="center", fontsize=7.5,
-                color="#495057")
+        ax.annotate(f"{marked / declines:.0%} covered",
+                    xy=((marked + declines) / 2, row), xytext=(0, 9),
+                    textcoords="offset points", ha="center", fontsize=7.5,
+                    color="#495057")
     ax.set_yticks(range(len(models)))
     ax.set_yticklabels(models, fontsize=8)
     ax.set_ylim(-0.45, len(models) - 0.45)
@@ -320,7 +365,12 @@ def fig_marker_gap(data: dict[str, Any], out: Path) -> None:
     figstyle.panel_title(ax, None, "The same phrase list reads families differently")
     figstyle.xgrid(ax)
     handles, labels = ax.get_legend_handles_labels()
-    figstyle.shared_legend(fig, handles, labels, ncol=2)
+    scorer = ("corrected label scorer" if provenance == {True}
+              else "original label scorer" if provenance == {False}
+              else "MIXED SCORERS -- do not publish")
+    figstyle.shared_legend(
+        fig, handles, labels, ncol=2,
+        note=f"Bar = declining completions the list does not flag; {scorer}.")
     save(fig, out, "fig_labelled_marker_gap")
 
 
@@ -370,7 +420,8 @@ def fig_utility(repo: Path, out: Path) -> None:
     handles, labels = axes[0].get_legend_handles_labels()
     figstyle.shared_legend(
         fig, handles, labels, ncol=2,
-        note="Hatched bars = loss from degenerate output; whiskers = one-sided 95% upper bounds.")
+        note="Hatched bars = loss from degenerate output; whiskers = "
+             f"one-sided 95% upper bounds. {LADDER_SCORER}")
     save(fig, out, "fig_labelled_utility")
 
 

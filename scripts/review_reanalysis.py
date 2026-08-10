@@ -682,7 +682,8 @@ def marker_decomposition(runs: list[Path]) -> dict[str, Any]:
 
 
 def probe_retention(runs: list[Path], n_splits: int,
-                    label_source: str = "judge") -> dict[str, Any]:
+                    label_source: str = "judge",
+                    scorer: str | None = None) -> dict[str, Any]:
     """Fraction of FP16 d' the FROZEN FP16 direction retains, per scheme.
 
     The direction is fitted on one half of the prompts and scored on a disjoint
@@ -696,6 +697,15 @@ def probe_retention(runs: list[Path], n_splits: int,
     at different targets, so the probe could be succeeding at its own task. With
     label_source="judge" both arms share a target and the comparison is
     like-for-like. "marker" reproduces the original estimand for contrast.
+
+    `scorer` picks which of a run's co-resident gradings supplies those judge
+    labels. It exists so the corrected label scorer can be swapped in without a
+    second implementation of this function: retention is a ratio of ratios and
+    the estimator is not interchangeable with the obvious alternative -- taking
+    the ratio of two mean d' values instead of the mean of per-split ratios
+    moves Qwen2.5-3B's 3.5-bit cell from 42% to -0.5%, because the denominator
+    there is near zero on individual splits. Any comparison between two scorers
+    has to hold that estimator fixed, which it does by construction here.
     """
     from cliffguard.eval.discriminability import d_prime
 
@@ -712,7 +722,7 @@ def probe_retention(runs: list[Path], n_splits: int,
         if label is None:
             continue
         if label_source == "judge":
-            run = load_run(run_dir)
+            run = load_run(run_dir, scorer=scorer)
             if run is None or not run["judge_raw"]:
                 continue
             verdicts = run["judge_raw"].get("FP16")
@@ -769,6 +779,7 @@ def probe_retention(runs: list[Path], n_splits: int,
         out[label] = {
             "n_splits": n_splits,
             "label_source": label_source,
+            "scorer": scorer,
             "n_positive": int(refused.sum()),
             "n_negative": int((~refused).sum()),
             "fp16_absolute_dprime": float(np.mean(base_values)) if base_values

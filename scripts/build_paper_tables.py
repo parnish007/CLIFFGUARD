@@ -166,35 +166,62 @@ def table_capability_paired(review: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def table_probe_ci(review: dict[str, Any]) -> str:
-    """Frozen-probe retention with a percentile interval over fit/score splits."""
-    models = list(review["probe"])
-    ref = review["probe"][models[0]]["rows"]
+def table_probe_ci(probe: dict[str, Any]) -> str:
+    """Frozen-probe retention under both label scorers.
+
+    The corrected scorer is the primary column because it is the one the
+    behavioural arm reports; the original is beside it rather than in an
+    appendix because the whole point of \S\ref{sec:probe} is that the probe
+    does not move when the thing it watches does, and a reader is entitled to
+    check that the claim does not depend on which grading defined "watches".
+
+    The split range is the corrected column's. Printing two ranges per model
+    would double the width to show a dispersion measure twice; the original
+    scorer's ranges are in the released statistics.
+    """
+    corrected = probe["scorers"]["letter"]
+    original = probe["scorers"]["first-token-legacy"]
+    # Fixed order, not dictionary order. Every other table in the manuscript
+    # leads with Qwen2.5-3B, and a table that alphabetises silently disagrees
+    # with the prose beside it about which model is discussed first.
+    order = ("Qwen2.5-3B", "Phi-3.5-mini", "SmolLM2-1.7B", "Qwen2.5-1.5B")
+    models = [m for m in order if m in corrected]
+    models += [m for m in corrected if m not in models]
+    ref = corrected[models[0]]["rows"]
     lines = [
-        r"\begin{tabular}{l" + "rl" * len(models) + "}",
+        r"\begin{tabular}{l" + "rlr" * len(models) + "}",
         r"\toprule",
-        " & " + " & ".join(rf"\multicolumn{{2}}{{c}}{{{m}}}" for m in models) + r" \\",
-        "".join(rf"\cmidrule(lr){{{2 + 2 * i}-{3 + 2 * i}}}"
+        " & " + " & ".join(rf"\multicolumn{{3}}{{c}}{{{m}}}" for m in models)
+        + r" \\",
+        "".join(rf"\cmidrule(lr){{{2 + 3 * i}-{4 + 3 * i}}}"
                 for i in range(len(models))),
         # NOT a confidence interval: these are 2.5--97.5 percentiles over
         # fit/score splits of one fixed prompt set. Labelling them "95% CI"
         # would claim sampling coverage the procedure does not provide.
         "bits & " + " & ".join(
-            r"kept (\%) & split range" for _ in models) + r" \\",
+            r"kept (\%) & split range & orig.\%" for _ in models) + r" \\",
         r"\midrule",
     ]
+
+    def find(block: dict[str, Any], model: str, scheme: str):
+        rows = block.get(model, {}).get("rows", [])
+        return next((r for r in rows if r["scheme"] == scheme), None)
+
     for row in ref:
         cells: list[str] = []
         for model in models:
-            m = next((r for r in review["probe"][model]["rows"]
-                      if r["scheme"] == row["scheme"]), None)
-            if m is None:
-                cells += ["--", "--"]
-                continue
-            cells += [f"{100 * m['retained_mean']:.0f}",
-                      f"[{100 * m['retained_ci_low']:.0f}, "
-                      f"{100 * m['retained_ci_high']:.0f}]"]
+            new = find(corrected, model, row["scheme"])
+            old = find(original, model, row["scheme"])
+            cells += ["--" if new is None else f"{100 * new['retained_mean']:.0f}",
+                      "--" if new is None else
+                      f"[{100 * new['retained_ci_low']:.0f}, "
+                      f"{100 * new['retained_ci_high']:.0f}]",
+                      "--" if old is None else f"{100 * old['retained_mean']:.0f}"]
         lines.append(f"{bits_label(row['bits'])} & " + " & ".join(cells) + r" \\")
+
+    # The absolute FP16 d' belongs beside this table and not in it: there is no
+    # free column for it, and squeezing it into the split-range column prints a
+    # number under a heading that does not describe it. The caption carries it.
     lines += [r"\bottomrule", r"\end{tabular}"]
     return "\n".join(lines)
 
@@ -285,18 +312,27 @@ def main() -> int:
                     default=Path("docs/paper/review_stats.json"))
     ap.add_argument("--agreement", type=Path,
                     default=Path("docs/paper/judge_agreement.json"))
+    ap.add_argument("--probe", type=Path,
+                    default=Path("docs/paper/probe_corrected.json"))
     ap.add_argument("--out", type=Path, default=Path("docs/paper/tables"))
     args = ap.parse_args()
 
     data = json.loads(args.data.read_text(encoding="utf-8"))
     review = json.loads(args.review.read_text(encoding="utf-8"))
+    probe = json.loads(args.probe.read_text(encoding="utf-8"))
+    if not probe["protocol"]["baseline_reproduces"]:
+        raise SystemExit(
+            "probe_corrected.json says its original-scorer column does not "
+            "reproduce review_stats.json, so the two columns of tab_probe would "
+            "differ by more than the label definition. Re-run "
+            "scripts/refit_probe_corrected.py and read its report.")
     args.out.mkdir(parents=True, exist_ok=True)
     for name, builder, source in (
         ("tab_artifact", table_artifact, review),
         ("tab_markers", table_markers, data),
         ("tab_transitions", table_transitions, review),
         ("tab_capability", table_capability_paired, review),
-        ("tab_probe", table_probe_ci, review),
+        ("tab_probe", table_probe_ci, probe),
         ("tab_marker_decomp", table_marker_decomposition, review),
     ):
         (args.out / f"{name}.tex").write_text(

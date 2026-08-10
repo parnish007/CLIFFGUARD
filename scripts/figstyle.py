@@ -156,6 +156,43 @@ def shared_legend(fig: Any, handles: Sequence[Any], labels: Sequence[str],
         _note_below(fig, legend, note)
 
 
+def _wrap(fig: Any, note: str, fontsize: float = 8.0,
+          fraction: float = 0.96) -> str:
+    """Break a note onto as many lines as it needs to fit the figure width.
+
+    Measured, not guessed at a character count: the notes carry percent signs,
+    dashes and model names, so a fixed column that fits one fits none of the
+    others. An unwrapped note does not overflow visibly in the PNG --- the
+    tight bounding box simply grows the canvas --- so the failure shows up
+    only on the typeset page, as a figure scaled down to fit a line of small
+    print. Wrapping here means no caller can reintroduce it.
+    """
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    limit = fig.get_size_inches()[0] * fig.dpi * fraction
+
+    def width(text: str) -> float:
+        probe = fig.text(0, 0, text, fontsize=fontsize, alpha=0)
+        w = probe.get_window_extent(renderer).width
+        probe.remove()
+        return w
+
+    if width(note) <= limit:
+        return note
+    lines: list[str] = []
+    current = ""
+    for word in note.split():
+        candidate = f"{current} {word}".strip()
+        if current and width(candidate) > limit:
+            lines.append(current)
+            current = word
+        else:
+            current = candidate
+    if current:
+        lines.append(current)
+    return "\n".join(lines)
+
+
 def _note_below(fig: Any, anchor: Any, note: str) -> None:
     """Place the note a fixed gap under whatever sits above it.
 
@@ -167,15 +204,15 @@ def _note_below(fig: Any, anchor: Any, note: str) -> None:
     fig.canvas.draw()
     renderer = fig.canvas.get_renderer()
     box = anchor.get_window_extent(renderer).transformed(fig.transFigure.inverted())
-    fig.text(0.5, max(box.y0 - 0.055, 0.005), note, ha="center", va="top",
-             fontsize=8, color="#404040")
+    fig.text(0.5, max(box.y0 - 0.055, 0.005), _wrap(fig, note), ha="center",
+             va="top", fontsize=8, color="#404040", linespacing=1.35)
 
 
 def note_only(fig: Any, note: str, reserve: float = 0.10) -> None:
     """A note line with no legend above it."""
     fig.tight_layout(rect=(0, reserve, 1, 1))
-    fig.text(0.5, reserve * 0.35, note, ha="center", va="center", fontsize=8,
-             color="#404040")
+    fig.text(0.5, reserve * 0.35, _wrap(fig, note), ha="center", va="center",
+             fontsize=8, color="#404040", linespacing=1.35)
 
 
 def save(fig: Any, out: Path, name: str) -> None:

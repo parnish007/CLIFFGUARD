@@ -67,7 +67,20 @@ def _gsm_row(stats: dict[str, Any], model: str, bits: float) -> dict[str, Any]:
 
 
 def _probe_row(stats: dict[str, Any], model: str, bits: float) -> dict[str, Any]:
+    """One cell of the CORRECTED probe refit.
+
+    `stats["probe"]` is spliced in `main` from probe_corrected.json rather than
+    read from review_stats.json, because the probe section reports the
+    corrected refit and a checker that verified the manuscript against the
+    superseded grading would pass precisely when the manuscript was wrong.
+    """
     return next(r for r in stats["probe"][model]["rows"] if r["bits"] == bits)
+
+
+def _probe_original(stats: dict[str, Any], model: str, key: str = "") -> Any:
+    """The original scorer's probe block, which the prose quotes beside it."""
+    block = stats["probe_original"][model]
+    return block[key] if key else block
 
 
 def _gate_row(stats: dict[str, Any], model: str, bits: float) -> dict[str, Any]:
@@ -194,10 +207,10 @@ CHECKS: tuple[Check, ...] = (
                         + r"\$, prompt-level")),
     Check("Qwen kappa",
           lambda s: f"{s['drift']['Qwen2.5-3B']['kappa']:.2f}",
-          lambda v: _rx(rf"kappa}}_{{\\text{{Qwen2.5-3B}}}} = {v}")),
+          lambda v: _rx(rf"kappa}}\^{{\\dagger}}_{{\\text{{Qwen2.5-3B}}}} = {v}")),
     Check("Phi kappa",
           lambda s: f"{s['drift']['Phi-3.5-mini']['kappa']:.2f}",
-          lambda v: _rx(rf"kappa}}_{{\\text{{Phi-3.5-mini}}}} = {v}")),
+          lambda v: _rx(rf"kappa}}\^{{\\dagger}}_{{\\text{{Phi-3.5-mini}}}} = {v}")),
     Check("Qwen anchor error",
           lambda s: f"{s['drift']['Qwen2.5-3B']['anchor_error_pp']:.1f}",
           lambda v: _rx(rf"{v} points below the observed one")),
@@ -213,7 +226,7 @@ CHECKS: tuple[Check, ...] = (
     # ---- transitions ------------------------------------------------------
     Check("max transition rate",
           lambda s: f"{100 * max(r['rate_itt'] for r in _transitions(s)):.1f}",
-          lambda v: _rx(rf"never exceed {v}") + r"\\?%"),
+          lambda v: _rx(rf"stay at or below {v}") + r"\\?%"),
     Check("Qwen 4.5 to-refuse count",
           lambda s: str(_row(s, "Qwen2.5-3B", 4.5)["to_refusal"]),
           lambda v: _rx(rf"Qwen2.5-3B newly refuses {v} prompts")),
@@ -384,6 +397,41 @@ CHECKS: tuple[Check, ...] = (
     Check("Qwen 3.5 retention",
           lambda s: f"{100 * _probe_row(s, 'Qwen2.5-3B', 3.5)['retained_mean']:.0f}",
           lambda v: _rx(rf"Qwen2.5-3B to {v}") + r"\\?%"),
+    # The original scorer's values, quoted beside the corrected ones so a
+    # reader can see how far the correction moved the probe. Left unchecked,
+    # the sentence whose whole job is that comparison would be the one place a
+    # stale number could sit undetected.
+    # One check per model rather than one for an adjacent pair: the correction
+    # moves the two in opposite directions and the sentence says so, so the
+    # values are not quoted side by side.
+    Check("probe absolute d', both scorers, Qwen",
+          lambda s: " ".join(
+              [_fmt(_probe_original(s, "Qwen2.5-3B", "fp16_absolute_dprime"), 2),
+               _fmt(s["probe"]["Qwen2.5-3B"]["fp16_absolute_dprime"], 2)]),
+          lambda v: _rx(r"rises from \${}\$ to \${}\$".format(*v.split()))),
+    Check("probe absolute d', both scorers, Phi",
+          lambda s: " ".join(
+              [_fmt(_probe_original(s, "Phi-3.5-mini", "fp16_absolute_dprime"), 2),
+               _fmt(s["probe"]["Phi-3.5-mini"]["fp16_absolute_dprime"], 2)]),
+          lambda v: _rx(r"slightly, \${}\$ to \${}\$".format(*v.split()))),
+    Check("probe positives, corrected",
+          lambda s: " ".join(str(s["probe"][m]["n_positive"])
+                             for m in ("Qwen2.5-3B", "Phi-3.5-mini")),
+          lambda v: _rx(r"{} positives of 500 on Qwen2\.5-3B and {} of 500"
+                        .format(*v.split()))),
+    Check("probe positives, original",
+          lambda s: " ".join(str(_probe_original(s, m, "n_positive"))
+                             for m in ("Qwen2.5-3B", "Phi-3.5-mini")),
+          lambda v: _rx(r"against {} and {} under the original scorer"
+                        .format(*v.split()))),
+    Check("probe band span, Phi",
+          lambda s: (lambda vals: f"{100 * (max(vals) - min(vals)):.1f}")(
+              [r["retained_mean"] for r in s["probe"]["Phi-3.5-mini"]["rows"]
+               if 4.5 <= r["bits"] <= 8.5]),
+          lambda v: _rx(rf"and {v} on Phi-3\.5-mini")),
+    Check("probe 4.5 retention, Phi",
+          lambda s: f"{100 * _probe_row(s, 'Phi-3.5-mini', 4.5)['retained_mean']:.1f}",
+          lambda v: _rx(rf"Phi-3\.5-mini at {v}") + r"\\?%"),
 )
 
 
@@ -589,6 +637,37 @@ def _recall(labelled: dict[str, Any], model: str) -> str:
     return f"{100 * labelled[model]['recall']:.1f}"
 
 
+# The order the manuscript quotes them in, which is by coverage and not the
+# order the runs were executed. Named once so the checks and the prose cannot
+# disagree about which model each number belongs to.
+COVERAGE_ORDER = ("Qwen2.5-3B", "SmolLM2-1.7B", "Phi-3.5-mini")
+
+
+def _triple(labelled: dict[str, Any], key: str, original: bool = False,
+            order: tuple[str, ...] = COVERAGE_ORDER,
+            decimals: int | None = None) -> str:
+    """One quantity for three models, in the order the prose quotes them.
+
+    Checks used to hard-code the two values they were not testing --- "is {v}\\%,
+    23.5\\% and 3.6\\%" --- which meant that when the corrected scorer moved all
+    three, each check went on matching a sentence containing two stale numbers.
+    Spelling the whole triple from the file removes that failure mode.
+    """
+    def value(model: str) -> Any:
+        block = labelled[model]
+        return (block["original_scorer"] if original else block)[key]
+    if decimals is None:
+        return " ".join(str(value(m)) for m in order)
+    return " ".join(f"{value(m):.{decimals}f}" for m in order)
+
+
+def _coverage_triple(labelled: dict[str, Any], original: bool = False) -> str:
+    def recall(model: str) -> float:
+        block = labelled[model]
+        return (block["original_scorer"] if original else block)["recall"]
+    return " ".join(f"{100 * recall(m):.1f}" for m in COVERAGE_ORDER)
+
+
 def _bound(k: int, n: int, family: int) -> str:
     """One-sided Clopper-Pearson, Bonferroni-adjusted for a family of `family`.
 
@@ -654,15 +733,43 @@ LABELLED_CHECKS: tuple[Check, ...] = (
     # "coverage relative to the judge", not "recall": the denominator is the
     # instrument this paper indicts, and the prose says so rather than implying
     # accuracy against a ground truth it does not have.
-    Check("labelled coverage, Qwen2.5-3B",
-          lambda d: _recall(d, "Qwen2.5-3B"),
-          lambda v: _rx(rf"is {v}\\%, 23\.5\\% and 3\.6\\%")),
-    Check("labelled coverage, SmolLM2",
-          lambda d: _recall(d, "SmolLM2-1.7B"),
-          lambda v: _rx(rf"is 49\.3\\%, {v}\\% and 3\.6\\%")),
-    Check("labelled coverage, Phi-3.5-mini",
-          lambda d: _recall(d, "Phi-3.5-mini"),
-          lambda v: _rx(rf"is 49\.3\\%, 23\.5\\% and {v}\\%")),
+    Check("labelled coverage, corrected",
+          _coverage_triple,
+          lambda v: _rx(r"is {}\\%, {}\\% and {}\\%".format(*v.split()))),
+    Check("labelled coverage, original scorer",
+          lambda d: _coverage_triple(d, original=True),
+          lambda v: _rx(r"put the same three at {}\\%, {}\\% and {}\\%"
+                        .format(*v.split()))),
+    Check("labelled declining totals, original scorer",
+          lambda d: _triple(d, "declines", original=True),
+          lambda v: _rx(r"on declining totals of {}, {} and {}"
+                        .format(*v.split()))),
+    Check("labelled declining range",
+          lambda d: (lambda t: f"{min(t)} {max(t)}")(
+              [d[m]["declines"] for m in d]),
+          lambda v: _rx(r"{}--{} of 300".format(*v.split()))),
+    Check("labelled missed counts",
+          lambda d: _triple(d, "missed"),
+          lambda v: _rx(r"list misses\s+{} completions on Qwen2\.5-3B, {} on\s+"
+                        r"SmolLM2-1\.7B and {} on Phi-3\.5-mini"
+                        .format(*v.split()))),
+    Check("labelled missed counts, original scorer",
+          lambda d: _triple(d, "missed", original=True),
+          lambda v: _rx(r"\({}, {} and {} under the original\s+scorer\)"
+                        .format(*v.split()))),
+    Check("labelled kappa, corrected",
+          lambda d: _triple(d, "kappa", decimals=3),
+          lambda v: _rx(r"\${}\$ on Qwen2\.5-3B, \${}\$ on SmolLM2-1\.7B and\s+"
+                        r"\${}\$ on Phi-3\.5-mini".format(*v.split()))),
+    Check("labelled kappa, original scorer",
+          lambda d: _triple(d, "kappa", original=True, decimals=3),
+          lambda v: _rx(r"\(\${}\$, \${}\$ and \${}\$ under the original"
+                        .format(*v.split()))),
+    Check("labelled harmful refusals",
+          lambda d: _triple(d, "harmful_refuse",
+                            order=("Qwen2.5-3B", "Phi-3.5-mini",
+                                   "SmolLM2-1.7B")),
+          lambda v: _rx(r"{}, {} and {} outright\s+refusals".format(*v.split()))),
     *_per_model("truncation at full precision",
                 lambda d, m: f"{100 * d[m]['at_cap_by_scheme']['FP16']:.1f}",
                 r"{v}\\% of {m}'s"),
@@ -674,11 +781,12 @@ LABELLED_CHECKS: tuple[Check, ...] = (
                 r"{v} (?:times )?on {m}"),
     # The harmful-deflection counts behind the stratified truncation claim.
     # Quoted in prose only, so nothing else would catch them drifting.
-    Check("harmful deflections, Phi and SmolLM2",
+    Check("harmful deflections, all three",
           lambda d: " ".join(str(d[m]["harmful_deflect"]) for m in
-                             ("Phi-3.5-mini", "SmolLM2-1.7B")),
+                             ("Phi-3.5-mini", "SmolLM2-1.7B", "Qwen2.5-3B")),
           lambda v: _rx(r"\({} of 150\s+for Phi-3\.5-mini, {} for "
-                        r"SmolLM2-1\.7B\)".format(*v.split()))),
+                        r"SmolLM2-1\.7B, {} for Qwen2\.5-3B\)"
+                        .format(*v.split()))),
     # Cells quoted only in the caption of the full-precision matrix figure.
     # Captions drift more easily than body text because nothing else reads
     # them, so they are checked the same way the prose is. Both triples run in
@@ -783,6 +891,50 @@ MATRIX_CHECKS: tuple[Check, ...] = tuple(
     for model in TABLE_ORDER)
 
 
+REPO = Path(__file__).resolve().parents[1]
+PAPER = REPO / "docs" / "paper"
+
+
+def load_stats(stats_path: Path | None = None,
+               agreement_path: Path | None = None,
+               probe_path: Path | None = None) -> dict[str, Any]:
+    """review_stats.json with the corrected probe refit spliced over it.
+
+    A function rather than four lines in `main`, because the test suite runs
+    the same CHECKS and has to assemble the same object. When it assembled its
+    own, the two disagreed about which label scorer the probe checks read, and
+    the disagreement surfaced as a KeyError rather than as a wrong answer only
+    by luck.
+    """
+    stats_path = stats_path or PAPER / "review_stats.json"
+    agreement_path = agreement_path or PAPER / "judge_agreement.json"
+    probe_path = probe_path or PAPER / "probe_corrected.json"
+
+    stats = json.loads(stats_path.read_text(encoding="utf-8"))
+    # Folded in so the uniqueness checks read one object. The agreement range is
+    # recomputed here rather than stored, because the floor that defines it is a
+    # decision this file has to be able to state.
+    if agreement_path.exists():
+        agreement = json.loads(agreement_path.read_text(encoding="utf-8"))
+        stats["_agreement_range"] = _agreement_range(agreement)
+        stats["_direction_tally"] = _direction_tally(agreement)
+
+    # The probe section reports the CORRECTED refit, so the probe checks must
+    # read it. Splicing it over review_stats.json's block, rather than adding a
+    # parallel one, means a check written against the old key now verifies the
+    # new grading instead of silently continuing to verify the old one.
+    if probe_path.exists():
+        probe = json.loads(probe_path.read_text(encoding="utf-8"))
+        if not probe["protocol"]["baseline_reproduces"]:
+            raise SystemExit(
+                "probe_corrected.json reports that its original-scorer column "
+                "does not reproduce review_stats.json, so the two are not "
+                "comparable. Re-run scripts/refit_probe_corrected.py.")
+        stats["probe_original"] = probe["scorers"]["first-token-legacy"]
+        stats["probe"] = probe["scorers"]["letter"]
+    return stats
+
+
 def live_tex(source: str) -> str:
     r"""Strip what the reader never sees, so a check cannot be satisfied by it.
 
@@ -792,7 +944,14 @@ def live_tex(source: str) -> str:
     not comments and must survive.
     """
     without_inactive = re.sub(r"\\iffalse\\b.*?\\fi\\b", "", source, flags=re.S)
-    return re.sub(r"(?<!\\)%.*", "", without_inactive)
+    without_comments = re.sub(r"(?<!\\)%.*", "", without_inactive)
+    # \os is the original-label-scorer dagger. It can appear immediately after
+    # any number in the manuscript, and it carries no digits, so every context
+    # pattern below would otherwise have to spell out where it might land --
+    # turning one typographic decision into forty regex edits, and guaranteeing
+    # that adding a mark to a sentence silently disables its check. Removing it
+    # here keeps the marks free to move.
+    return re.sub(r"\\os(?:\{\})?", "", without_comments)
 
 
 def main() -> int:
@@ -813,6 +972,12 @@ def main() -> int:
                     default=Path("docs/paper/matrix_stats.json"),
                     help="paired per-rung blocks; source of the degenerate "
                          "share quoted in the utility figure's caption")
+    ap.add_argument("--probe", type=Path,
+                    default=Path("docs/paper/probe_corrected.json"),
+                    help="the corrected probe refit. The manuscript reports it "
+                         "and quotes the original scorer's values beside it, so "
+                         "the probe checks read this file rather than "
+                         "review_stats.json's superseded grading")
     ap.add_argument("--labelled", type=Path,
                     default=Path("docs/paper/labelled_paper_stats.json"),
                     help="round-3 measurements; skipped when absent, because "
@@ -835,14 +1000,13 @@ def main() -> int:
               "  python scripts/review_reanalysis.py --gsm8k <test.jsonl>")
         return 0
 
-    stats = json.loads(args.stats.read_text(encoding="utf-8"))
-    # Folded in so the uniqueness checks read one object. The agreement range is
-    # recomputed here rather than stored, because the floor that defines it is a
-    # decision this file has to be able to state.
-    if args.agreement.exists():
-        agreement = json.loads(args.agreement.read_text(encoding="utf-8"))
-        stats["_agreement_range"] = _agreement_range(agreement)
-        stats["_direction_tally"] = _direction_tally(agreement)
+    if not args.probe.exists() and "sec:probe" in args.tex.read_text(
+            encoding="utf-8"):
+        print(f"the manuscript has a probe section but {args.probe} is absent, "
+              "so its numbers would be checked against the superseded grading. "
+              "Run scripts/refit_probe_corrected.py.")
+        return 1
+    stats = load_stats(args.stats, args.agreement, args.probe)
     data = json.loads(args.data.read_text(encoding="utf-8"))
     text = live_tex(args.tex.read_text(encoding="utf-8"))
 

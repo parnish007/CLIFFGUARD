@@ -135,26 +135,49 @@ def fig_capability(review: dict[str, Any], out: Path) -> None:
     save(fig, out, "fig_capability")
 
 
-def fig_probe(review: dict[str, Any], out: Path) -> None:
-    """Frozen-probe retention along the ladder, with a band over fit/score splits.
+def fig_probe(probe: dict[str, Any], out: Path) -> None:
+    """Frozen-probe retention along the ladder, under both label scorers.
+
+    Colour carries the model and line style carries the scorer, which is the
+    only assignment that works here: a plate where dash meant "Phi" in one place
+    and "original scorer" in another would encode two things with one channel.
+    Markers and bands go on the corrected series alone, so the eye lands on the
+    grading the manuscript reports and the original stays legible as a
+    reference behind it.
 
     The band is the 2.5--97.5 percentile of retention across replicates. Without
     it the collapse at the lowest rungs looks far more precisely located than
-    the data supports.
+    the data supports -- and it is exactly there that the two scorers part
+    company, because d' itself is near zero and the ratio is unstable.
     """
-    fig, ax = plt.subplots(figsize=(TEXT_WIDTH_IN * 0.70, 3.7))
+    corrected = probe["scorers"]["letter"]
+    original = probe["scorers"]["first-token-legacy"]
+    order = [m for m in figstyle.MODEL_ORDER if m in corrected]
+
+    fig, ax = plt.subplots(figsize=(TEXT_WIDTH_IN * 0.74, 3.8))
     reference: list[dict[str, Any]] = []
-    for model, block in review["probe"].items():
-        colour, marker, dash = MODEL_STYLE.get(model, ("#333333", "o", "-"))
-        rows = [r for r in block["rows"] if r["scheme"] != "FP16"]
-        rows.sort(key=lambda r: -r["bits"])
+
+    def series(block: dict[str, Any], model: str) -> list[dict[str, Any]]:
+        rows = [r for r in block.get(model, {}).get("rows", [])
+                if r["scheme"] != "FP16"]
+        return sorted(rows, key=lambda r: -r["bits"])
+
+    for model in order:
+        colour = MODEL_STYLE.get(model, ("#333333", "o", "-"))[0]
+        marker = MODEL_STYLE.get(model, ("#333333", "o", "-"))[1]
+        rows = series(corrected, model)
         reference = reference or rows
         x = range(len(rows))
         ax.plot(x, [100 * r["retained_mean"] for r in rows], color=colour,
-                marker=marker, ls=dash, lw=1.6, ms=4.5, label=model)
+                marker=marker, ls="-", lw=1.7, ms=4.5, zorder=3)
         ax.fill_between(x, [100 * r["retained_ci_low"] for r in rows],
                         [100 * r["retained_ci_high"] for r in rows],
-                        color=colour, alpha=0.14, lw=0)
+                        color=colour, alpha=0.14, lw=0, zorder=1)
+        old = series(original, model)
+        if old:
+            ax.plot(range(len(old)), [100 * r["retained_mean"] for r in old],
+                    color=colour, ls=(0, (1.6, 1.6)), lw=1.2, zorder=2)
+
     ax.axhline(100, color="#ADB5BD", lw=0.8, ls=":", zorder=0)
     ax.axhline(0, color="#ADB5BD", lw=0.8, zorder=0)
     rung_axis(ax, reference)
@@ -162,10 +185,23 @@ def fig_probe(review: dict[str, Any], out: Path) -> None:
     ax.yaxis.set_major_formatter(PercentFormatter(decimals=0))
     figstyle.panel_title(ax, None, "Frozen-probe retention along the ladder")
     figstyle.ygrid(ax)
-    handles, labels = ax.get_legend_handles_labels()
+
+    # Two legend groups, built by hand because the series carry no labels: one
+    # entry per model would double to four with the scorer series in it, and a
+    # four-entry legend where two entries are the same colour reads as four
+    # models rather than as two models seen twice.
+    handles = [plt.Line2D([], [], color=MODEL_STYLE[m][0], marker=MODEL_STYLE[m][1],
+                          ls="-", lw=1.7, ms=4.5) for m in order]
+    labels = list(order)
+    handles += [plt.Line2D([], [], color=figstyle.NEUTRAL, ls="-", lw=1.7),
+                plt.Line2D([], [], color=figstyle.NEUTRAL, ls=(0, (1.6, 1.6)),
+                           lw=1.2)]
+    labels += ["corrected scorer", "original scorer"]
     figstyle.shared_legend(
-        fig, handles, labels, ncol=3,
-        note="Shaded bands = 2.5--97.5% retention across replicates.")
+        fig, handles, labels, ncol=2,
+        note="Shaded bands = 2.5--97.5% retention across replicates, corrected "
+             "scorer.",
+        reserve=0.24)
     save(fig, out, "fig_probe")
 
 
@@ -385,16 +421,25 @@ def main() -> int:
                     default=Path("docs/paper/review_stats.json"))
     ap.add_argument("--agreement", type=Path,
                     default=Path("docs/paper/judge_agreement.json"))
+    ap.add_argument("--probe", type=Path,
+                    default=Path("docs/paper/probe_corrected.json"))
     ap.add_argument("--out", type=Path, default=Path("docs/paper/figures"))
     args = ap.parse_args()
 
     data = json.loads(args.data.read_text(encoding="utf-8"))
     review = json.loads(args.review.read_text(encoding="utf-8"))
+    probe = json.loads(args.probe.read_text(encoding="utf-8"))
+    if not probe["protocol"]["baseline_reproduces"]:
+        raise SystemExit(
+            "probe_corrected.json says its original-scorer column does not "
+            "reproduce review_stats.json; the two series of fig_probe would "
+            "then differ by more than the label definition the legend claims. "
+            "Re-run scripts/refit_probe_corrected.py.")
     args.out.mkdir(parents=True, exist_ok=True)
     print("figures:")
     fig_artifact(review, args.out)
     fig_capability(review, args.out)
-    fig_probe(review, args.out)
+    fig_probe(probe, args.out)
     fig_degeneracy(data, args.out)
     fig_marker_sensitivity(data, args.out)
     fig_refusal_law(review, args.out)
