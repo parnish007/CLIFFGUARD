@@ -40,13 +40,10 @@ XSTEST = Path("data/eval_suites/xstest.jsonl")
 SCRIPT_FLAGS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("run_behavioural_ladder.py", (
         "--model", "--n", "--bits", "--max-new-tokens", "--seed", "--cache",
-        "--label", "--deployed", "--no-activations",
+        "--label", "--deployed", "--no-activations", "--temperature",
+        "--prompts", "--batch-size",
     )),
     ("run_sector_ladder.py", ("--model", "--n", "--bits", "--cache", "--label")),
-    # Derives the short window from the long run's own tokens, so the two
-    # budgets are compared on identical generated text instead of on two
-    # generation passes assumed to agree.
-    ("make_prefix_run.py", ("--tokens", "--compare")),
     # --no-activations: the behavioural script grew this flag after the
     # notebook was written. Without it every scheme pays for a second full
     # forward with output_hidden_states=True, at batch 8, to collect
@@ -75,6 +72,11 @@ SCRIPT_FLAGS: tuple[tuple[str, tuple[str, ...]], ...] = (
                                          "--scoring", "--schemes",
                                          "--letter-order")),
     ("analyse_letter_order.py", ("--orders", "--five-way", "--out")),
+    # Round 5. --deployed and --temperature are what make the external-validity
+    # round possible at all; --prompts is what points the labelled arm at
+    # XSTest rather than at Fold A.
+    ("analyse_deployed.py", ("--scorer", "--judge", "--out")),
+    ("make_prefix_run.py", ("--tokens", "--compare", "--label")),
 )
 
 FLAG_RE = re.compile(r'add_argument\(\s*[\'\"](?P<flag>--[^\'\"]+)[\'\"]')
