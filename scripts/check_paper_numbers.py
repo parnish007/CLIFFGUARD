@@ -282,6 +282,15 @@ CHECKS: tuple[Check, ...] = (
     Check("phrase-list peak under composite gate",
           lambda s: f"{100 * _gate_row(s, 'Qwen2.5-3B', 2.5)['marker_composite']:.1f}",
           lambda v: _rx(rf"and {v}") + r"\\?%\s+under the"),
+    # The three-way decomposition, which the abstract and the findings list got
+    # wrong: 38.4% and 0.2% are the SAME phrase list under two gates, and the
+    # judge behind the composite gate reads a third number. Writing "38.4%
+    # where the judge reports 0.2%" credits the judge with the phrase list's
+    # figure, and it survived two review passes because nothing checked the
+    # third value at all.
+    Check("judge at 2.5 bits, composite gate",
+          lambda s: f"{100 * _gate_row(s, 'Qwen2.5-3B', 2.5)['judge_composite']:.1f}",
+          lambda v: _rx(rf"composite gate reads {v}") + r"\\%"),
     Check("grader gap, phrase list at 4.5",
           lambda s: f"{100 * _gate_row(s, 'Qwen2.5-3B', 4.5)['marker_composite']:.1f}",
           lambda v: _rx(rf"the phrase list reports {v}") + r"\\?%"),
