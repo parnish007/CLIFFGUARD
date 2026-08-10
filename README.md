@@ -31,6 +31,16 @@ per rung, graded by a 7B judge behind a degeneracy gate:
 > the labelled ones — 2 rungs of 8. Rows marked † below are still the original
 > scorer's. Re-grading the rest is 12,300 judge pairs and is the single
 > cheapest thing that would improve this work.
+>
+> **Two things the corrected scorer has not been asked yet**, both because they
+> need GPU time rather than because they are hard. Single-token letters remove
+> the tokenization asymmetry and introduce a symbol preference of their own: a
+> judge that leans toward option A, whatever A says, would pass every check in
+> the scorer section. Both graders now take `--letter-order`, which permutes
+> which class is offered under which letter without changing a word of any
+> description, and `scripts/analyse_letter_order.py` compares the result. And no
+> grader here is validated against a person; `scripts/build_human_sample.py`
+> draws the blinded, stratified sheet that would change that.
 
 | | result |
 |---|---|
