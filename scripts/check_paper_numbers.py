@@ -968,6 +968,32 @@ MATRIX_CHECKS: tuple[Check, ...] = tuple(
     for model in TABLE_ORDER)
 
 
+def _stratum_share(key: dict[str, Any], name: str) -> str:
+    """One stratum's share of the population the human sample was drawn from.
+
+    Quoted in the limits section to say how rare the disagreement strata are,
+    which is the whole reason the sample is stratified rather than uniform. The
+    numbers come from the key file the draw wrote, so a re-draw over more rungs
+    moves the prose or fails this check; typing them would let the sentence
+    describe a sample nobody drew.
+    """
+    population = key["population_by_stratum"]
+    return f"{100 * population[name] / sum(population.values()):.1f}"
+
+
+HUMAN_CHECKS: tuple[Check, ...] = (
+    Check("human sample size",
+          lambda k: str(k["n"]),
+          lambda v: _rx(rf"emits a {v}-row sheet")),
+    Check("list-only share of population",
+          lambda k: _stratum_share(k, "list-only"),
+          lambda v: _rx(rf"disagree --- which are \${v}\$ and")),
+    Check("judge-only share of population",
+          lambda k: _stratum_share(k, "judge-only"),
+          lambda v: _rx(rf"and \${v}\$\\% of the population")),
+)
+
+
 REPO = Path(__file__).resolve().parents[1]
 PAPER = REPO / "docs" / "paper"
 
@@ -1052,6 +1078,11 @@ def main() -> int:
                     default=Path("docs/paper/grader_coverage.json"),
                     help="coverage-matched grader transitions; the numbers that "
                          "separate grader disagreement from coverage disagreement")
+    ap.add_argument("--human", type=Path,
+                    default=Path("docs/paper/human_sample/key.json"),
+                    help="the blinded human sample's key. Its stratum shares "
+                         "are quoted in the limitations section, so they are "
+                         "verified rather than typed.")
     ap.add_argument("--matrix", type=Path,
                     default=Path("docs/paper/matrix_stats.json"),
                     help="paired per-rung blocks; source of the degenerate "
@@ -1141,6 +1172,16 @@ def main() -> int:
                 failures.append(f"  {check.label}: expected {value!r} in "
                                 f"context /{check.pattern(value)}/")
 
+    if args.human.exists():
+        human = json.loads(args.human.read_text(encoding="utf-8"))
+        for check in HUMAN_CHECKS:
+            value = check.value(human)
+            found = re.search(check.pattern(value), text) is not None
+            print(f"{check.label:34s} {value:16s} {'ok' if found else 'MISSING'}")
+            if not found:
+                failures.append(f"  {check.label}: expected {value!r} in "
+                                f"context /{check.pattern(value)}/")
+
     # The utility figure's caption is the only place the degenerate SHARE of a
     # loss is quoted, and it comes from the paired blocks rather than from the
     # labelled summary, so it needs its own source.
@@ -1197,7 +1238,8 @@ def main() -> int:
     n_checked = (len(CHECKS) + len(DATA_CHECKS) + len(DOC_CHECKS)
                  + (len(LABELLED_CHECKS) if args.labelled.exists() else 0)
                  + (len(MATRIX_CHECKS) if args.matrix.exists() else 0)
-                 + (len(COVERAGE_CHECKS) if args.coverage.exists() else 0))
+                 + (len(COVERAGE_CHECKS) if args.coverage.exists() else 0)
+                 + (len(HUMAN_CHECKS) if args.human.exists() else 0))
     print(f"\nall {n_checked} "
           f"quoted quantities match {args.stats} in context, and "
           f"{len(UNIQUE_CHECKS)} of them are stated consistently everywhere "
