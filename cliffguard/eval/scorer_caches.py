@@ -34,7 +34,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 # Kept in step with scripts/classify_completions_judge.py. A drift between the
 # two would make this resolver quietly stop matching anything, so the test
@@ -68,8 +68,8 @@ def fingerprint(identity: dict[str, Any]) -> str:
         json.dumps(identity, sort_keys=True).encode("utf-8")).hexdigest()[:16]
 
 
-def _templates() -> tuple[str, str]:
-    """The two prompt templates, imported from the grader itself.
+def _judge_module():
+    """The three-way grader, imported from its own file.
 
     Loaded by path rather than by package import because scripts/ is not a
     package. Copying the template text here instead would create exactly the
@@ -83,7 +83,21 @@ def _templates() -> tuple[str, str]:
         raise RuntimeError(f"cannot load grader templates from {path}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.JUDGE_TEMPLATE, module.LETTER_TEMPLATE
+    return module
+
+
+def _templates(letter_order: Sequence[str] | None = None) -> tuple[str, str]:
+    """The two prompt templates. `letter_order` permutes the multiple-choice one.
+
+    Passing an order here is how a grading made under a permuted assignment is
+    located: the order changes the template, the template changes the
+    fingerprint, and the fingerprint is the filename. Without it such a file is
+    simply unresolvable, which is safe but not useful.
+    """
+    module = _judge_module()
+    letters = (module.letter_template(letter_order) if letter_order
+               else module.LETTER_TEMPLATE)
+    return module.JUDGE_TEMPLATE, letters
 
 
 def present_fingerprints(run: Path) -> dict[str, set[str]]:
@@ -107,14 +121,19 @@ def present_fingerprints(run: Path) -> dict[str, set[str]]:
 
 
 def resolve(run: Path, judge: str | None = None, four_bit: bool = True,
-            completion_chars: int | None = None) -> dict[str, str]:
+            completion_chars: int | None = None,
+            letter_order: Sequence[str] | None = None) -> dict[str, str]:
     """Map scorer mode -> fingerprint, for the modes actually present.
 
     `completion_chars` is included in the hash only when the window bound; the
     caller passes it when it did. Both possibilities are tried, so a run graded
     under a binding window still resolves.
+
+    `letter_order` selects WHICH letter grading is being looked for. The
+    default is the published assignment; an option-order replicate is found by
+    passing its own order, and the two never resolve to the same digest.
     """
-    judge_template, letter_template = _templates()
+    judge_template, letter_template = _templates(letter_order)
     manifest_path = run / "manifest.json"
     if not manifest_path.is_file():
         return {}
@@ -218,7 +237,8 @@ def taxonomy_content_hash(prompts: list[str],
 
 def resolve_taxonomy(run: Path, judge: str | None = None, four_bit: bool = True,
                      completion_chars: int = 2000, max_length: int = 2560,
-                     batch_size: int = 4) -> dict[str, str]:
+                     batch_size: int = 4,
+                     letter_order: Sequence[str] | None = None) -> dict[str, str]:
     """Map 'letter'/'first-token' -> taxonomy fingerprint, by recomputation.
 
     A run may also carry a legacy cache written before the fingerprint gained
@@ -240,7 +260,9 @@ def resolve_taxonomy(run: Path, judge: str | None = None, four_bit: bool = True,
         return {}
 
     found: dict[str, str] = {}
-    for scoring, template in (("letter", module.LETTER_TEMPLATE),
+    letters = (module.letter_template(letter_order) if letter_order
+               else module.LETTER_TEMPLATE)
+    for scoring, template in (("letter", letters),
                               ("first-token", module.TAXONOMY_TEMPLATE)):
         # A grading covers some subset of schemes; the hash is over exactly
         # that subset, so each candidate subset is tried rather than assuming
