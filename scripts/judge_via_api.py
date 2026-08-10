@@ -246,34 +246,64 @@ def main() -> int:
         prompts = prompts.get("prompts", prompts) if isinstance(prompts, dict) \
             else prompts
 
-        for scheme in args.schemes:
-            if scheme not in run["completions"]:
-                continue
-            out_file = run_dir / "results" / f"judge_api_{tag}_{scheme}.json"
-            verdicts: dict[str, str] = {}
-            if out_file.exists():
-                verdicts = json.loads(out_file.read_text(encoding="utf-8"))
+        # Prompt-major, not scheme-major. The order matters more than it looks.
+        #
+        # Every claim this sweep can support is PAIRED: a prompt the baseline
+        # declined and the rung answered, or the reverse. A prompt graded at one
+        # scheme and not the other contributes nothing. Grading scheme by scheme
+        # means a sweep that dies -- on quota, on a rate limit, on a session
+        # ending -- has spent its entire budget on one side of every pair.
+        #
+        # That is not hypothetical. It is what the published external sweeps
+        # look like: one grader returned 482 full-precision verdicts against 26
+        # at the rung, so 508 calls bought a comparison on 26 prompts. Another
+        # bought 5. Interleaving makes any prefix of the sweep a complete
+        # paired sample of the prompts it reached, so an interrupted sweep is a
+        # smaller experiment rather than a broken one.
+        schemes = [s for s in args.schemes if s in run["completions"]]
+        if not schemes:
+            continue
+        files = {s: run_dir / "results" / f"judge_api_{tag}_{s}.json"
+                 for s in schemes}
+        verdicts: dict[str, dict[str, str]] = {
+            s: (json.loads(p.read_text(encoding="utf-8")) if p.exists() else {})
+            for s, p in files.items()}
 
-            todo = [i for i in gradable_indices(run, scheme)
-                    if str(i) not in verdicts]
-            if args.limit:
-                todo = todo[: args.limit]
-            print(f"[{model} {scheme}] {len(verdicts)} cached, {len(todo)} to grade",
-                  flush=True)
+        # A prompt the gate rejects at either end cannot be paired at all, so
+        # spending a call on its other end buys nothing either.
+        gradable = set.intersection(
+            *(set(gradable_indices(run, s)) for s in schemes))
+        todo = [i for i in sorted(gradable)
+                if any(str(i) not in verdicts[s] for s in schemes)]
+        if args.limit:
+            todo = todo[: args.limit]
+        cached = min(len(verdicts[s]) for s in schemes)
+        print(f"[{model}] {len(schemes)} schemes, {cached} prompts fully "
+              f"cached, {len(todo)} to grade", flush=True)
 
-            for n, i in enumerate(todo, 1):
+        def flush() -> None:
+            for scheme in schemes:
+                files[scheme].write_text(
+                    json.dumps(verdicts[scheme], sort_keys=True),
+                    encoding="utf-8")
+
+        for n, i in enumerate(todo, 1):
+            for scheme in schemes:
+                if str(i) in verdicts[scheme]:
+                    continue
                 prompt = JUDGE_TEMPLATE.format(
                     prompt=prompts[i][:600],
                     completion=run["completions"][scheme][i][:600] or "(empty)")
-                verdicts[str(i)] = call(provider, key, prompt)
+                verdicts[scheme][str(i)] = call(provider, key, prompt)
                 total_calls += 1
                 time.sleep(provider.min_interval)
-                if n % 25 == 0 or n == len(todo):
-                    out_file.write_text(json.dumps(verdicts, sort_keys=True),
-                                        encoding="utf-8")
-                    print(f"   {n}/{len(todo)}", flush=True)
-            out_file.write_text(json.dumps(verdicts, sort_keys=True),
-                                encoding="utf-8")
+            # Every prompt, not every 25. A crash between writes loses a whole
+            # batch, and losing it asymmetrically is the failure this ordering
+            # exists to prevent; the cost is one small write per prompt against
+            # several seconds of rate-limited waiting.
+            flush()
+            if n % 25 == 0 or n == len(todo):
+                print(f"   {n}/{len(todo)} prompts", flush=True)
 
     print(f"\n{total_calls} API calls. Verdicts written beside the 7B judge's.")
     print("Next: python scripts/compare_judges.py")
