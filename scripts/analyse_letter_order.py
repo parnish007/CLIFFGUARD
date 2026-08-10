@@ -58,7 +58,7 @@ def _load(path: Path) -> list[str]:
 
 
 def gradings(run: Path, order: Sequence[str] | None, judge: str,
-             five_way: bool) -> dict[str, list[str]]:
+             five_way: bool, batch_size: int = 4) -> dict[str, list[str]]:
     """Per-scheme verdicts for one letter assignment, or {} if not graded.
 
     Resolution is by recomputed fingerprint rather than by filename pattern, so
@@ -67,8 +67,12 @@ def gradings(run: Path, order: Sequence[str] | None, judge: str,
     returns nothing instead of quietly matching the canonical grading.
     """
     if five_way:
+        # The batch size is part of the taxonomy fingerprint, so passing the
+        # wrong one reports "not graded" for a grading that is on disk. It has
+        # to match what the grader was run with, not what is convenient here.
         found = scorer_caches.resolve_taxonomy(run, judge=judge,
-                                               letter_order=order)
+                                               letter_order=order,
+                                               batch_size=batch_size)
         digest, prefix = found.get("letter"), "taxonomy"
     else:
         found = scorer_caches.resolve(run, judge=judge, completion_chars=600,
@@ -122,6 +126,11 @@ def main() -> int:
                          "for several. Without any, the canonical grading is "
                          "listed and nothing is compared.")
     ap.add_argument("--judge", default="Qwen/Qwen2.5-7B-Instruct")
+    ap.add_argument("--batch-size", type=int, default=4,
+                    help="the batch size the grading was RUN with. Part of the "
+                         "five-way cache fingerprint, so a mismatch reports a "
+                         "grading that exists as missing. Round 3 and round 4 "
+                         "both use 4.")
     ap.add_argument("--five-way", action="store_true",
                     help="read the taxonomy grader's caches rather than the "
                          "three-way judge's.")
@@ -140,18 +149,21 @@ def main() -> int:
 
     report: dict[str, Any] = {"judge": args.judge,
                               "five_way": bool(args.five_way),
+                              "batch_size": args.batch_size,
                               "labels": list(labels),
                               "canonical_order": list(labels),
                               "runs": {}}
     worst = 1.0
     for run in args.runs:
-        canonical = gradings(run, None, args.judge, args.five_way)
+        canonical = gradings(run, None, args.judge, args.five_way,
+                             args.batch_size)
         if not canonical:
             print(f"{run.name}: no canonical letter grading; skipping")
             continue
         block: dict[str, Any] = {"schemes": sorted(canonical), "orders": {}}
         for order in orders:
-            permuted = gradings(run, order, args.judge, args.five_way)
+            permuted = gradings(run, order, args.judge, args.five_way,
+                                args.batch_size)
             shared = sorted(set(canonical) & set(permuted))
             if not shared:
                 print(f"{run.name}: {','.join(order)} not graded")
