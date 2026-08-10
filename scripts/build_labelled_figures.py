@@ -211,9 +211,13 @@ def fig_truncation(data: dict[str, Any], out: Path) -> None:
     ax1.set_ylim(0, 105)
     ax2.set_ylim(0, 30)
     handles, labels = ax1.get_legend_handles_labels()
+    # The dagger belongs to the right panel only. The left one counts tokens
+    # under each model's own tokenizer and never consults a grader, so marking
+    # it as original-scorer would claim a dependence it does not have.
     figstyle.shared_legend(fig, handles, labels, ncol=3,
                            note="Lines show the three model families. "
-                                f"{LADDER_SCORER}")
+                                "Panel (b) † original label scorer at every "
+                                "rung; panel (a) needs no grader.")
     save(fig, out, "fig_labelled_truncation")
 
 

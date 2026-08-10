@@ -87,6 +87,18 @@ def _gate_row(stats: dict[str, Any], model: str, bits: float) -> dict[str, Any]:
     return next(r for r in stats["gate_by_grader"][model] if r["bits"] == bits)
 
 
+def _corrected_rate(stats: dict[str, Any], model: str) -> float:
+    """Transitions toward compliance at 4.5 bits, over 500, corrected scorer.
+
+    The counterpart of `_gate_row(...)["judge_composite"]`, which is the same
+    quantity under the original scorer. Both are quoted in the manuscript, in
+    the same sentence, because correcting the instrument widened the gap the
+    section is about instead of closing it -- so both need checking.
+    """
+    return stats["round3"]["scorer_sensitivity"]["models"][model]["tables"][
+        "letter"]["unsafe_rate"]
+
+
 def _fmt(value: float, decimals: int = 3) -> str:
     return f"{value:.{decimals}f}"
 
@@ -273,13 +285,28 @@ CHECKS: tuple[Check, ...] = (
     Check("grader gap, phrase list at 4.5",
           lambda s: f"{100 * _gate_row(s, 'Qwen2.5-3B', 4.5)['marker_composite']:.1f}",
           lambda v: _rx(rf"the phrase list reports {v}") + r"\\?%"),
-    Check("grader gap, judge at 4.5",
-          lambda s: f"{100 * _gate_row(s, 'Qwen2.5-3B', 4.5)['judge_composite']:.1f}",
+    # The judge's 4.5-bit rate is one of the two rungs the corrected scorer
+    # covers, so the gap between the two estimators there is computed from the
+    # corrected rate. `_corrected_rate` reads round3_stats.json; the original
+    # scorer's value is checked separately, because the prose quotes both to
+    # show that correcting the instrument WIDENED the gap.
+    Check("grader gap, judge at 4.5, corrected",
+          lambda s: f"{100 * _corrected_rate(s, 'Qwen2.5-3B'):.1f}",
           lambda v: _rx(rf"against the judge's {v}") + r"\\?%"),
-    Check("grader ratio at 4.5 bits",
+    Check("grader gap, judge at 4.5, original",
+          lambda s: f"{100 * _gate_row(s, 'Qwen2.5-3B', 4.5)['judge_composite']:.1f}",
+          lambda v: _rx(rf"the judge read {v}") + r"\\?%"),
+    Check("grader ratio at 4.5 bits, corrected",
+          lambda s: _fmt(_gate_row(s, "Qwen2.5-3B", 4.5)["marker_composite"]
+                         / _corrected_rate(s, "Qwen2.5-3B"), 1),
+          lambda v: _rx(rf"a factor\s+of {v}")),
+    Check("grader ratio at 4.5 bits, original",
           lambda s: _fmt(_gate_row(s, "Qwen2.5-3B", 4.5)["marker_composite"]
                          / _gate_row(s, "Qwen2.5-3B", 4.5)["judge_composite"], 1),
-          lambda v: _rx(rf"a factor\s+of {v}")),
+          lambda v: _rx(rf"the factor was {v}")),
+    Check("corrected 4.5-bit rate, Phi",
+          lambda s: f"{100 * _corrected_rate(s, 'Phi-3.5-mini'):.1f}",
+          lambda v: _rx(rf"\$20/500 = {v}") + r"\\?%\$"),
     # ---- what the refusal class contains ---------------------------------
     Check("audit: new refusals",
           lambda s: str(s["refusal_class_audit"]["Qwen2.5-3B"]["n_new_refusals"]),
@@ -897,7 +924,8 @@ PAPER = REPO / "docs" / "paper"
 
 def load_stats(stats_path: Path | None = None,
                agreement_path: Path | None = None,
-               probe_path: Path | None = None) -> dict[str, Any]:
+               probe_path: Path | None = None,
+               round3_path: Path | None = None) -> dict[str, Any]:
     """review_stats.json with the corrected probe refit spliced over it.
 
     A function rather than four lines in `main`, because the test suite runs
@@ -909,6 +937,7 @@ def load_stats(stats_path: Path | None = None,
     stats_path = stats_path or PAPER / "review_stats.json"
     agreement_path = agreement_path or PAPER / "judge_agreement.json"
     probe_path = probe_path or PAPER / "probe_corrected.json"
+    round3_path = round3_path or PAPER / "round3_stats.json"
 
     stats = json.loads(stats_path.read_text(encoding="utf-8"))
     # Folded in so the uniqueness checks read one object. The agreement range is
@@ -932,6 +961,11 @@ def load_stats(stats_path: Path | None = None,
                 "comparable. Re-run scripts/refit_probe_corrected.py.")
         stats["probe_original"] = probe["scorers"]["first-token-legacy"]
         stats["probe"] = probe["scorers"]["letter"]
+
+    # Round 3's own file, for the corrected-scorer quantities the manuscript
+    # quotes beside original-scorer ones in the same sentence.
+    if round3_path.exists():
+        stats["round3"] = json.loads(round3_path.read_text(encoding="utf-8"))
     return stats
 
 
