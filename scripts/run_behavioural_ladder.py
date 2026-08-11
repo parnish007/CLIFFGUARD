@@ -793,8 +793,13 @@ def main() -> int:  # noqa: C901 - linear experiment script
 
     # ---- degeneracy scoring, all schemes under ONE reference model -------
     print("\n=== scoring every completion under the FP16 reference ===")
+    # Same key as the completions it scores, batch size included.
+    # These vectors ARE per-text: the gate reads them, and reusing a
+    # batch-8 vector for batch-16 text gates one run on a measurement
+    # of another. The batch-isolation step generates exactly that
+    # pair, so the two would have shared this file.
     nll_cache = (args.cache /
-                 f"nll_n{len(prompts)}_t{args.max_new_tokens}{corpus_key}{decode_key}.json")
+                 f"nll_n{len(prompts)}_t{args.max_new_tokens}{corpus_key}{decode_key}{batch_key}.json")
     nll: dict[str, FloatArray] = {}
     cached: dict[str, FloatArray] = {}
     raw_nll = read_json_cache(nll_cache)
