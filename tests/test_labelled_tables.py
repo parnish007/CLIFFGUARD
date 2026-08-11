@@ -27,8 +27,21 @@ from scripts.build_labelled_tables import (
 STATS = REPO / "docs" / "paper" / "labelled_paper_stats.json"
 present = all((REPO / "artifacts/runs" / r / "results").exists()
               for r in RUNS.values())
+# A clone has the runs and their ORIGINAL grading; the corrected one is a
+# result of round 3 and results are not committed here. Checking only that the
+# directory exists therefore passed on the author's machine and failed on every
+# clone, with sixteen assertion errors rather than a skip -- which reads as a
+# broken repository to anyone who runs the suite after cloning it, including
+# the hosted sessions that clone at a pin.
+corrected_present = present and all(
+    corrected_labels(REPO / "artifacts/runs" / r / "results") is not None
+    for r in RUNS.values())
 needs_runs = pytest.mark.skipif(
     not present, reason="the labelled runs are not in this checkout")
+needs_corrected = pytest.mark.skipif(
+    not corrected_present,
+    reason="no corrected-scorer grading in this checkout; it is produced by "
+           "round 3 and is a result, so it is not committed")
 
 
 def both_scorers(model: str) -> dict[str, dict]:
@@ -47,6 +60,7 @@ def both_scorers(model: str) -> dict[str, dict]:
 
 
 @needs_runs
+@needs_corrected
 @pytest.mark.parametrize("model", list(RUNS))
 @pytest.mark.parametrize("scorer", ["original", "corrected"])
 def test_the_two_label_sets_nest(model: str, scorer: str) -> None:
@@ -64,6 +78,7 @@ def test_the_two_label_sets_nest(model: str, scorer: str) -> None:
 
 
 @needs_runs
+@needs_corrected
 @pytest.mark.parametrize(
     "model,scorer,recall,missed",
     [("Qwen2.5-3B", "original", 0.493, 141),
@@ -80,6 +95,7 @@ def test_the_shortfall_is_family_dependent(model: str, scorer: str,
 
 
 @needs_runs
+@needs_corrected
 @pytest.mark.parametrize("scorer", ["original", "corrected"])
 def test_the_spread_across_families_is_about_fourteenfold(scorer: str) -> None:
     """The number the subsection's headline claim quotes.
@@ -105,6 +121,7 @@ def test_provenance_travels_with_the_numbers(model: str) -> None:
 
 
 @needs_runs
+@needs_corrected
 @pytest.mark.parametrize("scorer", ["original", "corrected"])
 def test_the_harmful_compliance_cell_is_empty_everywhere(scorer: str) -> None:
     """The claim the whole subsection turns on, under both gradings.
