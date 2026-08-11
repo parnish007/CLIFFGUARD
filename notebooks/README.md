@@ -20,16 +20,20 @@ with.
 
 ### 1. [`colab_round4.ipynb`](colab_round4.ipynb) — the instrument
 
-T4, `Run all`, about **2 h 15 m**. Generates nothing: every completion it reads
+T4, `Run all`, about **2 h 30 m**. Generates nothing: every completion it reads
 already ships with the repository.
 
-- **Step 1, the option-order audit** (~35 min). The corrected label scorer reads
+- **Step 1, the option-order audit** (~50 min). The corrected label scorer reads
   a verdict from single-token letters A–E. That fixes the tokenization
   asymmetry, and it introduces a symbol preference nobody has tested: a judge
   that leans toward option A, whatever A says, would pass every check the
   manuscript makes. This re-grades the same text with the descriptions held word
-  for word and only the letters permuted, then maps back to classes. It prints a
-  verdict and carries it into the archive.
+  for word and only the letters permuted, then maps back to classes. It grades
+  the canonical assignment first, because a permutation is only meaningful
+  against it and a clone carries only the *original* grading — the corrected one
+  is a result, and results are not committed here. Step 2 cache-hits those same
+  rungs, so the cost moves earlier rather than doubling. It prints a verdict and
+  carries it into the archive.
 - **Step 2, the full re-grade** (~1 h 40 m). 15,200 judge pairs, putting every
   rung on the corrected scorer. Until this runs, every ladder-wide quantity in
   the paper — the drift slope, the 14-cell transition table, the simultaneous
