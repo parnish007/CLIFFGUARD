@@ -142,7 +142,13 @@ def load_verdicts(run: Path, judge: str, scorer: str = "letter"
     must be given to read the same grading: for the taxonomy arm that is the
     collapsed three-way view's fingerprint, since `load_run` reads `judge_*`.
     """
-    found = scorer_caches.resolve(run, judge=judge, completion_chars=600)
+    # 2000, not 600: the window the GRADERS are run with. It is part of
+    # the fingerprint only when it actually truncates something, so with today's
+    # stored completions (longest 465 characters) any value at or above that is
+    # equivalent -- but a 256-token run reaches ~1300 characters, and then 600
+    # and 2000 are different gradings. Passing what the grader was invoked with
+    # keeps this correct when that happens rather than when someone notices.
+    found = scorer_caches.resolve(run, judge=judge, completion_chars=2000)
     digest = found.get(scorer)
     if digest:
         return ({scheme: json.loads(path.read_text(encoding="utf-8"))

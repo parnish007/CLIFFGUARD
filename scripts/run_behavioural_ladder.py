@@ -615,9 +615,6 @@ def main() -> int:  # noqa: C901 - linear experiment script
     token_ids: dict[str, list[list[int]]] = {}
 
     def run_scheme(name: str, loader: Any) -> None:
-        cache_text = (args.cache /
-                      f"completions_{name}_n{len(prompts)}_t{args.max_new_tokens}"
-                      f"{corpus_key}{decode_key}.json")
         # The batch size is in the key because the result depends on it. Padded
         # positions are masked and never read, so the batching is exact in
         # logic -- verified bit-identical against the one-at-a-time version at
@@ -625,6 +622,24 @@ def main() -> int:  # noqa: C901 - linear experiment script
         # batch sizes give vectors that agree to a cosine of 0.999997 and not
         # further. That is far below any effect measured here and still not
         # something to blend inside one run without saying so.
+        #
+        # It was in the ACTIVATIONS key only, while this comment sat above it
+        # claiming otherwise, and the completions key -- the one that decides
+        # whether text is regenerated -- had no batch component at all. Two runs
+        # of the same prompts at different batch sizes therefore shared one
+        # cache entry and were identical by construction. That is not a
+        # theoretical concern: it is exactly the comparison the batch-isolation
+        # experiment makes, so the experiment would have reported 0.0%
+        # divergence and concluded that batch size does not explain the greedy
+        # nondeterminism this project measured at 9--12%.
+        #
+        # Adding it orphans entries written under the old key. Accepted: the
+        # entries that stop being reused are precisely the ones whose reuse was
+        # the defect, and nothing that only grades stored text is affected.
+        batch_key = f"_b{args.batch_size}"
+        cache_text = (args.cache /
+                      f"completions_{name}_n{len(prompts)}_t{args.max_new_tokens}"
+                      f"{corpus_key}{decode_key}{batch_key}.json")
         cache_acts = (args.cache /
                       f"acts_{name}_L{args.layer}_n{len(prompts)}"
                       f"{corpus_key}_b{args.act_batch_size}.npy")

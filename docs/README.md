@@ -14,6 +14,8 @@
 | [`methodology.md`](methodology.md) | **The single reference.** What is measured and why, the protocol constants, decisions we reversed (so they are not re-litigated), invariants, and debugging by symptom. |
 | [`claims_and_evidence.md`](claims_and_evidence.md) | Every claim, its evidence, and — as importantly — the claims that are **not** made. Start here if you want to know what this project asserts. |
 | [`data_provenance.md`](data_provenance.md) | Which run produced which number, across three experiments run months apart. Read before comparing any two figures — the rounds differ in corpus, grader, class count and bit labelling, and each difference moves numbers. |
+| [`round3_runbook.md`](round3_runbook.md) | The operator's page for a hosted round: where every input comes from, what to check before starting, what to do with the archive. Written for round 3; the same shape applies to rounds 4 and 5. |
+| [`preregistration_round5.md`](preregistration_round5.md) | The round-5 protocol, **frozen before the round was run**. Two confirmatory hypotheses with thresholds a null result can fail, two exploratory ones labelled as such, and the measurement decisions inherited unchanged from earlier rounds. `scripts/analyse_deployed.py` scores it by arithmetic. |
 | [`setup.md`](setup.md) | Which setup guide you want, and how to re-analyse stored runs with no GPU. |
 | [`setup_local_gpu.md`](setup_local_gpu.md) | What actually stops a local run, measured: host RAM, not VRAM. Includes the working torch/transformers pin. |
 | [`setup_colab.md`](setup_colab.md) | Hosted T4, for the 3B/3.8B models and the 7B judge, which do not fit 6 GB. |

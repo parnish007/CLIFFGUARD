@@ -337,6 +337,12 @@ answer, in file order.
 | `scripts/reanalyse_runs.py` | Re-label stored completions with the composite gate |
 | `scripts/review_reanalysis.py` | All inferential statistics for the ladder |
 | `scripts/analyse_round2.py` | Paired tests for the round-2 arms: 1.5B regrade, 256-token budget, AWQ/GPTQ, GSM8K at 496 |
+| `scripts/analyse_round3.py` | The scorer correction, the paired cross-budget test, and greedy reproducibility |
+| `scripts/analyse_letter_order.py` | Whether the corrected scorer's answer depends on which letter carries which class |
+| `scripts/analyse_deployed.py` | Scores the frozen round-5 protocol: CONFIRMED or REFUTED by arithmetic, not by prose |
+| `scripts/build_human_sample.py` | The two blinded annotation sheets — what a response *did*, and whether it provided harm |
+| `scripts/refit_probe_corrected.py` | Refits the frozen probe on the corrected scorer's labels, on the published estimator |
+| `scripts/preflight_round2.py` | CPU-only self-test of every entry point and flag a hosted round will use |
 | `scripts/download_eval_suites.py` | Assembles prompt corpora carrying per-prompt harmfulness labels |
 | `scripts/analyse_labelled.py` | Separates a safety regression from an over-refusal, which needs those labels |
 | `scripts/classify_completion_taxonomy.py` | The second axis: five completion classes, so `refusal` stops hiding deflection and capability disclaimer |
@@ -346,9 +352,10 @@ answer, in file order.
 | `scripts/build_paper_*.py` | Data, figure and table generation |
 | `scripts/check_paper_numbers.py` | Asserts the paper's prose numbers match the measurements |
 | `cliffguard/eval/` | Measurement library: discriminability, isotropy, noise floor, storage |
-| `notebooks/colab_run.ipynb` | Hosted-GPU runner (reduced replication by default) |
-| `notebooks/colab_round2.ipynb` | Round-2 hosted-GPU runner: Drive-backed caches, resumable steps |
-| `notebooks/colab_labelled.ipynb` | Both annotation axes, on the labelled suites; journal-backed resume |
+| `notebooks/colab_round4.ipynb` | **Next to run.** Audits the corrected scorer for option-order bias, then re-grades every rung with it |
+| `notebooks/colab_round5.ipynb` | **Next to run.** Deployed quantizers, the window at the quantized rung, batch isolation, sampled decoding, 7B — against a frozen protocol |
+| `notebooks/README.md` | What each notebook is for, what ran, and what is waiting |
+| `docs/preregistration_round5.md` | Round 5's protocol, fixed before the round was run |
 | `tests/` | pytest suite |
 | `artifacts/runs/` | Immutable run directories (gitignored) |
 
@@ -359,10 +366,10 @@ are kept locally and excluded from the published tree rather than deleted.
 
 ## Status
 
-![Tests](https://img.shields.io/badge/tests-1550_passing-brightgreen?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-1589_passing-brightgreen?style=flat-square)
 ![mypy](https://img.shields.io/badge/mypy-strict-brightgreen?style=flat-square)
 ![ruff](https://img.shields.io/badge/ruff-clean-orange?style=flat-square)
-![Paper](https://img.shields.io/badge/paper-51pp,_zero_overfull-blue?style=flat-square)
+![Paper](https://img.shields.io/badge/paper-53pp,_zero_overfull-blue?style=flat-square)
 
 ## What this does not establish
 
@@ -372,11 +379,21 @@ observation of harmful content — the paper says "refusal-to-compliance
 transition" and never "harmful compliance".
 
 The judge is unvalidated against blinded human labels and is itself quantized to
-4-bit; that validation is the single largest piece of work this still needs.
+4-bit; that validation is the single largest piece of work this still needs, and
+the sheets that would do it are drawn and unlabelled
+(`scripts/build_human_sample.py`). Until they are labelled this project
+demonstrates instrument *disagreement*, not instrument *accuracy*.
+
+The corrected label scorer carries an untested assumption of its own: it reads a
+verdict from single-token letters A–E, and nothing here establishes that the
+judge is indifferent to which class is offered under which letter. Round 4's
+first step measures exactly that, and has not been run.
+
 Completions are greedy and 48 tokens, which favours observing refusal intact.
-One quantizer family (RTN), one reasoning benchmark, English prompts, three
-models — two of them in the refusal arm. Nothing here establishes behaviour under
-AWQ, GPTQ, or GGUF k-quants.
+One quantizer family (RTN), one reasoning benchmark, English prompts, four
+models — two of them in the refusal arm, and the corrected scorer leaves the
+4.5-bit shift standing on one. Nothing here establishes behaviour under AWQ,
+GPTQ, or GGUF k-quants; round 5 is the run that would.
 
 ## Citation
 

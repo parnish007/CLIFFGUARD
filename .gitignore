@@ -83,13 +83,31 @@ external_data/
 # Matched on the shared prefix now, so a new archive name is covered in advance.
 notebooks/cliffguard_*/
 notebooks/cliffguard_*.zip
-notebooks/colab_alreadyrun.ipynb
+# INCOMPLETE_ is the prefix every round prepends when a step failed or never
+# ran. Those archives are results too, and the failed ones are the ones most
+# worth not publishing by accident -- a reader who finds one in the repository
+# cannot tell a step that produced nothing from a step that found nothing.
+notebooks/INCOMPLETE_*.zip
 
 # Executed notebooks. A notebook that has been run carries its outputs, which
 # are results; the committed copies are clean templates. `colab_run_EXECUTED`
 # predates this rule and stays tracked rather than being removed from history.
-notebooks/*-ranned.ipynb
-notebooks/*-executed.ipynb
+#
+# Matched on the SHAPE of the name rather than on the names seen so far. The
+# earlier version listed `colab_alreadyrun.ipynb`, `*-ranned` and `*-executed`,
+# and then `colab_round3-alreadyrun.ipynb` arrived and matched none of them --
+# the same failure the archive patterns above already record. Anything carrying
+# a run marker is covered now, whatever separator or spelling it uses.
+notebooks/*ranned*.ipynb
+notebooks/*executed*.ipynb
+notebooks/*alreadyrun*.ipynb
+notebooks/*EXECUTED*.ipynb
+!notebooks/colab_run_EXECUTED.ipynb
+
+# Browser duplicate downloads: "foo (1).ipynb", "foo (2).ipynb". Never
+# deliberate, and one of them sitting beside the real file is an invitation to
+# edit the wrong copy.
+notebooks/* (*).ipynb
 
 # ---------------------------------------------------------------------------
 # Notebook noise

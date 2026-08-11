@@ -1,69 +1,123 @@
 # notebooks/
 
-## Run this one
+Every notebook here shells out to `scripts/`. None of them contains measurement
+logic, so there is no second implementation to drift out of sync with the
+repository — a failure this project has already paid for once, when a notebook
+and the modules it called diverged silently and the notebook could not have
+produced a result on any clone.
 
-**[`colab_run.ipynb`](colab_run.ipynb)** — the only notebook you need.
-
-1. Open in Colab.
-2. `Runtime → Change runtime type → T4 GPU`.
-3. `Runtime → Run all`.
-4. When it finishes, a zip downloads. Unzip it at the repository root.
-
-Nothing else is required. No HuggingFace token, no editing, no manual paths.
-Every model and dataset it touches is public. Expect 60–90 minutes on a T4.
-
-> **This is a reduced replication, not the paper's configuration.** Its defaults
-> are 200 behavioural prompts, 150 GSM8K questions and five rungs
-> (8, 5, 4, 3, 2 code bits). The paper reports 500 prompts, 200 questions and
-> seven rungs (8–2). Raise `N_PROMPTS`, `N_GSM8K` and `BITS` in the config cell
-> to match the paper; that costs roughly 2.5 hours on a T4 rather than 60–90
-> minutes. The reduced defaults exist so a first run finishes inside one Colab
-> session, not because the paper's numbers came from them.
-Each stage checkpoints, so a disconnect costs at most one stage — reconnect and
-`Run all` again.
-
-The first thing it does after installing dependencies is a **preflight**: a
-CPU-only self-test of every module and entry point the run will use. If that
-prints `PREFLIGHT OK`, nothing downstream can fail on an import or signature
-mismatch. If it fails, stop and report it rather than letting an hour of GPU time
-produce nothing.
+Each is pinned to a specific commit (`REPO_COMMIT`), so a session runs the code
+the notebook was verified against rather than whatever `main` happens to be that
+morning.
 
 ---
 
-## Why a hosted GPU at all
+## What to run now
 
-The full measurement pipeline runs on a 6 GB laptop card. Three things do not,
-and they are the entire contents of the notebook.
+Two rounds are built, verified, and waiting on GPU time. **Run them in order** —
+round 4 audits and repairs the instrument that round 5's measurements are read
+with.
 
-| Arm | What it adds | Why not local |
+### 1. [`colab_round4.ipynb`](colab_round4.ipynb) — the instrument
+
+T4, `Run all`, about **2 h 15 m**. Generates nothing: every completion it reads
+already ships with the repository.
+
+- **Step 1, the option-order audit** (~35 min). The corrected label scorer reads
+  a verdict from single-token letters A–E. That fixes the tokenization
+  asymmetry, and it introduces a symbol preference nobody has tested: a judge
+  that leans toward option A, whatever A says, would pass every check the
+  manuscript makes. This re-grades the same text with the descriptions held word
+  for word and only the letters permuted, then maps back to classes. It prints a
+  verdict and carries it into the archive.
+- **Step 2, the full re-grade** (~1 h 40 m). 15,200 judge pairs, putting every
+  rung on the corrected scorer. Until this runs, every ladder-wide quantity in
+  the paper — the drift slope, the 14-cell transition table, the simultaneous
+  bound, all 21 labelled cells — is marked with a dagger and belongs to an
+  instrument the paper itself shows was defective.
+
+The audit runs **first, deliberately**: step 2 spends an hour and forty minutes
+measuring with the scorer step 1 interrogates. It does not block — a ladder
+graded under one fixed assignment is a coherent measurement whatever the audit
+says. What the audit changes is what may be claimed about it.
+
+### 2. [`colab_round5.ipynb`](colab_round5.ipynb) — external validity
+
+T4 (an L4 or A100 unlocks one extra step), `Run all`, about **3 h 30 m** across
+five independently resumable steps, in descending order of how much they matter.
+Run against a protocol frozen in advance:
+[`docs/preregistration_round5.md`](../docs/preregistration_round5.md).
+
+| step | question | ~time |
 |---|---|---|
-| **A** | a **7 B judge** re-grading saved completions | this is the project's missing instrument — see below |
-| **B** | `Qwen/Qwen2.5-3B-Instruct` | 6.2 GB fp16 against 5.7 GB free locally |
-| **C** | `microsoft/Phi-3.5-mini-instruct` | 7.6 GB fp16 |
+| 1 | Does the estimator gap survive a quantizer people deploy? AWQ and GPTQ-Int4 | 30 m |
+| 2 | Is the 48-token window an artifact at the quantized rung, not only at FP16? | 55 m |
+| 3 | Is greedy nondeterminism a batch-size effect? One model, one corpus, two batch sizes | 12 m |
+| 4 | Do the transition counts hold under sampled decoding across seeds? | 55 m |
+| 5 | Does any of it hold at 7B? Skips itself, loudly, on a runtime that cannot hold an fp16 baseline | 60 m |
 
-**Arm A is the one that matters.** A refusal measurement is only as good as its
-grader, and two cheap graders are demonstrably unusable here:
+The preregistration states two confirmatory hypotheses with thresholds a null
+result can fail, and two exploratory ones that are labelled as such and may not
+be reported as replications. `scripts/analyse_deployed.py` scores them as
+CONFIRMED or REFUTED by arithmetic, so the comparison between prediction and
+outcome is not made by whoever writes the manuscript afterwards. The notebook
+prints the protocol's SHA-256, refuses to run if the working copy differs from
+the committed one, and stores the hash in the archive.
 
-- a refusal **phrase list** — the reported flip rate moves by up to 1.64x with
-  the choice of strings alone, and is not even monotone in that choice;
-- a 1.5 B **self-judge** — saturates at 100 % REFUSE, including on plainly
-  helpful answers.
+Steps 4 and 5 are the ones to drop if time runs short.
 
-A 7 B judge is the smallest instrument with a plausible chance of doing better.
-It is loaded in NF4 so it fits a T4, and that is recorded in the output manifest.
-The script reports it *alongside* all four phrase-list variants and prints every
-disagreement, so if this judge also fails it will be visible rather than quietly
-adopted.
+---
 
-Arms B and C ask whether anything measured on one 1.5 B checkpoint is a property
-of quantization or of that checkpoint.
+## Two things every session does
+
+**Restore before validate.** `data/` is gitignored, so corpora come from Drive
+or are rebuilt; Fold A's rebuild uses an unpinned HuggingFace revision, which is
+why preflight hashes it immediately afterwards. A restored archive is unpacked
+**only under `artifacts/runs/`** and anything else in it is refused by name —
+see `tests/test_notebook_restore.py` for what that stops and, equally, for what
+it does not (`extractall` does not escape the working directory; what it does
+allow is a member quietly replacing a grader or installing a git hook).
+
+**Preflight.** A CPU-only self-test of every entry point and flag the session
+will use, run before any GPU time is spent. If a script was renamed or a flag
+disappeared, it fails in seconds rather than two hours in — and a missing
+`--letter-order` is the failure that would look most like success, since the
+grader would re-derive the canonical cache under a name promising otherwise.
+
+---
+
+## What ran before
+
+Kept as templates, not as instructions. Each was pinned to its own commit and
+its results are already in the paper.
+
+| Notebook | What it produced | State |
+|---|---|---|
+| [`colab_run.ipynb`](colab_run.ipynb) | The behavioural ladder, GSM8K and the 7B judge on Qwen2.5-3B and Phi-3.5-mini | Executed. Its reduced defaults (200 prompts, 5 rungs) are **not** the paper's configuration — see the note below |
+| [`colab_labelled.ipynb`](colab_labelled.ipynb) | XSTest under both annotation axes, three model families, five-way grader | Executed |
+| [`colab_round2.ipynb`](colab_round2.ipynb) | The 256-token replication and the 1.5B re-grade | Executed **in part**. Its deployed-quantizer arm never ran, which is why round 5 carries it |
+| [`colab_round3.ipynb`](colab_round3.ipynb) | The scorer correction, 48-token prefix re-judging, the paired cross-budget test | Executed. Found the tokenization defect and withdrew one headline result |
+| [`stage0_noise_floor_and_isotropy.ipynb`](stage0_noise_floor_and_isotropy.ipynb) | The rotation-replication gate and isotropy test | Diagnostic; not part of any main run |
+| [`cliffguard_colab.ipynb`](cliffguard_colab.ipynb), [`colab_helper.py`](colab_helper.py) | An earlier design | **Superseded.** Its labels come from a corpus partition agreeing with model behaviour 52.4% of the time. Kept for provenance, not part of the release |
+
+> **`colab_run.ipynb` is a reduced replication.** Its defaults are 200
+> behavioural prompts, 150 GSM8K questions and five rungs; the paper reports 500
+> prompts, 200 questions and seven. Raise `N_PROMPTS`, `N_GSM8K` and `BITS` to
+> match, at roughly 2.5 hours rather than 60–90 minutes. The reduced defaults
+> exist so a first run finishes inside one Colab session, not because the
+> paper's numbers came from them.
+
+Executed copies carry their outputs, which are results, so they are gitignored
+rather than committed; the tracked files are clean templates.
+`colab_run_EXECUTED.ipynb` predates that rule and stays tracked rather than
+being rewritten out of history.
 
 ---
 
 ## Running the same measurements locally
 
-Everything the notebook does is a repo script. On a 6 GB card, with the default
-1.5 B model:
+Everything a notebook does is a repo script. On a 6 GB card, with the default
+1.5B model:
 
 ```bash
 python scripts/run_local_ladder.py       --n 250   # weights, eta, probe ladder
@@ -74,71 +128,26 @@ python scripts/analyse_dprime_power.py             # minimum detectable effects
 ```
 
 Every runner takes `--model`, and `--layer` defaults to mid-depth resolved from
-the model's own config, so any checkpoint works. Add `--smoke --n 24` for a fast
-wiring check.
+the model's own config, so any checkpoint works. `--smoke --n 24` is a fast
+wiring check. Results land in `artifacts/runs/<utc>_<git-sha>_<label>/` with a
+provenance manifest, and one line is appended to `artifacts/runs/INDEX.md`.
 
-Results land in `artifacts/runs/<utc>_<git-sha>_<label>/` with a provenance
-manifest, and one line is appended to `artifacts/runs/INDEX.md`.
-
----
-
-## What else is in here
-
-| File | Purpose |
-|---|---|
-| [`colab_run.ipynb`](colab_run.ipynb) | **Current.** The hosted-GPU runner described above. |
-| [`colab_labelled.ipynb`](colab_labelled.ipynb) | **Current.** The labelled suites and the second annotation axis — see below. |
-| [`colab_round2.ipynb`](colab_round2.ipynb) | **Current.** Round 2: the 256-token replication, the deployed quantizers, the 1.5B regrade. |
-| [`stage0_noise_floor_and_isotropy.ipynb`](stage0_noise_floor_and_isotropy.ipynb) | Stage 0 in isolation — the rotation-replication gate and isotropy test. Diagnostic, not part of the main run. |
-| [`cliffguard_colab.ipynb`](cliffguard_colab.ipynb) | Superseded notebook for an earlier design. Kept locally for provenance; its labels come from a corpus partition that agrees with model behaviour only 52.4 % of the time. Not part of the release. |
-| [`colab_helper.py`](colab_helper.py) | Helpers for that superseded notebook. |
+What needs a hosted GPU is only this: a **7B judge** (15.2 GB fp16, 4.5 GB in
+NF4), **Qwen2.5-3B** (6.2 GB) and **Phi-3.5-mini** (7.6 GB). The judge is the
+one that matters — a refusal measurement is only as good as its grader, and the
+two cheap alternatives are demonstrably unusable here. A phrase list moves its
+own answer by up to 1.64× on the choice of strings and is not monotone in that
+choice; a 1.5B self-judge saturates at 100% REFUSE, including on plainly helpful
+answers.
 
 ---
 
-## `colab_labelled.ipynb` — both annotation axes
+## What no notebook here does
 
-The other notebooks measure a **change in the model's own decision**, which
-cannot say whether the change was good: a new refusal is either the system
-working or the system becoming useless, and an unlabelled corpus reports both as
-one number. This one separates them, with two independent annotations.
-
-| axis | labels from | question |
-|---|---|---|
-| prompt: harmful / benign | HarmBench, AdvBench, StrongREJECT, XSTest, OR-Bench — 3,457 prompts, external to this project | should the model have helped? |
-| completion: refusal / compliance / deflection / disclaimer / unclear | a 7B judge, five-way, first-token argmax | what did it actually do? |
-
-Crossed, `harmful + compliance` is a safety failure and `benign + refusal` is an
-over-refusal — opposite regressions, never summed. Splitting the completion axis
-also fixes a conflation the paper admits: its three-way grader counts declining,
-deflecting, redirecting *and* warning all as `REFUSE`.
-
-The tested endpoint is compliance against everything else, over the full prompt
-class at every rung, so nothing is dropped and nothing is selected on. The five
-classes decompose the non-compliance side and carry no test — on a benign prompt
-a capability disclaimer is a capability failure, not an over-refusal, and folding
-the two together to obtain a binary contrast would destroy the distinction the
-taxonomy exists to draw.
-
-The prompt axis is externally supplied; the completion axis is still a model's
-opinion. That asymmetry is stated in the notebook rather than smoothed over.
-
-**It resumes.** Every stage is a step in a journal on Drive
-(`scripts/colab_pipeline.py`). A step that finished is skipped; a step whose
-arguments changed is re-run and says why; a step whose output is gone is re-run;
-inside a step the ladder and graders cache per scheme; and near the end of a
-session the pipeline declines to *start* a long step rather than be killed inside
-one. If the runtime dies, reconnect and re-run the pipeline cell.
-
-Run directories go to Drive via `CLIFFGUARD_ARTIFACTS`, so nothing durable lives
-in `/content`.
-
----
-
-## Why the notebook holds no measurement logic
-
-Every arm shells out to `scripts/`. There is no analysis code in the notebook, so
-there is no second implementation to drift out of sync with the repository. This
-project has already paid for that failure mode once: a notebook and the modules
-it called diverged silently, and the notebook could not have produced a result on
-any clone — it referenced a filename that did not exist, under a directory that
-was gitignored.
+**Adjudicate whether the labels are right.** Every grader in this project is
+checked against another grader. `scripts/build_human_sample.py` draws the two
+blinded sheets that would change that — one asking what a response *did*, on the
+grader's own classes, and one asking whether it provided substantively harmful
+assistance, which is a different question and the one no automated instrument
+here can answer. Both ship unlabelled. Until they are labelled, this project
+demonstrates instrument *disagreement*, not instrument *accuracy*.
