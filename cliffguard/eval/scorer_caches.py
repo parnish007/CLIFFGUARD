@@ -266,8 +266,11 @@ def resolve_taxonomy(run: Path, judge: str | None = None, four_bit: bool = True,
                               ("first-token", module.TAXONOMY_TEMPLATE)):
         # A grading covers some subset of schemes; the hash is over exactly
         # that subset, so each candidate subset is tried rather than assuming
-        # the full ladder.
-        for subset in _scheme_subsets(results, on_disk):
+        # the full ladder. Every candidate is tried rather than stopping at the
+        # first match, because two of them can reproduce and only one is the
+        # answer -- see below.
+        matches: list[tuple[list[str], str]] = []
+        for subset in _scheme_subsets(results):
             try:
                 completions = {
                     s: json.loads((results / f"completions_{s}.json")
@@ -296,12 +299,30 @@ def resolve_taxonomy(run: Path, judge: str | None = None, four_bit: bool = True,
                            "batch_size": int(batch_size), "scoring": scoring},
             })
             if digest in on_disk:
-                found[scoring] = digest
-                break
+                matches.append((subset, digest))
+        if not matches:
+            continue
+        widest = max(len(subset) for subset, _ in matches)
+        tied = [(subset, digest) for subset, digest in matches
+                if len(subset) == widest]
+        if len(tied) > 1:
+            # Two gradings by the same scorer covering the same NUMBER of rungs
+            # and different rungs. Nothing here can say which one a caller
+            # means, and each of them takes the single digest returned and
+            # reads whatever files carry it -- so picking one would hand back a
+            # partial grading that looks complete. Nothing in rounds 3, 4 or 5
+            # produces this; it is refused so that whatever does produces an
+            # error rather than a table.
+            raise ValueError(
+                f"{run.name}: two {scoring} gradings cover {widest} scheme(s) "
+                f"each and different ones ("
+                + "; ".join(f"{d}={','.join(s)}" for s, d in tied)
+                + "). Which is the grading cannot be decided from the run.")
+        found[scoring] = tied[0][1]
     return found
 
 
-def _scheme_subsets(results: Path, on_disk: set[str]) -> list[list[str]]:
+def _scheme_subsets(results: Path) -> list[list[str]]:
     """Candidate scheme sets a grading could have covered, widest first.
 
     Order decides the answer, not just the speed of reaching it. A run can hold

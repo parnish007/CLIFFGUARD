@@ -199,6 +199,23 @@ def test_the_widest_grading_wins_when_two_cover_different_rungs(
     assert covered == set(ladder)
 
 
+def test_two_gradings_of_equal_width_are_refused_not_guessed(
+        tmp_path: Path) -> None:
+    """Widest-first has no answer when two gradings are equally wide.
+
+    Nothing in rounds 3 to 5 produces this, and the resolver still must not
+    invent an answer: the caller takes the single digest it is given and reads
+    whatever files carry it, so choosing arbitrarily hands back half a ladder
+    that looks like a whole one. An exception naming both is the only honest
+    return value.
+    """
+    run_dir, _ = taxonomy_run(tmp_path, {
+        "lower": ("FP16", "RTN_2B", "RTN_3B", "RTN_4B"),
+        "upper": ("RTN_5B", "RTN_6B", "RTN_7B", "RTN_8B")})
+    with pytest.raises(ValueError, match="cover 4 scheme"):
+        scorer_caches.resolve_taxonomy(run_dir)
+
+
 def test_a_narrow_grading_alone_still_resolves(tmp_path: Path) -> None:
     """Preferring the wide set must not stop the narrow one being found.
 

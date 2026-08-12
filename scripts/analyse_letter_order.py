@@ -58,7 +58,8 @@ def _load(path: Path) -> list[str]:
 
 
 def gradings(run: Path, order: Sequence[str] | None, judge: str,
-             five_way: bool, batch_size: int = 4) -> dict[str, list[str]]:
+             five_way: bool, batch_size: int = 4,
+             completion_chars: int = 2000) -> dict[str, list[str]]:
     """Per-scheme verdicts for one letter assignment, or {} if not graded.
 
     Resolution is by recomputed fingerprint rather than by filename pattern, so
@@ -72,7 +73,8 @@ def gradings(run: Path, order: Sequence[str] | None, judge: str,
         # to match what the grader was run with, not what is convenient here.
         found = scorer_caches.resolve_taxonomy(run, judge=judge,
                                                letter_order=order,
-                                               batch_size=batch_size)
+                                               batch_size=batch_size,
+                                               completion_chars=completion_chars)
         digest, prefix = found.get("letter"), "taxonomy"
     else:
         # 2000, not 600: the window the GRADERS are run with. It is part of
@@ -82,7 +84,7 @@ def gradings(run: Path, order: Sequence[str] | None, judge: str,
     # and 2000 are different gradings. Passing what the grader was invoked with
     # keeps this correct when that happens rather than when someone notices.
         found = scorer_caches.resolve(run, judge=judge,
-                                      completion_chars=2000,
+                                      completion_chars=completion_chars,
                                       letter_order=order)
         digest, prefix = found.get("letter"), "judge"
     if not digest:
@@ -138,6 +140,12 @@ def main() -> int:
                          "five-way cache fingerprint, so a mismatch reports a "
                          "grading that exists as missing. Round 3 and round 4 "
                          "both use 4.")
+    ap.add_argument("--completion-chars", type=int, default=2000,
+                    help="the window the grading was RUN with. Part of the "
+                         "five-way fingerprint unconditionally and of the "
+                         "three-way one when it truncates, so a mismatch "
+                         "reports a grading that exists as missing -- which "
+                         "reads as an experiment that never ran.")
     ap.add_argument("--five-way", action="store_true",
                     help="read the taxonomy grader's caches rather than the "
                          "three-way judge's.")
@@ -157,20 +165,21 @@ def main() -> int:
     report: dict[str, Any] = {"judge": args.judge,
                               "five_way": bool(args.five_way),
                               "batch_size": args.batch_size,
+                              "completion_chars": args.completion_chars,
                               "labels": list(labels),
                               "canonical_order": list(labels),
                               "runs": {}}
     worst = 1.0
     for run in args.runs:
         canonical = gradings(run, None, args.judge, args.five_way,
-                             args.batch_size)
+                             args.batch_size, args.completion_chars)
         if not canonical:
             print(f"{run.name}: no canonical letter grading; skipping")
             continue
         block: dict[str, Any] = {"schemes": sorted(canonical), "orders": {}}
         for order in orders:
             permuted = gradings(run, order, args.judge, args.five_way,
-                                args.batch_size)
+                                args.batch_size, args.completion_chars)
             shared = sorted(set(canonical) & set(permuted))
             if not shared:
                 print(f"{run.name}: {','.join(order)} not graded")

@@ -71,7 +71,12 @@ SCRIPT_FLAGS: tuple[tuple[str, tuple[str, ...]], ...] = (
                                          "--completion-chars", "--max-length",
                                          "--scoring", "--schemes",
                                          "--letter-order")),
-    ("analyse_letter_order.py", ("--orders", "--five-way", "--out")),
+    # --batch-size and --completion-chars are the two fingerprint inputs the
+    # audit has to be told; get either wrong and it reports a grading that
+    # exists as missing, which is indistinguishable from an experiment that
+    # never ran.
+    ("analyse_letter_order.py", ("--orders", "--five-way", "--out",
+                                 "--batch-size", "--completion-chars")),
     # Round 5. --deployed and --temperature are what make the external-validity
     # round possible at all; --prompts is what points the labelled arm at
     # XSTest rather than at Fold A.
