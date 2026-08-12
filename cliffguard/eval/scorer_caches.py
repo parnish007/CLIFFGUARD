@@ -302,17 +302,29 @@ def resolve_taxonomy(run: Path, judge: str | None = None, four_bit: bool = True,
 
 
 def _scheme_subsets(results: Path, on_disk: set[str]) -> list[list[str]]:
-    """Candidate scheme sets a grading could have covered, most likely first."""
+    """Candidate scheme sets a grading could have covered, widest first.
+
+    Order decides the answer, not just the speed of reaching it. A run can hold
+    two gradings by the same scorer over different scheme sets -- round 3
+    re-graded full precision alone, round 4 re-grades the whole ladder -- and
+    the subset is hashed into the fingerprint, so both match and `resolve_*`
+    returns whichever it tries first.
+
+    Widest first, therefore. `corrected_by_scheme` takes the single digest
+    returned here and globs the files carrying it, so returning the narrower
+    grading would report a corrected re-grade of the full ladder as covering
+    one rung, with nothing raised: the notebook would print that every rung was
+    graded and the labelled tables would quietly be built from full precision
+    alone. Trying the wide set first costs one extra content hash, which is
+    CPU-bound and milliseconds.
+    """
     by_digest: dict[str, list[str]] = {}
     for path in sorted(results.glob("taxonomy_*_*.json")):
         _, digest, scheme = path.stem.split("_", 2)
         by_digest.setdefault(digest, []).append(scheme)
-    # Deduplicate while keeping the smallest sets first: an FP16-only re-grade
-    # is the common round-3 case and matching it early avoids hashing the whole
-    # eight-rung ladder for nothing.
     seen: set[tuple[str, ...]] = set()
     out: list[list[str]] = []
-    for schemes in sorted(by_digest.values(), key=len):
+    for schemes in sorted(by_digest.values(), key=len, reverse=True):
         key = tuple(sorted(schemes))
         if key not in seen:
             seen.add(key)

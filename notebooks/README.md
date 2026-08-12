@@ -31,9 +31,11 @@ already ships with the repository.
   for word and only the letters permuted, then maps back to classes. It grades
   the canonical assignment first, because a permutation is only meaningful
   against it and a clone carries only the *original* grading — the corrected one
-  is a result, and results are not committed here. Step 2 cache-hits those same
-  rungs, so the cost moves earlier rather than doubling. It prints a verdict and
-  carries it into the archive.
+  is a result, and results are not committed here. Step 2 reuses the behavioural
+  half of that canonical pass and re-grades the labelled half, because the
+  five-way fingerprint hashes the graded text of the scheme set it was handed
+  and the three-way one does not. It prints a verdict and carries it into the
+  archive.
 - **Step 2, the full re-grade** (~1 h 40 m). 15,200 judge pairs, putting every
   rung on the corrected scorer. Until this runs, every ladder-wide quantity in
   the paper — the drift slope, the 14-cell transition table, the simultaneous

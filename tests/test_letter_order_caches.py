@@ -128,6 +128,88 @@ def test_gradings_of_different_lengths_are_refused_not_zipped(run: Path) -> None
         compare(["REFUSE"] * 5, ["REFUSE"] * 4, letters, labels, labels)
 
 
+def taxonomy_run(tmp_path: Path, gradings: dict[str, tuple[str, ...]]) -> Path:
+    """A run carrying one taxonomy grading per entry, over the schemes named.
+
+    Digests are computed the way the grader computes them, from the stored text,
+    so the resolver has to reproduce them rather than be handed them.
+    """
+    module = scorer_caches._taxonomy_module()
+    run_dir = tmp_path / "20260101-000000_abc1234_fake-xstest"
+    results = run_dir / "results"
+    results.mkdir(parents=True)
+    prompts = [f"prompt {i}" for i in range(N_PROMPTS)]
+    (results / "prompts.json").write_text(
+        json.dumps({"prompts": prompts}), encoding="utf-8")
+    all_schemes = sorted({s for schemes in gradings.values() for s in schemes})
+    completions = {s: [f"{s} completion {i}" for i in range(N_PROMPTS)]
+                   for s in all_schemes}
+    for scheme, texts in completions.items():
+        (results / f"completions_{scheme}.json").write_text(
+            json.dumps({"completions": texts}), encoding="utf-8")
+
+    digests: dict[str, str] = {}
+    for name, schemes in gradings.items():
+        subset = sorted(schemes)
+        digest = scorer_caches.fingerprint({
+            "judge": scorer_caches.DEFAULT_JUDGE, "four_bit": True,
+            "labels": list(module.LABELS), "template": module.LETTER_TEMPLATE,
+            "n_prompts": N_PROMPTS,
+            "content": scorer_caches.taxonomy_content_hash(
+                prompts, completions, subset),
+            "policy": {"prompt_chars": module.PROMPT_CHARS,
+                       "completion_chars": 2000, "max_length": 2560,
+                       "padding_side": "left", "batch_size": 4,
+                       "scoring": "letter"}})
+        digests[name] = digest
+        for scheme in subset:
+            (results / f"taxonomy_{digest}_{scheme}.json").write_text(
+                json.dumps({"verdicts": ["REFUSE"] * N_PROMPTS,
+                            "margins": [1.0] * N_PROMPTS}), encoding="utf-8")
+    return run_dir, digests
+
+
+def test_the_widest_grading_wins_when_two_cover_different_rungs(
+        tmp_path: Path) -> None:
+    """Round 4 leaves both on disk, and only one of them is the ladder.
+
+    Step 1 grades full precision alone so the option-order replicates have
+    something to compare against; step 2 grades all eight rungs. The taxonomy
+    fingerprint hashes the graded text of the scheme set it was handed, so those
+    are two different fingerprints and both reproduce.
+
+    `corrected_by_scheme` takes the ONE digest the resolver returns and reads
+    the files carrying it. Returning the narrow grading would report an
+    eight-rung re-grade as covering one rung -- silently, since a partial
+    corrected grading is a legitimate state this project has actually been in.
+    Every ladder-wide labelled quantity would then be built from full precision
+    and nothing would say so.
+    """
+    ladder = ("FP16", "RTN_2B", "RTN_3B", "RTN_4B",
+              "RTN_5B", "RTN_6B", "RTN_7B", "RTN_8B")
+    run_dir, digests = taxonomy_run(
+        tmp_path, {"audit": ("FP16",), "ladder": ladder})
+    assert digests["audit"] != digests["ladder"]
+
+    found = scorer_caches.resolve_taxonomy(run_dir)
+    assert found.get("letter") == digests["ladder"]
+    # What `corrected_by_scheme` reads: the files carrying that one digest.
+    covered = {p.stem.split("_", 2)[-1] for p in
+               (run_dir / "results").glob(f"taxonomy_{found['letter']}_*.json")}
+    assert covered == set(ladder)
+
+
+def test_a_narrow_grading_alone_still_resolves(tmp_path: Path) -> None:
+    """Preferring the wide set must not stop the narrow one being found.
+
+    This is the state the repository is in today: full precision re-graded and
+    nothing below it.
+    """
+    run_dir, digests = taxonomy_run(tmp_path, {"audit": ("FP16",)})
+    found = scorer_caches.resolve_taxonomy(run_dir)
+    assert found.get("letter") == digests["audit"]
+
+
 def test_the_taxonomy_batch_size_is_part_of_its_identity() -> None:
     """Round 3 graded at batch 4 and round 4 nearly graded at 8.
 
