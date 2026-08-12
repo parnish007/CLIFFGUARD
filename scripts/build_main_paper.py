@@ -37,42 +37,73 @@ import sys
 SOURCE = Path("docs/paper/cliff_artifact.tex")
 TARGET = Path("docs/paper/cliffguardpaper.tex")
 
-# Blocks of the record, by the line the sectioning command sits on. `end` is
-# exclusive. Verified against the source at build time: if a heading has moved,
-# the build fails rather than silently shipping the wrong span.
+# Blocks of the record, located by their own heading text rather than by line
+# number. Line numbers were the first design and they were wrong: editing the
+# record by four lines silently shifted every span after it, and the only reason
+# that did not ship was a separate anchor check. Searching for the heading makes
+# the map survive edits to the record, which is the normal case rather than the
+# exceptional one.
 #
-#   name          (start, end, anchor_text_that_must_appear_at_start)
-BLOCKS: dict[str, tuple[int, int, str]] = {
-    "protocol":    (378, 560, r"\subsection{The CliffGuard protocol}"),
-    "related":     (560, 661, r"\section{Related work}"),
-    "method":      (661, 751, r"\section{Method}"),
-    "degeneracy":  (751, 878, r"\subsection{Degeneracy must be detected"),
-    "scorers":     (878, 941, r"\subsection{Two label scorers"),
-    "refusal":     (941, 1362, r"\section{Quantization shifts the refusal"),
-    "law":         (1362, 1461, r"\subsection{Three regimes"),
-    "artifact":    (1461, 1548, r"\section{Where the reported cliff comes from}"),
-    "monotone":    (1548, 1762, r"\subsection{The phrase-list estimate is not monotone"),
-    "labelled":    (1762, 2187, r"\subsection{A third family"),
-    "scorer":      (2201, 2314, r"\subsection{The label scorer was not comparing"),
-    "round4":      (2314, 2499, r"\subsection{The whole ladder, graded twice"),
-    "budget":      (2499, 2586, r"\subsection{The generation budget"),
-    "regen":       (2586, 2632, r"\subsection{Greedy decoding did not reproduce"),
-    "standing":    (2632, 2675, r"\subsection{What the three tests leave standing}"),
-    "human":       (2675, 2888, r"\section{An author-blinded annotation audit"),
-    "capability":  (2888, 2963, r"\section{Arithmetic accuracy degrades"),
-    "probe":       (2963, 3147, r"\section{One frozen refusal direction"),
-    "discussion":  (3147, 3183, r"\section{Discussion}"),
-    "prediction":  (3183, 3293, r"\subsection{What this implies for choosing"),
-    "review":      (3293, 3398, r"\section{What external review raised"),
-    "limits":      (3398, 3626, r"\section{Limitations}"),
-    "conclusion":  (3626, 3753, r"\section{Conclusion}"),
-    # Stops at 3800, which is the record's own \appendix. Including it would
-    # reset the appendix counter halfway through this paper's appendices and
-    # produce two of them lettered A.
-    "repro":       (3753, 3800, r"\section{Reproducibility}"),
-    # Stops before the bibliography, which the assembler appends itself.
-    "design":      (3801, 3969, r"\section{Appendix: the follow-up design"),
-}
+# Order is document order. A block ends where the next one begins, so the list
+# must name every region including the ones the reframed paper does not emit.
+BACKSLASH = chr(92)
+
+ANCHORS: list[tuple[str, str]] = [
+    ("_abstract",     BACKSLASH + "begin{abstract}"),
+    ("_intro",      r"\section{Introduction}"),
+    ("protocol",    r"\subsection{The CliffGuard protocol}"),
+    ("related",     r"\section{Related work}"),
+    ("method",      r"\section{Method}"),
+    ("degeneracy",  r"\subsection{Degeneracy must be detected"),
+    ("scorers",     r"\subsection{Two label scorers"),
+    ("refusal",     r"\section{Quantization shifts the refusal"),
+    ("law",         r"\subsection{Three regimes"),
+    ("artifact",    r"\section{Where the reported cliff comes from}"),
+    ("monotone",    r"\subsection{The phrase-list estimate is not monotone"),
+    ("labelled",    r"\subsection{A third family"),
+    ("_remeasure",  r"\section{Re-measuring the same completions"),
+    ("scorer",      r"\subsection{The label scorer was not comparing"),
+    ("round4",      r"\subsection{The whole ladder, graded twice"),
+    ("budget",      r"\subsection{The generation budget"),
+    ("regen",       r"\subsection{Greedy decoding did not reproduce"),
+    ("standing",    r"\subsection{What the three tests leave standing}"),
+    ("human",       r"\section{An author-blinded annotation audit"),
+    ("capability",  r"\section{Arithmetic accuracy degrades"),
+    ("probe",       r"\section{One frozen refusal direction"),
+    ("discussion",  r"\section{Discussion}"),
+    ("prediction",  r"\subsection{What this implies for choosing"),
+    ("review",      r"\section{What external review raised"),
+    ("limits",      r"\section{Limitations}"),
+    ("conclusion",  r"\section{Conclusion}"),
+    ("repro",       r"\section{Reproducibility}"),
+    ("_appendix",     BACKSLASH + "appendix"),
+    ("design",      r"\section{Appendix: the follow-up design"),
+    ("_bib",          BACKSLASH + "bibliography{"),
+]
+
+
+def locate(lines: list[str]) -> dict[str, tuple[int, int]]:
+    """Resolve every anchor to a 1-indexed span, and check document order."""
+    at: list[tuple[str, int]] = []
+    for name, anchor in ANCHORS:
+        hits = [i + 1 for i, ln in enumerate(lines) if ln.startswith(anchor)]
+        if not hits:
+            raise SystemExit(
+                f"anchor for {name!r} not found in the record: {anchor!r}. "
+                "The heading was edited -- update ANCHORS.")
+        if len(hits) > 1:
+            raise SystemExit(
+                f"anchor for {name!r} matches {len(hits)} lines {hits}; it must "
+                "identify exactly one heading.")
+        at.append((name, hits[0]))
+    order = [n for n, _ in at]
+    if [n for n, _ in sorted(at, key=lambda x: x[1])] != order:
+        raise SystemExit("ANCHORS are not in document order; fix the list.")
+    spans = {}
+    for i, (name, line) in enumerate(at):
+        spans[name] = (line, at[i + 1][1] if i + 1 < len(at) else len(lines) + 1)
+    return spans
+
 
 # The two lines that close the document, appended once after the last block.
 TAIL = "\n\\bibliography{refs_verified}\n\\end{document}\n"
@@ -98,13 +129,8 @@ def block(lines: list[str], name: str, level: str | None = None,
     in the record and a subsection here, and `\\label` travels with it so every
     `\\ref` in the moved text still resolves.
     """
-    start, end, anchor = BLOCKS[name]
+    start, end = SPANS[name]
     body = lines[start - 1:end - 1]
-    head = body[0]
-    if not head.lstrip().startswith(anchor.split("{")[0]) or anchor.split("{", 1)[1].rstrip("}") not in "".join(body[:3]):
-        raise SystemExit(
-            f"block {name!r} no longer starts with {anchor!r} at line {start}; "
-            f"found {head.strip()[:70]!r}. The record moved -- fix BLOCKS.")
     if level or retitle:
         # Several headings in the record wrap across two source lines, so the
         # heading is however many lines it takes for its braces to balance --
@@ -146,7 +172,8 @@ We introduce \textbf{CliffGuard}, a paired, degeneration-aware protocol that
 holds the model, the prompts and the generated text fixed and varies one
 measurement decision at a time. Because every completion is stored, the same
 text can be re-scored under alternative gates, estimators and graders, so the
-pipeline's contribution is measured rather than assumed. We apply it to a ladder
+estimate's sensitivity to each decision is measured rather than assumed. We
+apply it to a ladder
 from 8.5 down to 2.5 stored bits per parameter on four small instruction-tuned
 models.
 
@@ -161,9 +188,11 @@ tokenize alike moves 11--18\% of verdicts, halves the pooled drift slope from
 \emph{option assignment}: permuting which letter carries which class, with the
 wording untouched, moves absolute refusal rates by up to 10.4 points while
 moving the paired quantization difference by 1.6. That asymmetry is the paper's
-methodological result --- \textbf{an absolute rate from such a judge is not
-invariant to a choice no protocol records; a paired difference largely is} ---
-and it is why every claim here is a paired one.
+methodological result --- \textbf{in the configurations tested, paired contrasts
+were far less sensitive to the labelling than absolute rates were} --- and it is
+why every claim here is a paired one. Three assignments on two models is not a
+theorem about paired evaluation, and we report an observed asymmetry rather than
+a property.
 
 Against 300 hand-labelled completions, weighted to the ladder's strata, the
 phrase list agrees with a person's reading of the declining class on 57.5\% of
@@ -203,8 +232,19 @@ measurement can be separated from the generation. If completions are stored,
 the same text can be scored again under a different gate, a different estimator,
 a different grader, or a different label representation, with the model, the
 prompts, the decoding and the text all held fixed. Whatever the estimate moves
-by is the pipeline's contribution, and no grader has to be correct for that
-subtraction to be valid.
+by is its \emph{sensitivity} to that decision, and no grader has to be correct
+for the comparison to be valid.
+
+We say sensitivity rather than contribution deliberately. A contribution implies
+a decomposition, $\Delta = \Delta_{	ext{gate}} + \Delta_{	ext{grader}} +
+\dots$, and these factors interact: \S
+ef{sec:artifact} shows the grader term
+depends on which completions the gate admitted, so the terms are not additive
+and the order in which they are varied matters. What each subsection below
+reports is the movement produced by changing one decision from the configuration
+this paper actually used --- a one-at-a-time sensitivity around a baseline, not
+a unique attribution. A full factorial would be needed for that, and we did not
+run one.
 
 \paragraph{What we find.} The pipeline's contribution is large --- large enough
 that, on our own data, it decides the sign of the headline effect. We report it
@@ -220,108 +260,141 @@ counterfactual is exact and no grader needs to be trusted. \textbf{Tier 2} is
 validation and stress-testing --- human labels, external graders, generation
 budget, regeneration --- which support the Tier 1 claims and are individually
 weaker. \textbf{Tier 3} is what this paper measures about quantized models
-themselves, which is the part we would defend least: two models carry the
-refusal arm, one grader family produced the labels, and independent graders do
-not reproduce the significance. Readers who want only the defensible
-contribution can stop after Part~II.
+themselves, and it is the weakest: two models carry the refusal arm, one grader
+family produced the labels, and independent graders do not reproduce the
+significance. It is reported as exploratory throughout.
 """
 
 NEW_FINDINGS = r"""
 \begin{keybox}
-\textbf{Findings, by tier.} A dagger marks a quantity still carried by the
-original label scorer (\S\ref{sec:scorers}).
-
-\medskip
-\textbf{Tier 1 --- the measurement result.} Controlled perturbations on
-identical stored completions. Neither grader needs to be right for these.
+	extbf{Contributions.} Four controlled perturbations of a measurement
+pipeline, each applied to identical stored completions. Neither grader needs to
+be correct for any of them: the counterfactual is exact because only one
+decision changes.
 
 \begin{enumerate}[leftmargin=1.4em]
-  \item \textbf{The degeneration gate moves the estimate by two orders of
+  \item 	extbf{The degeneration gate moves the estimate by two orders of
         magnitude.} At 2.5 bits on Qwen2.5-3B one refusal-phrase list reads
         38.4\% refusal-to-compliance behind a perplexity-only gate and 0.2\%
         behind our composite gate; the judge behind the composite gate reads
-        0.0\%. The first step is the gate, the second the grader
-        (\S\ref{sec:artifact}).
-  \item \textbf{The estimator moves it again, where nothing is degenerate.} At
-        4.5 bits both gates admit every completion, so only the grader term is
-        left --- and the phrase list reads 7.7 times the judge. One fixed list
-        covers 51.3\%, 25.7\% and 3.6\% of a five-way judge's declining class
-        across three model families at full precision, at precision $1.000$ in
-        every case, so the label sets nest and the disagreement runs one way
-        only. The estimate is \emph{non-monotone} in the phrase list, so
-        enlarging that list is not guaranteed to improve it, or even to move it
-        in a consistent direction (\S\ref{sec:artifact}).
-  \item \textbf{How a label is read off the judge moves 11--18\% of verdicts.}
-        Both our graders read a label from first-token logits over label words
-        that do not tokenize alike under Qwen2.5. Re-scoring identical stored
-        text with verified single-token options halves the pooled drift slope,
-        from $1.15$ points per bit removed, 95\% CI $[0.75, 1.55]$, to $0.51$,
-        $[0.07, 0.96]$ --- and the halving is a disagreement rather than an
-        attenuation: Qwen2.5-3B holds at $+1.16$ while Phi-3.5-mini
-        \emph{reverses sign}, $+1.29$ to $-0.13$ with an interval covering zero
-        (\S\ref{sec:scorer}).
-  \item \textbf{Which letter carries which class moves absolute rates by ten
+        0.0\% (\S
+ef{sec:artifact}).
+  \item 	extbf{The estimator moves it again, where nothing is degenerate.} At
+        4.5 bits both gates admit every completion, so only the grader term
+        remains --- and the phrase list reads 7.7 times the judge. One fixed
+        list covers 51.3\%, 25.7\% and 3.6\% of a five-way judge's declining
+        class across three model families, at precision $1.000$ in every case,
+        so the label sets nest and the disagreement runs one way. The estimate
+        is \emph{non-monotone} in the phrase list (\S
+ef{sec:artifact}).
+  \item 	extbf{How a label is read off the judge moves 11--18\% of verdicts.}
+        Both graders read a label from first-token logits over label words that
+        do not tokenize alike under Qwen2.5. Re-scoring identical text with
+        verified single-token options halves the pooled drift slope, $1.15$
+        points per bit $[0.75, 1.55]$ to $0.51$ $[0.07, 0.96]$, and the halving
+        is a disagreement rather than an attenuation: Qwen2.5-3B holds at
+        $+1.16$ while Phi-3.5-mini \emph{reverses sign}, $+1.29$ to $-0.13$
+        with an interval covering zero (\S
+ef{sec:scorer}).
+  \item 	extbf{Which letter carries which class moves absolute rates by ten
         points and the paired contrast by one.} With the option wording
         untouched, full-precision refusal travels across 10.4 points on
         Qwen2.5-3B and 8.8 on Phi-3.5-mini, while the paired
-        FP16-to-4.5-bit difference travels across 1.6 and 1.2 points, reverses
-        direction under none of the assignments tested, and leaves the
-        significance decision unchanged at all three. \textbf{An absolute rate
-        from this instrument is not invariant to a choice no protocol records;
-        a paired difference largely is} (\S\ref{sec:round4}).
+        FP16-to-4.5-bit difference travels across 1.6 and 1.2, reverses
+        direction under none of the three assignments tested, and leaves the
+        significance decision unchanged. 	extbf{In the configurations tested,
+        paired contrasts were far less sensitive to the labelling than absolute
+        rates were} (\S
+ef{sec:round4}).
 \end{enumerate}
 
 \medskip
-\textbf{Tier 2 --- what validates and stresses those claims.}
 
-\begin{enumerate}[leftmargin=1.4em, resume]
-  \item \textbf{Against 300 blinded human labels, the phrase list is measuring a
-        narrower construct.} Weighted to the ladder's strata it agrees with a
-        person's reading of the declining class on 57.5\% of completions against
-        80.2 and 79.6\% for the two judge extractions --- $+22.7$
-        $[+14.9, +30.1]$ and $+22.1$ $[+13.7, +30.2]$ points under a stratified
-        paired bootstrap. The gap is structured: the list recovers 81.1\% of
-        genuine refusals and 14.6\% of deflections. The two judges are not
-        separated on accuracy, $+0.6$ $[-2.6, +3.6]$, with equivalence at
-        $\pm3$ points not established either (\S\ref{sec:human}). One
-        annotator, who is an author.
-  \item \textbf{The declining class is mostly not refusal.} Weighted, it is
-        $35.9$\% refusal, $38.0$\% deflection and $26.1$\% capability
-        disclaimer, so a ``refusal rate'' read off it is about two-thirds
-        something else (\S\ref{sec:human}).
-  \item \textbf{The generation budget was load-bearing and is now measured.}
-        Between 92.7 and 100\% of full-precision completions reach the 48-token
-        cap. At 256 tokens, paired on one act of decoding, refusals do become
-        something else --- but they become deflections almost always, 47 of the
-        48 that move, and the harmful-compliance cell stays empty on two of
-        three models (\S\ref{sec:budget}).
-  \item \textbf{Greedy decoding does not reproduce, and it barely matters.}
-        Regenerating the same completions changes 9--12\% of them; verdicts move
-        on 0.2--1.0\% (\S\ref{sec:reproducibility}).
-\end{enumerate}
-
-\medskip
-\textbf{Tier 3 --- what this says about quantized models, which is least.}
-
-\begin{enumerate}[leftmargin=1.4em, resume]
-  \item \textbf{Inside the coherent band, lower precision produced \emph{more}
-        declining --- under the original scorer on both models, and under the
-        second scorer on one of two.} What is left is one model at one rung:
-        Qwen2.5-3B at 4.5 bits, 7 transitions toward compliance against 32
-        toward refusal, $p<0.0001$. \textbf{Three independent graders reproduce
-        the direction on three of four comparisons and the significance on
-        none} (\S\ref{sec:ladder}).
-  \item \textbf{Transitions stay low, but how low is a property of the scorer.}
-        At or below 2.2\% at every rung under the original scorer, simultaneous
-        95\% bound 4.62\% over 14 cells; re-graded, 4.6\% and 7.72\%. A
-        deployment bound read off this instrument inherits that factor of two
-        (\S\ref{sec:ladder}).
-  \item \textbf{Arithmetic capability collapses at a model-specific bit-width}
-        one full bit apart across families, and a frozen refusal probe does not
-        notice (Appendices~\ref{sec:capability} and~\ref{sec:probe}).
-\end{enumerate}
+oindent	extbf{What supports and bounds them.} Part~III puts the instruments
+in front of a person: on 300 blinded completions, weighted to the ladder's
+strata, the phrase list agrees with a human reading of the declining class 22
+points less often than either judge extraction, while the two extractions are
+not separated from each other (\S
+ef{sec:human}). The same labels show that
+the declining class is $35.9$\% refusal, $38.0$\% deflection and $26.1$\%
+capability disclaimer. Part~III also reports what a five-times-longer generation
+budget and an exact regeneration do to the measurement. 	extbf{What this paper
+establishes about quantized models themselves is thinner}, and Part~IV reports
+it as exploratory: one model at one rung survives the re-grade --- Qwen2.5-3B at
+4.5 bits, 7 transitions toward compliance against 32 toward refusal --- and
+three independent graders reproduce its direction on three of four comparisons
+and its significance on none.
 \end{keybox}
 """
+
+NEW_LIMITS = r"""
+\section{Limitations}
+\label{sec:limits}
+
+Stated once here, at the strength each deserves. Appendix~\ref{sec:limitsfull}
+gives the long form, including the reasoning behind each concession and the
+several cases where a robustness test we ran removed a result we had reported.
+
+\begin{itemize}[leftmargin=1.4em]
+  \item \textbf{This is not a safety measurement.} The prompt set carries no
+        per-prompt harmfulness annotation, so a baseline refusal that becomes
+        compliance may be a correction of an over-refusal rather than a
+        failure. Every safety-shaped quantity here is a harmful prompt crossed
+        with a compliance-\emph{shaped} response; an empty cell means no
+        substantive compliance was labelled, not that no harm was done.
+  \item \textbf{The endpoint is broader than refusal.} The graders' declining
+        class merges refusal, deflection and capability disclaimer, and
+        \S\ref{sec:human} measures the mixture at $35.9$/$38.0$/$26.1$\%. Read
+        ``refusal'' as ``declining'' throughout, including in the title.
+  \item \textbf{The human audit is not independent.} One annotator, who is an
+        author, blinded to the row metadata but not to the hypotheses. It ranks
+        the phrase list against the two judges; it cannot establish that either
+        judge is correct, and no inter-annotator agreement exists. Two
+        non-author annotators with adjudication is the single highest-return
+        experiment left.
+  \item \textbf{The degeneration gate is unvalidated where it is
+        load-bearing.} It decides 38.4\% against 0.2\% at 2.5 bits, and the
+        human sample covers only FP16 and 4.5 bits, where it rejects nothing.
+        We establish that the gate choice matters; we do not establish that
+        ours is the right gate.
+  \item \textbf{No reference instrument was established.} The two label
+        extractions differ by $0.6$ points $[-2.6, +3.6]$ against human labels
+        --- no difference detected, equivalence not established --- yet they
+        disagree about the sign of the drift effect on Phi-3.5-mini. The paper
+        shows instrument instability without identifying a correct instrument,
+        and every ladder-wide quantity inherits that.
+  \item \textbf{Sensitivity, not decomposition.} Each perturbation is
+        one-at-a-time around the configuration we used. The factors interact
+        --- the grader term depends on what the gate admitted --- so these are
+        not additive contributions, and no factorial design was run.
+  \item \textbf{The main ladder is censored at 48 tokens}, which between 92.7
+        and 100\% of full-precision completions reach. \S\ref{sec:budget} runs
+        256 tokens paired on one act of decoding and finds refusals become
+        deflections rather than compliance, but absolute response-type rates on
+        the main ladder remain properties of a censored protocol.
+  \item \textbf{Greedy decoding only.} One completion per prompt estimates a
+        deterministic decision, not a behavioural distribution; regenerating
+        changes 9--12\% of completions and 0.2--1.0\% of verdicts. Sampled
+        decoding across seeds is not run.
+  \item \textbf{The corpus was selected with an instrument this paper
+        indicts.} The HH-RLHF strata are response-derived, split by a
+        refusal-phrase heuristic, which affects prevalence and class balance;
+        and because the strata are contiguous, interrupted external-grader
+        sweeps covered them unevenly.
+  \item \textbf{Exploratory, not confirmatory.} The design was adjusted while
+        looking at results --- the scorer correction, the option-order audit,
+        the long-generation and regeneration runs and the human audit were all
+        added after inspecting earlier ones. Intervals and $p$-values here
+        price sampling error under that adaptivity and do not make any of it
+        confirmatory.
+  \item \textbf{Scope.} One quantizer family (round-to-nearest), four models of
+        which two carry the refusal arm, English, one arithmetic benchmark, one
+        judge family sharing a lineage with two of the models judged. Nothing
+        here establishes behaviour under AWQ, GPTQ, GGUF k-quants or mixed
+        precision.
+\end{itemize}
+"""
+
 
 PART_II = r"""
 \part*{Part II --- How much of the effect is the pipeline?}
@@ -331,8 +404,8 @@ PART_II = r"""
 \label{sec:pipeline}
 \label{sec:remeasure}
 
-This is the part of the paper we would defend. Each subsection below changes one
-decision in the measurement pipeline and nothing else --- same prompts, same
+Each subsection below changes one decision in the measurement pipeline and
+nothing else --- same prompts, same
 model, same quantization, same generated text --- and reports what the estimate
 does. The counterfactual is exact, and the argument needs neither instrument to
 be correct: it establishes only that two defensible pipelines disagree, and by
@@ -422,8 +495,13 @@ ones that killed results we had reported.
 """
 
 
+SPANS: dict[str, tuple[int, int]] = {}
+
+
 def build() -> str:
+    global SPANS
     lines = load()
+    SPANS = locate(lines)
     out: list[str] = []
     add = out.append
 
@@ -480,7 +558,7 @@ def build() -> str:
     add(block(lines, "refusal", level="subsection",
               retitle="The paired ladder, under both scorers"))
     add(block(lines, "discussion"))
-    add(block(lines, "limits"))
+    add(NEW_LIMITS)
     add(NEW_CONCLUSION)
 
     add("\n\\appendix\n"
@@ -492,6 +570,9 @@ def build() -> str:
     add(block(lines, "probe"))
     add(block(lines, "prediction", level="section",
               retitle="What this would imply for choosing a quantizer"))
+    add(block(lines, "limits", level="section",
+              retitle="Limitations, in full")
+        .replace(r"\label{sec:limits}", r"\label{sec:limitsfull}", 1))
     add(block(lines, "review", level="section",
               retitle="Revision and audit trail: what external review raised"))
     add(block(lines, "repro"))
@@ -510,7 +591,8 @@ def main() -> int:
 
     text = build()
     if args.check:
-        print(f"block map OK: {len(BLOCKS)} blocks resolve against {SOURCE}")
+        print(f"block map OK: {len(ANCHORS)} anchors resolve, in document "
+                  f"order, against {SOURCE}")
         return 0
     if args.out.resolve() == SOURCE.resolve():
         raise SystemExit("refusing to overwrite the research record")
