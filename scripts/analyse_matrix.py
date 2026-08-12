@@ -611,7 +611,7 @@ def main() -> int:
               f"{block['gate']} degeneracy gate")
 
         fp16 = block["contingency"]["FP16"]
-        print(f"\nfull precision, the two axes crossed:")
+        print("\nfull precision, the two axes crossed:")
         print(f"{'':10s}" + "".join(f"{c[:10]:>12s}" for c in CLASSES))
         for prompt_class in (HARMFUL, BENIGN):
             row = fp16[prompt_class]
@@ -701,8 +701,8 @@ def main() -> int:
                   "exchangeable.")
 
         if block["n_benign"]:
-            print(f"\nwhat the lost usefulness was made of "
-                  f"(over-refusal + capability + unclear = lost):")
+            print("\nwhat the lost usefulness was made of "
+                  "(over-refusal + capability + unclear = lost):")
             # Every class printed, not just the two aggregates. "Capability
             # failure" groups a model SAYING it cannot with a decoder that
             # stopped producing language, and those are different mechanisms

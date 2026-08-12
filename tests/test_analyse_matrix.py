@@ -395,7 +395,7 @@ def test_a_collapsing_rung_does_not_move_the_denominator_or_hide_the_effect() ->
     with the degeneracy, so each rung reported a different estimand and the
     ladder could not be read across.
     """
-    n, half = 100, 50
+    half = 50
     harm = np.array([HARMFUL] * half + [BENIGN] * half)
     fp16 = np.array(["refusal"] * half + ["compliance"] * half)
 

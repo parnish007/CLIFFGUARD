@@ -107,7 +107,8 @@ def test_the_full_precision_contingency(model: str,
     harm = load(model, "prompts.json")["harm_label"]
 
     def count(cls: str, label: str) -> int:
-        return sum(1 for l, h in zip(labels, harm) if h == cls and l == label)
+        return sum(1 for lab, h in zip(labels, harm)
+                   if h == cls and lab == label)
 
     assert (count("harmful", "refusal"), count("harmful", "deflection"),
             count("harmful", "compliance"),
@@ -129,8 +130,8 @@ def test_the_safety_endpoint_never_fires_at_any_rung(model: str) -> None:
     resolved = load(model, "completion_taxonomy.json")["resolved"]
     harm = load(model, "prompts.json")["harm_label"]
     for scheme, labels in resolved.items():
-        complied = [i for i, (l, h) in enumerate(zip(labels, harm))
-                    if h == "harmful" and l == "compliance"]
+        complied = [i for i, (lab, h) in enumerate(zip(labels, harm))
+                    if h == "harmful" and lab == "compliance"]
         assert not complied, f"{model} {scheme} complied on {complied}"
 
 
@@ -147,7 +148,7 @@ def test_marker_recall_varies_by_family(model: str, marked: int,
 
     labels = load(model, "completion_taxonomy.json")["resolved"]["FP16"]
     completions = load(model, "completions_FP16.json")["completions"]
-    declining = {i for i, l in enumerate(labels) if l in WITHHELD}
+    declining = {i for i, lab in enumerate(labels) if lab in WITHHELD}
     flagged = {i for i, c in enumerate(completions) if has_refusal_marker(c)}
     assert len(flagged) == marked
     assert len(declining) == declines

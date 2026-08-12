@@ -21,7 +21,7 @@ import pytest
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-from scripts.build_labelled_tables import (
+from scripts.build_labelled_tables import (  # noqa: E402 - needs sys.path above
     RUNS, corrected_labels, measure, table)
 
 STATS = REPO / "docs" / "paper" / "labelled_paper_stats.json"

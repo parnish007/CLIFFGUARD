@@ -65,7 +65,6 @@ def test_checks_are_anchored_to_context() -> None:
     unrelated "4.62" -- it could not fail. Every pattern must carry surrounding
     words, so require more than digits and separators.
     """
-    import json
 
     from scripts.check_paper_numbers import CHECKS, load_stats
 

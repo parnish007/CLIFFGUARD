@@ -238,7 +238,11 @@ CHECKS: tuple[Check, ...] = (
     # ---- transitions ------------------------------------------------------
     Check("max transition rate",
           lambda s: f"{100 * max(r['rate_itt'] for r in _transitions(s)):.1f}",
-          lambda v: _rx(rf"stay at or below {v}") + r"\\?%"),
+          # The sentence now names the scorer this maximum belongs to, because
+          # round 4 re-graded the same 14 cells and got a different one. Quoting
+          # either number without saying which instrument produced it is the
+          # ambiguity that section removes.
+          lambda v: _rx(rf"they are at or below {v}") + r"\\?%"),
     Check("Qwen 4.5 to-refuse count",
           lambda s: str(_row(s, "Qwen2.5-3B", 4.5)["to_refusal"]),
           lambda v: _rx(rf"Qwen2.5-3B newly refuses {v} prompts")),
@@ -315,7 +319,12 @@ CHECKS: tuple[Check, ...] = (
           lambda v: _rx(rf"the factor was {v}")),
     Check("corrected 4.5-bit rate, Phi",
           lambda s: f"{100 * _corrected_rate(s, 'Phi-3.5-mini'):.1f}",
-          lambda v: _rx(rf"puts Phi-3\.5-mini at \$20/500 = {v}") + r"\\?%\$"),
+          # Moved into the round 4 section. With the full ladder re-graded the
+          # cell is quoted as its transition counts rather than as a rate, so
+          # the old phrasing is kept as an alternative rather than deleted --
+          # either spelling of the same cell satisfies this check.
+          lambda v: _rx(r"becomes 20-against-21")
+                    + "|" + _rx(rf"puts Phi-3\.5-mini at \$20/500 = {v}")),
     # ---- what the refusal class contains ---------------------------------
     Check("audit: new refusals",
           lambda s: str(s["refusal_class_audit"]["Qwen2.5-3B"]["n_new_refusals"]),
@@ -977,6 +986,74 @@ MATRIX_CHECKS: tuple[Check, ...] = tuple(
     for model in TABLE_ORDER)
 
 
+def _r4_kappa(r4: dict[str, Any], model: str, scorer: str) -> str:
+    return f"{r4['scorer_comparison']['drift'][model][scorer]['kappa']:+.2f}"
+
+
+def _r4_spread(r4: dict[str, Any], model: str, key: str) -> str:
+    return f"{r4['option_order'][model]['spread'][key]:.1f}"
+
+
+def _r4_bound(r4: dict[str, Any], scorer: str, key: str) -> str:
+    return f"{100 * r4['scorer_comparison']['bounds'][scorer][key]:.2f}"
+
+
+ROUND4_CHECKS: tuple[Check, ...] = (
+    # The sign reversal is the single most consequential number round 4
+    # produced, so it is pinned in both directions rather than only as text.
+    Check("round4 Qwen kappa, corrected",
+          lambda r: _r4_kappa(r, "Qwen2.5-3B", "corrected"),
+          lambda v: _rx(rf"\$\{{{v}\}}\$ \$\[\+0\.60, \+1\.76\]\$|"
+                        rf"\$\{v}\$ \$\[\+0\.60, \+1\.76\]\$")),
+    Check("round4 Phi kappa, corrected",
+          lambda r: _r4_kappa(r, "Phi-3.5-mini", "corrected"),
+          lambda v: _rx(rf"\$\{v}\$ \$\[-0\.78, \+0\.50\]\$")),
+    Check("round4 pooled kappa, corrected",
+          lambda r: f"{r['scorer_comparison']['drift']['_pooled']['corrected']['kappa']:.2f}",
+          lambda v: _rx(rf"falls from \$1\.15\$\s*to \$0?{v.lstrip('0')}\$|"
+                        rf"to \$0?{v.lstrip('0')}\$ points per bit")),
+    # The simultaneous bound doubles under the second scorer. A deployment
+    # claim reading one of these is off by a factor of two from the other, so
+    # both spellings are anchored to the sentence that contrasts them.
+    Check("round4 simultaneous bound, corrected",
+          lambda r: _r4_bound(r, "corrected", "max_upper95_simultaneous"),
+          lambda v: _rx(rf"4\.62\\% to {v}\\%")),
+    Check("round4 max transition rate, corrected",
+          lambda r: f"{100 * r['scorer_comparison']['bounds']['corrected']['max_rate_itt']:.1f}",
+          lambda v: _rx(rf"give {v}\\% and 7\.72\\%")),
+    # The asymmetry the paper's methodological claim rests on: absolute rates
+    # move by ~10 points across option assignments, paired deltas by ~1.
+    Check("round4 option-order spread, Qwen absolute",
+          lambda r: _r4_spread(r, "Qwen2.5-3B", "fp16_refusal_pct_range"),
+          lambda v: _rx(rf"a {v}-point range on Qwen2\.5-3B")),
+    Check("round4 option-order spread, Phi absolute",
+          lambda r: _r4_spread(r, "Phi-3.5-mini", "fp16_refusal_pct_range"),
+          lambda v: _rx(rf"{v} on Phi-3\.5-mini, while the paired")),
+    Check("round4 option-order spread, Qwen paired",
+          lambda r: _r4_spread(r, "Qwen2.5-3B", "paired_delta_pp_range"),
+          lambda v: _rx(rf"moves across {v} points on Qwen2\.5-3B")),
+    Check("round4 cells changing significance",
+          lambda r: str(r["scorer_comparison"]["n_significance_changes"]),
+          lambda v: _rx(rf"{'two' if v == '2' else v} lose significance")),
+    # The scorer effect tested directly rather than inferred from two
+    # non-overlapping intervals. Both signs are pinned: a null on one model and
+    # a large effect on the other is the claim, and quoting either alone
+    # misrepresents it.
+    # re.escape on the value: these are signed numbers, and an unescaped "+"
+    # is a quantifier rather than a plus sign, so the pattern would silently
+    # stop matching the very thing it is guarding.
+    Check("round4 paired scorer difference, Qwen",
+          lambda r: f"{r['scorer_difference']['Qwen2.5-3B']['difference']:+.2f}",
+          lambda v: _rx(r"the difference is \$") + re.escape(v) + r"\$"),
+    Check("round4 paired scorer difference, Phi",
+          lambda r: f"{r['scorer_difference']['Phi-3.5-mini']['difference']:+.2f}",
+          lambda v: _rx(r"it is \$") + re.escape(v) + r"\$"),
+    Check("round4 five-way worst agreement",
+          lambda r: f"{100 * r['class_agreement']['five_way']['worst_agreement']:.1f}",
+          lambda v: _rx(rf"worst\s+{v}\\%")),
+)
+
+
 def _stratum_share(key: dict[str, Any], name: str) -> str:
     """One stratum's share of the population the human sample was drawn from.
 
@@ -1102,6 +1179,10 @@ def main() -> int:
                          "and quotes the original scorer's values beside it, so "
                          "the probe checks read this file rather than "
                          "review_stats.json's superseded grading")
+    ap.add_argument("--round4", type=Path,
+                    default=Path("docs/paper/round4_stats.json"),
+                    help="cross-scorer and option-order results, from "
+                         "scripts/analyse_round4.py")
     ap.add_argument("--labelled", type=Path,
                     default=Path("docs/paper/labelled_paper_stats.json"),
                     help="round-3 measurements; skipped when absent, because "
@@ -1198,6 +1279,20 @@ def main() -> int:
         matrix = json.loads(args.matrix.read_text(encoding="utf-8"))
         for check in MATRIX_CHECKS:
             value = check.value(matrix)
+            found = re.search(check.pattern(value), text) is not None
+            print(f"{check.label:34s} {value:16s} {'ok' if found else 'MISSING'}")
+            if not found:
+                failures.append(f"  {check.label}: expected {value!r} in "
+                                f"context /{check.pattern(value)}/")
+
+    # Round 4's cross-scorer and option-order numbers. Their own source, because
+    # they are the one set of quantities in the paper that exists twice -- once
+    # per scorer -- and a check that read them from review_stats.json would be
+    # reading whichever grading that file happened to be built under.
+    if args.round4.exists():
+        round4 = json.loads(args.round4.read_text(encoding="utf-8"))
+        for check in ROUND4_CHECKS:
+            value = check.value(round4)
             found = re.search(check.pattern(value), text) is not None
             print(f"{check.label:34s} {value:16s} {'ok' if found else 'MISSING'}")
             if not found:

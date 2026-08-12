@@ -52,6 +52,15 @@ line-length = 100
 
 [tool.mypy]
 strict = true
+# scripts/ is not a package, and its modules import each other both ways --
+# `import reanalyse_runs` from a sibling run as __main__, and
+# `from scripts.reanalyse_runs import ...` after a sys.path insert. Without a
+# declared base, mypy sees one file under two module names and aborts before
+# checking anything: "Source file found twice under different module names".
+# Naming the repo root as the base resolves every scripts/ module to the
+# `scripts.` spelling, which is the one the imports use.
+explicit_package_bases = true
+mypy_path = "."
 
 [[tool.mypy.overrides]]
 module = ["cliffguard.engines.*", "torch", "transformers", "bitsandbytes", "accelerate", "awq", "vllm", "llama_cpp", "gguf", "gguf.*", "huggingface_hub", "datasets", "scipy", "scipy.stats", "matplotlib", "matplotlib.*"]
