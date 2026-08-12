@@ -46,6 +46,11 @@ from scripts.run_behavioural_ladder import (
 )
 
 RATIO_THRESHOLD = 3.0        # H1, fixed in the preregistration
+# The two checkpoints H1 and H2 were written about. Named here rather than taken
+# from whatever the run happens to contain, because "every scheme we managed to
+# grade" and "every scheme we predicted" are different denominators and only the
+# second one is the hypothesis.
+PREREGISTERED_SCHEMES = ("AWQ_4B", "GPTQ_4B")
 GATE_TOLERANCE_PP = 2.0      # H2, fixed in the preregistration
 BASELINE = "FP16"
 
@@ -72,6 +77,24 @@ def _nll_degenerate(text: str, nll: float, threshold: float) -> bool:
     import math
 
     return (not text.strip()) or (not math.isfinite(nll)) or nll > threshold
+
+
+def verdict(passes: list[bool], complete: bool) -> str:
+    """The preregistered decision rule, including its coverage requirement.
+
+    "Confirmed if the ratio is >= 3 for both deployed schemes. Partially
+    confirmed if for one. Refuted if for neither." Coverage is therefore part
+    of the rule: a run that graded one scheme and passed on it has satisfied the
+    prediction for one of two, which the document calls PARTIAL. `all()` over a
+    one-element list says CONFIRMED, and that would be a stronger claim than was
+    ever registered -- reached by accident, because a wheel would not install.
+
+    REFUTED first: nothing passing is a refutation whatever the coverage, since
+    a scheme that ran and failed is evidence and a scheme that never ran is not.
+    """
+    if not any(passes):
+        return "REFUTED"
+    return "CONFIRMED" if (all(passes) and complete) else "PARTIAL"
 
 
 def transitions(base: list[str], rung: list[str], gate: list[bool],
@@ -140,9 +163,34 @@ def main() -> int:
     if not deployed:
         raise SystemExit("no deployed scheme was graded")
 
+    # What the preregistration NAMED, against what this run reached. H1 reads
+    # "Confirmed if the ratio is >= 3 for both deployed schemes. Partially
+    # confirmed if for one" -- so coverage is part of the verdict, not context
+    # for it. With one scheme graded, `all()` and `any()` are the same test and
+    # a passing single-scheme run would print CONFIRMED for a prediction made
+    # about two. That is not a caveat to add in prose afterwards; it is the
+    # difference between the outcome the protocol defines and a stronger one.
+    #
+    # A runtime that cannot install one of the two backends is the way this
+    # happens, and it is common enough that the notebook now expects it.
+    missing = [s for s in PREREGISTERED_SCHEMES if s not in deployed]
+    complete = not missing
+    if missing:
+        print(f"NOTE: the preregistration names {PREREGISTERED_SCHEMES} and "
+              f"this run covers {deployed}.")
+        print(f"      {missing} did not run, so H1 and H2 cannot reach "
+              "CONFIRMED here: the best available outcome is PARTIAL, which is "
+              "what the protocol")
+        print("      says a single-scheme result is. Rerun on a runtime that "
+              "can load it to close the other half.")
+        print()
+
     report: dict[str, Any] = {
         "run": args.run.name, "scorer": args.scorer, "judge": args.judge,
-        "schemes": deployed, "thresholds": {
+        "schemes": deployed,
+        "schemes_preregistered": list(PREREGISTERED_SCHEMES),
+        "schemes_missing": missing,
+        "coverage_complete": complete, "thresholds": {
             "h1_ratio": RATIO_THRESHOLD, "h2_gate_pp": GATE_TOLERANCE_PP},
         "degeneracy_nll_multiple": DEGENERACY_NLL_MULTIPLE,
         "schemes_detail": {},
@@ -211,14 +259,13 @@ def main() -> int:
               f"{(f'{ratio:.1f}x' if ratio else 'n/a'):>7s} "
               f"{by_judge['p']:9.4f}")
 
-    report["h1"] = ("CONFIRMED" if all(h1_pass) else
-                    "PARTIAL" if any(h1_pass) else "REFUTED")
-    report["h2"] = ("CONFIRMED" if all(h2_pass) else
-                    "PARTIAL" if any(h2_pass) else "REFUTED")
+    report["h1"] = verdict(h1_pass, complete)
+    report["h2"] = verdict(h2_pass, complete)
     report["h3_holm"] = holm(shift_p)
 
     print()
-    print(f"H1  estimator gap >= {RATIO_THRESHOLD:g}x on every deployed "
+    scope = "every predicted" if complete else f"the {len(deployed)} graded"
+    print(f"H1  estimator gap >= {RATIO_THRESHOLD:g}x on {scope} "
           f"scheme, nothing gated : {report['h1']}")
     print(f"H2  nothing gated, and the two gates agree within "
           f"{GATE_TOLERANCE_PP:g} pp        : {report['h2']}")

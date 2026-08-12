@@ -16,10 +16,12 @@ import pytest
 
 from scripts.analyse_deployed import (
     GATE_TOLERANCE_PP,
+    PREREGISTERED_SCHEMES,
     RATIO_THRESHOLD,
     _mcnemar,
     holm,
     transitions,
+    verdict,
 )
 
 PREREG = Path(__file__).resolve().parents[1] / "docs" / "preregistration_round5.md"
@@ -156,3 +158,39 @@ def test_holm_is_monotone_and_never_lowers_a_p_value() -> None:
 
 def test_holm_of_one_test_is_that_test() -> None:
     assert holm({"only": 0.03}) == {"only": 0.03}
+
+
+def test_confirmed_needs_every_predicted_scheme_not_every_graded_one() -> None:
+    """One scheme passing is PARTIAL, which is what the document calls it.
+
+    This is reachable by accident rather than by choice: `autoawq` and
+    `gptqmodel` are independent wheels and a Colab runtime can install one and
+    not the other, so step 1 grades a single deployed scheme. `all()` over a
+    one-element list is True, and without the coverage flag a run that answered
+    half the prediction would print the verdict for having answered all of it.
+    """
+    assert verdict([True, True], complete=True) == "CONFIRMED"
+    assert verdict([True], complete=False) == "PARTIAL"
+    assert verdict([True, True], complete=False) == "PARTIAL"
+    assert verdict([True, False], complete=True) == "PARTIAL"
+
+
+def test_a_refutation_does_not_need_full_coverage() -> None:
+    """A scheme that ran and failed is evidence; one that never ran is not.
+
+    So REFUTED is decided on what was graded. The asymmetry is deliberate:
+    incomplete coverage can only ever weaken a positive claim, and treating a
+    missing scheme as if it might have rescued a failing one would let any
+    refutation be deferred by not running something.
+    """
+    assert verdict([False], complete=False) == "REFUTED"
+    assert verdict([False, False], complete=True) == "REFUTED"
+
+
+def test_the_predicted_schemes_are_the_ones_the_document_names() -> None:
+    text = PREREG.read_text(encoding="utf-8")
+    assert "Qwen/Qwen2.5-3B-Instruct-AWQ" in text
+    assert "Qwen/Qwen2.5-3B-Instruct-GPTQ-Int4" in text
+    assert PREREGISTERED_SCHEMES == ("AWQ_4B", "GPTQ_4B")
+    # And the rule this encodes is the one written down, word for word.
+    assert "Partially confirmed if for one" in text
