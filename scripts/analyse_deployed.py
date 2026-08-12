@@ -204,7 +204,7 @@ def main() -> int:
           f"{'ratio':>7s} {'shift p':>9s}")
     print("-" * 54)
 
-    h1_pass, h2_pass, shift_p = [], [], {}
+    h1_pass, h2_pass, shift_p, exploratory = [], [], {}, []
     for scheme in deployed:
         rung_nll = nll[scheme]
         # The gate is evaluated at BOTH ends, as everywhere else: a pair is
@@ -242,10 +242,20 @@ def main() -> int:
         ratio = (by_list["rate"] / by_judge["rate"]) if by_judge["rate"] else None
         shift_p[scheme] = by_judge["p"]
 
-        h1_pass.append(ratio is not None and ratio >= RATIO_THRESHOLD
-                       and gated_out == 0)
-        h2_pass.append(gated_out == 0 and abs(
-            100 * by_list_nll["rate"] - 100 * by_list["rate"]) <= GATE_TOLERANCE_PP)
+        # Only the schemes the preregistration named enter its verdict. A run
+        # may carry others -- bitsandbytes NF4 rides along because it needs no
+        # backend and is the most widely deployed 4-bit path there is -- and
+        # those are a different question, asked without a threshold fixed in
+        # advance. Folding one into `all(h1_pass)` would let an unregistered
+        # scheme decide a registered hypothesis in either direction.
+        if scheme in PREREGISTERED_SCHEMES:
+            h1_pass.append(ratio is not None and ratio >= RATIO_THRESHOLD
+                           and gated_out == 0)
+            h2_pass.append(gated_out == 0 and abs(
+                100 * by_list_nll["rate"] - 100 * by_list["rate"])
+                <= GATE_TOLERANCE_PP)
+        else:
+            exploratory.append(scheme)
 
         report["schemes_detail"][scheme] = {
             "gated_out": gated_out,
@@ -259,16 +269,32 @@ def main() -> int:
               f"{(f'{ratio:.1f}x' if ratio else 'n/a'):>7s} "
               f"{by_judge['p']:9.4f}")
 
-    report["h1"] = verdict(h1_pass, complete)
-    report["h2"] = verdict(h2_pass, complete)
+    report["schemes_exploratory"] = exploratory
+    if h1_pass:
+        report["h1"] = verdict(h1_pass, complete)
+        report["h2"] = verdict(h2_pass, complete)
+    else:
+        # Not REFUTED. Nothing the preregistration named was gradable, so the
+        # prediction was never put at risk, and `verdict([])` would call that a
+        # refutation on the strength of schemes it was not written about.
+        report["h1"] = report["h2"] = "UNANSWERED"
+        print("None of the preregistered schemes was gradable, so H1 and H2 "
+              "are UNANSWERED rather than refuted:")
+        print(f"  the prediction was never put at risk. {exploratory} ran and "
+              "is reported below as exploratory.")
     report["h3_holm"] = holm(shift_p)
 
     print()
-    scope = "every predicted" if complete else f"the {len(deployed)} graded"
+    scope = ("every predicted" if complete
+             else f"the {len(h1_pass)} predicted-and-graded")
     print(f"H1  estimator gap >= {RATIO_THRESHOLD:g}x on {scope} "
           f"scheme, nothing gated : {report['h1']}")
     print(f"H2  nothing gated, and the two gates agree within "
           f"{GATE_TOLERANCE_PP:g} pp        : {report['h2']}")
+    if exploratory:
+        print(f"    {exploratory}: NOT preregistered, so outside H1 and H2.")
+        print("        Reported as exploratory: no threshold was fixed in "
+              "advance and no replication is claimed.")
     print("H3  exploratory, Holm over the deployed schemes:")
     for scheme, adjusted in report["h3_holm"].items():
         print(f"      {scheme:10s} raw p={shift_p[scheme]:.4f}  "

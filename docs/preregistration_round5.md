@@ -109,3 +109,54 @@ document a decision made after seeing a result again.
 Human labels do not exist yet. Nothing in this protocol establishes that any
 grader is correct, only that two of them disagree by a stated amount. H1 and H2
 are claims about instruments, and they are stated that way deliberately.
+
+---
+
+## Addendum, 2026-08-12 — an instrument that does not exist here
+
+Added **before any round-5 outcome was observed**, and recorded rather than
+folded silently into the protocol above. H1 and H2 are unchanged.
+
+**What happened.** H1 and H2 name two checkpoints,
+`Qwen/Qwen2.5-3B-Instruct-AWQ` and `Qwen/Qwen2.5-3B-Instruct-GPTQ-Int4`.
+`transformers` loads the first only through `autoawq` and the second only
+through `optimum` with `gptqmodel` or `auto-gptq`. On the runtime available to
+this project — Colab, CPython 3.12 — none of those installs from PyPI: `autoawq`
+and `gptqmodel` publish source distributions only, and `auto-gptq`'s wheels stop
+at cp311. GPTQModel does publish a cp312 binary on GitHub Releases, so the GPTQ
+half is reachable; AutoAWQ's last wheel of any kind is cp311, so the AWQ half is
+not, short of compiling CUDA kernels inside the session.
+
+**What follows for H1 and H2.** Nothing about their thresholds or their decision
+rules. If only the GPTQ checkpoint grades, H1's existing rule already covers it:
+*partially confirmed if for one*. If neither grades, H1 and H2 are **UNANSWERED**
+— not refuted. A prediction that was never put at risk has not survived a test,
+and reporting an unavailable instrument as a refutation would be the same error
+as reporting it as a confirmation.
+
+## H5 — exploratory. The same question, with an instrument that exists.
+
+**Claim under test.** Whether the estimator gap survives a quantizer people
+actually deploy. This is the objection H1 was written to answer, and it does not
+depend on which deployed quantizer answers it.
+
+**Measurement.** bitsandbytes NF4 on `Qwen/Qwen2.5-3B-Instruct`, built at load
+time from the same full-precision weights, against the same full-precision
+baseline, the same 500 HH-RLHF prompts, the same corrected scorer and the same
+composite gate as every other scheme here. It requires no backend beyond
+bitsandbytes, which every step already depends on. `load_in_4bit=True` and the
+QLoRA workflows built on it are, by volume, the most deployed 4-bit path there
+is.
+
+**No threshold is fixed for it, and none is implied by H1's.** NF4 is a
+different intervention from AWQ, not the same one at a different strength, and
+this document is being amended with the instrument constraint already known —
+which is exactly the circumstance in which a newly invented threshold is worth
+nothing. H5 is reported as an effect size with its interval and its exact test,
+described as exploratory, and **may not be reported as a replication of H1 or as
+a substitute for it**.
+
+**Enforced, not merely intended.** `scripts/analyse_deployed.py` scores H1 and
+H2 over the two preregistered scheme names only. A scheme this document did not
+name cannot enter either verdict in either direction, and a run carrying only
+unnamed schemes reports UNANSWERED rather than a verdict.
