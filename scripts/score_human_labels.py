@@ -167,6 +167,43 @@ def decomposition(gold: dict[int, str], ids: list[int]) -> dict[str, Any]:
     }
 
 
+def recall_by_underlying_weighted(gold: dict[int, str], pred: dict[int, str],
+                                  stratum: dict[int, str],
+                                  weights: dict[str, float],
+                                  n_boot: int = 2000, seed: int = 0
+                                  ) -> dict[str, Any]:
+    """`recall_by_underlying`, carried back to the ladder's stratum shares.
+
+    Necessary for the same reason the accuracies are weighted, and more
+    urgently: the strata were defined by phrase-list/judge agreement, and a
+    deflection is disproportionately what the phrase list misses. So the
+    disagreement strata this sheet oversamples are exactly the ones richest in
+    deflection, and an unweighted by-kind recall is the statistic most exposed
+    to the sampling plan of any in this section.
+    """
+    out: dict[str, Any] = {}
+    for cls in BROAD_DECLINE:
+        ids = [i for i in sorted(gold)
+               if gold[i] == cls and i in pred and stratum.get(i) in weights]
+        if not ids:
+            out[cls] = {"n": 0, "recall": None}
+            continue
+        by_stratum = _group(ids, stratum)
+
+        def rate(picked: dict[str, list[int]]) -> float:
+            num = den = 0.0
+            for s, members in picked.items():
+                w = weights[s]
+                num += w * sum(pred[i] == "REFUSE" for i in members)
+                den += w * len(members)
+            return num / den if den else float("nan")
+
+        draws = [rate(r) for r in _resamples(by_stratum, n_boot, seed)]
+        out[cls] = {"n": len(ids), "recall": rate(by_stratum),
+                    "ci95": _ci([d for d in draws if d == d])}
+    return out
+
+
 def recall_by_underlying(gold: dict[int, str], pred: dict[int, str]
                          ) -> dict[str, Any]:
     """How often each instrument calls a decline a decline, split by WHICH kind.
@@ -227,45 +264,247 @@ def stratum_weights(key: dict[str, Any]) -> dict[str, float] | None:
             for s in pop if smp.get(s)}
 
 
-def weighted_accuracy(gold: dict[int, str], pred: dict[int, str],
-                      stratum: dict[int, str], weights: dict[str, float],
-                      n_boot: int = 10000, seed: int = 0) -> dict[str, Any]:
-    """Population-weighted accuracy, with a stratified bootstrap interval.
+def _group(ids: list[int], stratum: dict[int, str]) -> dict[str, list[int]]:
+    out: dict[str, list[int]] = {}
+    for i in ids:
+        out.setdefault(stratum[i], []).append(i)
+    return out
+
+
+def _resamples(by_stratum: dict[str, list[int]], n_boot: int, seed: int):
+    """Stratified bootstrap replicates, yielded as id lists.
 
     Resampling is within stratum, because the stratum sizes were fixed by the
     design rather than drawn: bootstrapping rows across the whole sheet would
     let the stratum mix vary between replicates and price a source of variation
     the sampling plan does not have.
+
+    One generator, so every quantity computed from a replicate is computed on
+    the SAME replicate. That is what keeps paired comparisons paired: an
+    accuracy difference resampled independently for each instrument would
+    inherit the variance of two independent samples and inflate its interval.
     """
     import random
 
+    rng = random.Random(seed)
+    for _ in range(n_boot):
+        yield {s: [rng.choice(m) for _ in m] for s, m in by_stratum.items()}
+
+
+def _ci(draws: list[float], level: float = 0.95) -> list[float]:
+    draws = sorted(draws)
+    n = len(draws)
+    tail = (1 - level) / 2
+    return [draws[int(tail * n)], draws[int((1 - tail) * n) - 1]]
+
+
+def _w_accuracy(gold: dict[int, str], pred: dict[int, str],
+                picked: dict[str, list[int]], weights: dict[str, float]) -> float:
+    num = den = 0.0
+    for s, members in picked.items():
+        w = weights[s]
+        num += w * sum(gold[i] == pred[i] for i in members)
+        den += w * len(members)
+    return num / den if den else float("nan")
+
+
+def _w_macro_f1(gold: dict[int, str], pred: dict[int, str],
+                picked: dict[str, list[int]], weights: dict[str, float],
+                classes: tuple[str, ...]) -> float:
+    """Weighted macro-F1, over the classes that carry support."""
+    m = {t: {p: 0.0 for p in classes} for t in classes}
+    for s, members in picked.items():
+        w = weights[s]
+        for i in members:
+            m[gold[i]][pred[i]] += w
+    f1s = []
+    for c in classes:
+        tp = m[c][c]
+        fp = sum(m[t][c] for t in classes if t != c)
+        fn = sum(m[c][p] for p in classes if p != c)
+        if not (tp + fn):          # no support: not a class this sample tests
+            continue
+        prec = tp / (tp + fp) if tp + fp else 0.0
+        rec = tp / (tp + fn)
+        f1s.append(2 * prec * rec / (prec + rec) if prec + rec else 0.0)
+    return sum(f1s) / len(f1s) if f1s else float("nan")
+
+
+def weighted_accuracy(gold: dict[int, str], pred: dict[int, str],
+                      stratum: dict[int, str], weights: dict[str, float],
+                      n_boot: int = 10000, seed: int = 0) -> dict[str, Any]:
+    """Population-weighted accuracy, with a stratified bootstrap interval."""
     ids = [i for i in sorted(set(gold) & set(pred)) if stratum.get(i) in weights]
     if not ids:
         return {"accuracy": None}
-    by_stratum: dict[str, list[int]] = {}
-    for i in ids:
-        by_stratum.setdefault(stratum[i], []).append(i)
-
-    def estimate(picked: dict[str, list[int]]) -> float:
-        num = den = 0.0
-        for s, members in picked.items():
-            w = weights[s]
-            num += w * sum(gold[i] == pred[i] for i in members)
-            den += w * len(members)
-        return num / den if den else float("nan")
-
-    point = estimate(by_stratum)
-    rng = random.Random(seed)
-    draws = sorted(
-        estimate({s: [rng.choice(m) for _ in m] for s, m in by_stratum.items()})
-        for _ in range(n_boot))
-    lo = draws[int(0.025 * n_boot)]
-    hi = draws[int(0.975 * n_boot) - 1]
-    return {"accuracy": point, "ci95": [lo, hi], "n": len(ids),
+    by_stratum = _group(ids, stratum)
+    point = _w_accuracy(gold, pred, by_stratum, weights)
+    draws = [_w_accuracy(gold, pred, r, weights)
+             for r in _resamples(by_stratum, n_boot, seed)]
+    return {"accuracy": point, "ci95": _ci(draws), "n": len(ids),
             "weights": weights,
             "note": ("Weighted back to the ladder's stratum shares; the "
                      "unweighted figure is an accuracy over the drawn sheet, "
                      "which oversamples disagreement on purpose.")}
+
+
+def weighted_paired_difference(gold: dict[int, str], a: dict[int, str],
+                               b: dict[int, str], stratum: dict[int, str],
+                               weights: dict[str, float], margin: float = 0.03,
+                               classes: tuple[str, ...] | None = None,
+                               n_boot: int = 10000, seed: int = 0
+                               ) -> dict[str, Any]:
+    """Weighted accuracy difference between two instruments, paired.
+
+    This replaces an exact McNemar as the headline comparison, and the reason
+    is specific to how this sample was drawn. McNemar is a test on the
+    discordant cells --- the rows where exactly one instrument is right --- and
+    the strata here were defined by whether the phrase list and the judge
+    AGREE. Oversampling the disagreement strata therefore inflates precisely
+    the cells the test consumes, by design and by a factor of six in one
+    stratum. The unweighted test answers a question about the sheet; the
+    estimand the paper needs is a difference over the ladder.
+
+    Both instruments are evaluated on the same resample, so the pairing that
+    makes the comparison efficient is preserved.
+
+    `margin` turns the result into an equivalence statement as well as a
+    difference one. Failing to reject a difference is not evidence of
+    equivalence --- a distinction this paper insists on elsewhere and must not
+    abandon here --- so a claim that two instruments agree is only made when
+    the interval excludes differences larger than the margin, rather than when
+    it happens to include zero.
+    """
+    ids = [i for i in sorted(set(gold) & set(a) & set(b))
+           if stratum.get(i) in weights]
+    if not ids:
+        return {"difference": None}
+    by_stratum = _group(ids, stratum)
+    point = (_w_accuracy(gold, a, by_stratum, weights)
+             - _w_accuracy(gold, b, by_stratum, weights))
+    draws = []
+    macro_draws = []
+    for r in _resamples(by_stratum, n_boot, seed):
+        draws.append(_w_accuracy(gold, a, r, weights)
+                     - _w_accuracy(gold, b, r, weights))
+        if classes:
+            fa, fb = _w_macro_f1(gold, a, r, weights, classes), \
+                     _w_macro_f1(gold, b, r, weights, classes)
+            if fa == fa and fb == fb:
+                macro_draws.append(fa - fb)
+    ci95 = _ci(draws, 0.95)
+    # TOST at alpha=0.05 is the two-one-sided-tests procedure, and the interval
+    # that corresponds to it is the 90% one, not the 95%.
+    ci90 = _ci(draws, 0.90)
+    macro: dict[str, Any] = {}
+    if macro_draws:
+        assert classes is not None
+        mp = (_w_macro_f1(gold, a, by_stratum, weights, classes)
+              - _w_macro_f1(gold, b, by_stratum, weights, classes))
+        m95 = _ci(macro_draws, 0.95)
+        macro = {"macro_f1_difference": mp, "macro_f1_ci95": m95,
+                 "macro_f1_excludes_zero": m95[0] > 0 or m95[1] < 0}
+    return {
+        "difference_pp": point * 100,
+        "ci95_pp": [c * 100 for c in ci95],
+        "ci90_pp": [c * 100 for c in ci90],
+        **macro,
+        "n": len(ids),
+        "excludes_zero": ci95[0] > 0 or ci95[1] < 0,
+        "equivalence_margin_pp": margin * 100,
+        "equivalent_within_margin": abs(ci90[0]) < margin and abs(ci90[1]) < margin,
+        "note": ("Stratified paired bootstrap of the population-weighted "
+                 "accuracy difference. `equivalent_within_margin` is a TOST "
+                 "verdict at the stated margin; where it is false and "
+                 "`excludes_zero` is also false, the honest statement is that "
+                 "no difference was detected AND equivalence was not "
+                 "established."),
+    }
+
+
+def weighted_decomposition(gold: dict[int, str], stratum: dict[int, str],
+                           weights: dict[str, float], n_boot: int = 10000,
+                           seed: int = 0) -> dict[str, Any]:
+    """Composition of the merged declining class, weighted to the ladder.
+
+    The raw composition is a composition of the SHEET, and the sheet
+    oversamples the strata where the instruments disagree --- which are not
+    neutral with respect to what kind of decline a completion is, since a
+    deflection is exactly what a phrase list misses. So the unweighted thirds
+    could be an artifact of the sampling plan, and this checks.
+    """
+    ids = [i for i in sorted(gold) if stratum.get(i) in weights]
+    by_stratum = _group(ids, stratum)
+
+    def shares(picked: dict[str, list[int]]) -> dict[str, float]:
+        mass = {k: 0.0 for k in BROAD_DECLINE}
+        for s, members in picked.items():
+            w = weights[s]
+            for i in members:
+                if gold[i] in mass:
+                    mass[gold[i]] += w
+        total = sum(mass.values())
+        return {k: (v / total if total else float("nan")) for k, v in mass.items()}
+
+    point = shares(by_stratum)
+    draws = [shares(r) for r in _resamples(by_stratum, n_boot, seed)]
+    return {
+        "share": point,
+        "ci95": {k: _ci([d[k] for d in draws]) for k in BROAD_DECLINE},
+        "note": ("Population-weighted composition of the class a three-way "
+                 "instrument collapses to REFUSE, with a stratified bootstrap "
+                 "interval. The unweighted counts describe the drawn sheet."),
+    }
+
+
+def weighted_per_class(gold: dict[int, str], pred: dict[int, str],
+                       stratum: dict[int, str], weights: dict[str, float],
+                       classes: tuple[str, ...], n_boot: int = 2000,
+                       seed: int = 0) -> dict[str, Any]:
+    """Weighted confusion matrix, per-class precision/recall/F1 and macro-F1.
+
+    Same argument as everywhere else in this module: an unweighted per-class
+    recall is a recall over a sheet that oversamples disagreement, and the
+    per-class numbers are the ones the paper's construct-validity argument
+    rests on, so they are the last place to leave the weighting out.
+    """
+    ids = [i for i in sorted(set(gold) & set(pred)) if stratum.get(i) in weights]
+    if not ids:
+        return {}
+    by_stratum = _group(ids, stratum)
+
+    def metrics(picked: dict[str, list[int]]) -> tuple[dict[str, dict[str, float]], float]:
+        m = {t: {p: 0.0 for p in classes} for t in classes}
+        for s, members in picked.items():
+            w = weights[s]
+            for i in members:
+                m[gold[i]][pred[i]] += w
+        per: dict[str, dict[str, float]] = {}
+        f1s = []
+        for c in classes:
+            tp = m[c][c]
+            fp = sum(m[t][c] for t in classes if t != c)
+            fn = sum(m[c][p] for p in classes if p != c)
+            prec = tp / (tp + fp) if tp + fp else float("nan")
+            rec = tp / (tp + fn) if tp + fn else float("nan")
+            f1 = (2 * prec * rec / (prec + rec)
+                  if prec == prec and rec == rec and (prec + rec) else float("nan"))
+            per[c] = {"support": tp + fn, "precision": prec, "recall": rec,
+                      "f1": f1}
+            if f1 == f1:
+                f1s.append(f1)
+        return per, (sum(f1s) / len(f1s) if f1s else float("nan")), m
+
+    per, macro, matrix = metrics(by_stratum)
+    draws = [metrics(r) for r in _resamples(by_stratum, n_boot, seed)]
+    for c in classes:
+        for stat in ("precision", "recall", "f1"):
+            vals = [d[0][c][stat] for d in draws if d[0][c][stat] == d[0][c][stat]]
+            per[c][f"{stat}_ci95"] = _ci(vals) if vals else None
+    return {"per_class": per, "macro_f1": macro,
+            "macro_f1_ci95": _ci([d[1] for d in draws if d[1] == d[1]]),
+            "matrix": matrix,
+            "note": "Weighted to the ladder's stratum shares."}
 
 
 def confusion(gold: dict[int, str], pred: dict[int, str],
@@ -497,14 +736,34 @@ def main() -> int:
         if weights:
             block["weighted"] = weighted_accuracy(
                 scored_gold, labels, stratum_of, weights)
+            block["weighted_per_class"] = weighted_per_class(
+                scored_gold, labels, stratum_of, weights, space)
+            if narrow:
+                block["recall_by_underlying_weighted"] = \
+                    recall_by_underlying_weighted(gold, labels, stratum_of,
+                                                  weights)
         payload["instruments"][name] = block
 
-    # Accuracy alone cannot separate the two judges here, and the difference
-    # between them is paired on identical completions, so it gets the same
-    # exact McNemar the rest of the paper uses rather than an eyeball on two
-    # overlapping confidence intervals.
     scored = {i: collapse(v) for i, v in gold.items()}
-    payload["pairwise_mcnemar"] = {
+
+    # The headline comparison is the weighted paired difference, NOT McNemar.
+    # McNemar consumes the discordant cells, and this sample was stratified on
+    # whether the phrase list and the judge agree -- so the design inflates
+    # exactly those cells, and an unweighted test on them answers a question
+    # about the sheet rather than about the ladder.
+    if weights:
+        payload["pairwise_weighted_difference"] = {
+            f"{a}|{b}": weighted_paired_difference(
+                scored, instruments[a], instruments[b], stratum_of, weights,
+                classes=("REFUSE", "COMPLY", "UNCLEAR"))
+            for a, b in itertools.combinations(sorted(payload["instruments"]), 2)}
+        payload["decomposition_weighted"] = weighted_decomposition(
+            gold, stratum_of, weights)
+
+    # Retained as a secondary, sample-level statement only. It is the right
+    # test for the drawn rows and the wrong estimand for the population, so it
+    # is reported under a name that says so rather than as the headline.
+    payload["pairwise_mcnemar_unweighted_sample"] = {
         f"{a}|{b}": mcnemar_exact(scored, instruments[a], instruments[b])
         for a, b in itertools.combinations(sorted(payload["instruments"]), 2)}
 
@@ -560,16 +819,34 @@ def main() -> int:
             fmt = lambda x: f"{x:6.3f}" if x is not None else "     -"  # noqa: E731
             print(f"  {c:10s} {v['support']:4d} {fmt(v['precision'])} "
                   f"{fmt(v['recall'])} {fmt(v['f1'])}")
-        under = block.get("recall_by_underlying")
+        under = block.get("recall_by_underlying_weighted") or \
+            block.get("recall_by_underlying")
         if under:
             parts = [f"{c} {v['recall']:.3f} (n={v['n']})"
                      for c, v in under.items() if v["recall"] is not None]
-            print(f"  decline recall by kind: {', '.join(parts)}")
+            print(f"  decline recall by kind (weighted): {', '.join(parts)}")
 
-    for pair, m in payload.get("pairwise_mcnemar", {}).items():
+    dw = payload.get("decomposition_weighted")
+    if dw:
+        print("\nweighted composition of the merged declining class:")
+        for c in BROAD_DECLINE:
+            lo, hi = dw["ci95"][c]
+            print(f"  {c:10s} {dw['share'][c]:6.1%}  [{lo:.1%}, {hi:.1%}]")
+
+    for pair, m in payload.get("pairwise_weighted_difference", {}).items():
         a, b = pair.split("|")
-        print(f"\nMcNemar {pair}: {a} right {m['a_right_b_wrong']}, "
-              f"{b} right {m['b_right_a_wrong']}, p={m['p_value']:.4g}")
+        verdict = ("differs" if m["excludes_zero"]
+                   else ("equivalent within "
+                         f"{m['equivalence_margin_pp']:.0f}pp"
+                         if m["equivalent_within_margin"]
+                         else "NOT separated and NOT shown equivalent"))
+        print(f"\nweighted {a} - {b}: {m['difference_pp']:+.1f} pp "
+              f"95% CI [{m['ci95_pp'][0]:+.1f}, {m['ci95_pp'][1]:+.1f}]  -> {verdict}")
+
+    for pair, m in payload.get("pairwise_mcnemar_unweighted_sample", {}).items():
+        a, b = pair.split("|")
+        print(f"  (sample-only McNemar {pair}: {m['a_right_b_wrong']} vs "
+              f"{m['b_right_a_wrong']}, p={m['p_value']:.4g})")
     if payload.get("warning"):
         print(f"\nWARNING: {payload['warning']}")
     print(f"\nwrote {args.out}")

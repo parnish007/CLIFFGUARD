@@ -1,11 +1,12 @@
-"""The human-validation plate: what the merged class is, and who recovers it.
+﻿"""The human-validation plate: what the merged class is, and who recovers it.
 
 Two panels, because the result has two halves that a single chart would blur.
 
   (a) The composition of the class every three-way instrument collapses into
-      one label. This is the paper's long-standing assertion turned into a
-      measurement, and the point of the panel is that no bar dominates: the
-      class is three behaviours in near-equal thirds.
+      one label, weighted back to the ladder's strata. This is the paper's
+      long-standing assertion turned into a measurement, and the point is that
+      refusal is a minority of it -- deflection is in fact the largest share,
+      which the unweighted counts do not show.
 
   (b) Per-instrument recall on each of those three behaviours, which is where
       the phrase list's failure stops looking like noise. Plotted as recall by
@@ -51,18 +52,25 @@ INSTRUMENTS = (
 )
 
 
-def panel_composition(ax, dec: dict) -> None:
-    """One stacked bar: what a three-way REFUSE label actually contains."""
+def panel_composition(ax, dec: dict, weighted: dict, total: int) -> None:
+    """One stacked bar: what a three-way REFUSE label actually contains.
+
+    Weighted to the ladder's strata, with the bootstrap interval printed under
+    each segment. The unweighted split is close to equal thirds and the
+    weighted one is not, so plotting the raw counts here would show a tidier
+    result than the data supports.
+    """
     left = 0.0
-    total = dec["n_broad_declines"]
     for kind in KINDS:
-        share = dec["share"][kind] * 100
+        share = weighted["share"][kind] * 100
+        lo, hi = (c * 100 for c in weighted["ci95"][kind])
         ax.barh(0, share, left=left, height=0.55, color=KIND_COLOUR[kind],
                 edgecolor="white", linewidth=1.2, zorder=3)
         ax.text(left + share / 2, 0, f"{share:.1f}%", ha="center", va="center",
                 fontsize=9, color="white", fontweight="bold", zorder=4)
-        ax.text(left + share / 2, -0.42, f"{kind.lower()}\nn={dec['counts'][kind]}",
-                ha="center", va="top", fontsize=8, color="#404040")
+        ax.text(left + share / 2, -0.42,
+                f"{kind.lower()}\n[{lo:.0f}, {hi:.0f}]",
+                ha="center", va="top", fontsize=7.5, color="#404040")
         left += share
 
     ax.set_xlim(0, 100)
@@ -73,7 +81,7 @@ def panel_composition(ax, dec: dict) -> None:
     ax.set_xlabel("share of the merged declining class (%)")
     ax.set_xticks([0, 25, 50, 75, 100])
     figstyle.panel_title(
-        ax, "a", f"What one “refuse” label contains (n={total})")
+        ax, "a", f"What one 'refuse' label contains (n={total})")
 
 
 def panel_recall(ax, stats: dict) -> None:
@@ -83,14 +91,18 @@ def panel_recall(ax, stats: dict) -> None:
     x = np.arange(len(names))
 
     for offset, kind in enumerate(KINDS):
-        values = [
-            (stats["instruments"][n]["recall_by_underlying"][kind]["recall"] or 0)
-            * 100 for n in names]
+        blocks = [stats["instruments"][n]["recall_by_underlying_weighted"][kind]
+                  for n in names]
+        values = [(b["recall"] or 0) * 100 for b in blocks]
+        err = np.array([[v - b["ci95"][0] * 100 for v, b in zip(values, blocks)],
+                        [b["ci95"][1] * 100 - v for v, b in zip(values, blocks)]])
         pos = x + (offset - 1) * width
         ax.bar(pos, values, width, color=KIND_COLOUR[kind], edgecolor="black",
-               linewidth=0.5, zorder=3, label=kind.lower())
-        for xi, v in zip(pos, values):
-            ax.text(xi, v + 1.8, f"{v:.0f}", ha="center", va="bottom",
+               linewidth=0.5, zorder=3, label=kind.lower(),
+               yerr=err, ecolor="#404040", capsize=2,
+               error_kw={"linewidth": 0.8, "zorder": 4})
+        for xi, v, e in zip(pos, values, err[1]):
+            ax.text(xi, v + e + 2.0, f"{v:.0f}", ha="center", va="bottom",
                     fontsize=7.5, color="#404040")
 
     figstyle.ygrid(ax)
@@ -115,20 +127,28 @@ def main() -> int:
             f"{args.stats} predates the label-space correction and carries no "
             "`decomposition`. Re-run scripts/score_human_labels.py.")
 
+    if "decomposition_weighted" not in stats:
+        raise SystemExit(
+            f"{args.stats} predates the stratum weighting and carries only the "
+            "unweighted composition. Re-run scripts/score_human_labels.py.")
+
     figstyle.apply()
     fig, axes = plt.subplots(1, 2, figsize=(figstyle.TEXT_WIDTH, 3.3),
                              gridspec_kw={"width_ratios": [1.0, 1.15]})
-    panel_composition(axes[0], stats["decomposition"])
+    panel_composition(axes[0], stats["decomposition"],
+                      stats["decomposition_weighted"],
+                      stats["decomposition"]["n_broad_declines"])
     panel_recall(axes[1], stats)
 
     handles = [plt.Rectangle((0, 0), 1, 1, facecolor=KIND_COLOUR[k],
                              edgecolor="black", linewidth=0.5) for k in KINDS]
     figstyle.shared_legend(
         fig, handles, [k.lower() for k in KINDS], ncol=3,
-        note=("Human labels on 300 blinded completions, one annotator. Panel "
-              "(b) is recall on the completions a person assigned to each "
-              "kind; a three-way instrument scores a hit whenever it calls "
-              "them declining at all."),
+        note=("300 blinded completions, one annotator, weighted to the "
+              "ladder's stratum shares; brackets and bars are 95% stratified "
+              "bootstrap intervals. Panel (b) is recall on the completions a "
+              "person assigned to each kind; a three-way instrument scores a "
+              "hit whenever it calls them declining at all."),
         reserve=0.30)
     figstyle.save(fig, args.out, "fig_human_validation")
     return 0
@@ -136,3 +156,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
