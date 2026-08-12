@@ -1,0 +1,17 @@
+{
+  "suites": [
+    {
+      "suite": "xstest",
+      "path": "data\\eval_suites\\xstest.jsonl",
+      "n": 450,
+      "n_dropped_duplicate": 0,
+      "counts": {
+        "benign": 250,
+        "harmful": 200
+      },
+      "provenance": "natolambert/xstest-v2-copy (HF)",
+      "sha256_16": "fc7d21ae9c003712"
+    }
+  ],
+  "failed": []
+}

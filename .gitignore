@@ -14,13 +14,37 @@ venv/
 *.env
 
 # ---------------------------------------------------------------------------
-# Data and experimental output — never versioned
+# Data and experimental output — versioned only where a session depends on it
 #
-# Corpora are rebuilt from source (scripts/download_fold_a.py) and run
-# directories are large, machine-specific, and immutable by design. Results get
-# published deliberately, not by accident of `git add -A`.
+# The rule is still that corpora are rebuilt from source
+# (scripts/download_fold_a.py, scripts/download_eval_suites.py) and that results
+# get published deliberately, not by accident of `git add -A`. Run directories
+# are large, machine-specific and immutable by design.
+#
+# The two corpora a hosted session reads are the exception, 295 KB between them.
+# A Colab notebook with no Drive state to restore would otherwise start by
+# fetching Anthropic/hh-rlhf at an UNPINNED revision and pulling XSTest through
+# the `datasets` library, so three things outside this repository decide whether
+# a session begins: two Hub endpoints and one wheel. The rebuild is still there
+# and still works — verified, and it still hashes equal to what the published
+# runs were built with — but it is now the fallback rather than the only path.
+#
+# Redistributed with attribution: Anthropic/hh-rlhf is MIT and XSTest is
+# CC-BY-4.0. See data/README.md for the derivation and the hashes preflight
+# checks them against.
 # ---------------------------------------------------------------------------
-data/
+data/*
+!data/README.md
+!data/folds/
+data/folds/*
+!data/folds/fold_a/
+data/folds/fold_a/*
+!data/folds/fold_a/anthropic_hh_benign.jsonl
+!data/folds/fold_a/anthropic_hh_refused.jsonl
+!data/eval_suites/
+data/eval_suites/*
+!data/eval_suites/xstest.jsonl
+!data/eval_suites/MANIFEST.json
 artifacts/
 *.npy
 *.npz
