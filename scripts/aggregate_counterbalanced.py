@@ -54,6 +54,7 @@ from __future__ import annotations
 import argparse
 import itertools
 import json
+import math
 from collections import Counter
 from pathlib import Path
 import sys
@@ -206,6 +207,35 @@ def main() -> int:
 
     found, present = gradings(args.run, orders, five_way, args.judge,
                               args.batch_size, args.completion_chars)
+    # More letter gradings on disk than assignments asked for means the caller
+    # requested the wrong set -- almost always the rotations when the run graded
+    # every permutation. Aggregating anyway is the quiet failure: three of six
+    # rotations IS a coherent design, so nothing downstream can tell that half
+    # the GPU time was discarded. Refuse and say so.
+    # Counted by resolving every permutation rather than by globbing, because a
+    # glob also catches the original scorer's caches and would flag a legitimate
+    # rotations-only run. Only gradings this scorer could have produced count.
+    #
+    # Skipped when the permutation set is large. Each resolution content-hashes
+    # the run, so 120 of them costs minutes per run, and the mistake this
+    # catches -- asking for rotations when every permutation was graded -- can
+    # only arise where enumerating every permutation is affordable in the first
+    # place. For the five-way grader it is not, so exhaustive is never the plan
+    # and there is nothing to catch.
+    every: dict[str, Any] = {}
+    if not args.exhaustive and math.factorial(len(module.LABELS)) <= 6:
+        every, _ = gradings(args.run, balanced_orders(list(module.LABELS), True),
+                            five_way, args.judge, args.batch_size,
+                            args.completion_chars)
+    extra = len(every) - len(found)
+    if extra > 0 and len(found) == len(orders):
+        raise SystemExit(
+            f"{len(found)} assignments requested and matched, but {len(every)} "
+            f"of this scorer's assignments are graded on disk. Aggregating the "
+            f"requested set would silently discard {extra} of them, and three "
+            "rotations are a legitimate design, so nothing downstream could "
+            "tell. Pass --exhaustive to use every graded assignment.")
+
     missing = [",".join(o) for o in orders if ",".join(o) not in found]
     if missing:
         print(f"{len(found)} of {len(orders)} assignments graded; missing:")
