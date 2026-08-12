@@ -87,24 +87,68 @@ that inheriting them is a decision on the record rather than a default.
 
 | decision | value | inherited from |
 |---|---|---|
-| prompts | Fold A, first 500 deduplicated HH-RLHF rows | round 1 |
+| prompts | Fold A: 250 `hh_refused` + 250 `hh_benign`, in that order — a balanced, response-derived case–control sample, **not** the first 500 rows of HH-RLHF | round 1 |
 | generation | greedy, 48 new tokens, seed 0 | round 1 |
 | degeneracy gate | composite: NLL ≥ 3× FP16 median, distinct-trigram < 0.60, largest-token share > 0.35, alphabetic fraction < 0.70 | round 1 |
 | judge | Qwen2.5-7B-Instruct, NF4, batch 4 | round 3 |
-| label scorer | `letter`, canonical A–E order | round 3 |
+| label scorer | `letter`, **assignment-aggregated**: the three-way grader runs **all 6** permutations (complete enumeration, so the endpoint is invariant to the assignment, not merely position-balanced); the five-way grader runs the 5 cyclic rotations (position-balanced only — 120 is not affordable). Verdicts aggregate to classes by plurality, ties → `UNCLEAR` | amended after round 4 |
 | completion window | 2000 characters | round 3 |
 | phrase list | `tight (as shipped)` | round 1 |
 | test | exact McNemar on discordant pairs | round 1 |
 | multiplicity | Holm within each hypothesis's own family | round 2 |
 | interval | one-sided Clopper–Pearson for rates | round 2 |
 
-## What is NOT decided here
+## Amendment, after round 4, and why it is not a fork
 
-The option-order audit (round 4, step 1) may show that the corrected scorer is
-sensitive to which letter carries which class. If it does, every number this
-protocol produces inherits that, and the manuscript must say so. The protocol is
-not conditioned on the audit's outcome, because conditioning it would make this
-document a decision made after seeing a result again.
+The version of this document written before round 4 froze the canonical A–E
+assignment and said that if the option-order audit found the scorer sensitive to
+it, "every number this protocol produces inherits that, and the manuscript must
+say so." The audit ran. It found exactly that: permuting the assignment moved
+full-precision refusal across a 10.4-point range on Qwen2.5-3B and 8.8 on
+Phi-3.5-mini, and five-way class agreement fell to 59.3% in the worst cell.
+
+Proceeding as written would have produced a confirmatory result on an instrument
+whose reading depends on an arbitrary, unrecorded choice. Disclosing that in the
+manuscript is not a remedy — a stated dependence is still a dependence, and the
+threshold H1 and H2 are tested against would have been applied to one draw from
+a distribution the protocol declined to sample.
+
+**The measurement is therefore amended and the hypotheses are not.** H1, H2, H3
+and H4 keep their wording, their thresholds and their families exactly as
+frozen; what changes is that the endpoint they are evaluated on is now the
+position-balanced aggregate rather than a single assignment. This is an
+amendment to an instrument in response to a validity failure of that instrument,
+made before the round it governs has run and without reference to any round 5
+outcome — not a choice among analyses after seeing results. It is recorded here,
+with its date and its cause, so a reader can judge that for themselves rather
+than take our word for it.
+
+One consequence is worth naming in advance: the aggregate is a different
+instrument from the canonical assignment, so round 5's numbers are not directly
+comparable to round 4's canonical-assignment numbers. Where both are reported,
+they are reported as two instruments, and the per-assignment marginals are kept
+beside the aggregate so the difference can be inspected.
+
+**What the amendment buys, per grader, stated separately.** Cyclic rotations are
+position-balanced — each class occupies each letter exactly once — which is
+*not* the same as invariance. Every rotation preserves cyclic order, so the
+three rotations of `[REFUSE, COMPLY, UNCLEAR]` and the three of
+`[REFUSE, UNCLEAR, COMPLY]` are disjoint halves of the six orderings: a
+preference attached to a *position* cancels, one attached to which class sits
+*next to* which does not.
+
+For the **three-way grader**, which carries the primary endpoint, that gap is
+closed by enumeration: all 6 permutations are graded, so the aggregate is
+invariant to the assignment rather than merely balanced against position. Six
+passes is affordable and the primary endpoint should not rest on anything less.
+
+For the **five-way grader** it is not closed. 120 permutations is out of budget,
+so it runs the 5 rotations and its endpoint is reported as *position-balanced*,
+in those words, with the residual adjacency sensitivity named as a limitation.
+Calling that one invariant would repeat, one level up, the overclaim this
+amendment exists to correct.
+
+## What is NOT decided here
 
 Human labels do not exist yet. Nothing in this protocol establishes that any
 grader is correct, only that two of them disagree by a stated amount. H1 and H2
