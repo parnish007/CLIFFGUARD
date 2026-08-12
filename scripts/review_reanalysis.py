@@ -152,7 +152,8 @@ def label_matrix(run: dict[str, Any], gate: str) -> dict[str, np.ndarray]:
     return out
 
 
-def marker_label_matrix(model: str, runs: list[Path], gate: str) -> dict[str, np.ndarray]:
+def marker_label_matrix(model: str, runs: list[Path], gate: str,
+                        scorer: str | None = None) -> dict[str, np.ndarray]:
     """Per-prompt labels from the TIGHT phrase list, under a chosen gate.
 
     Needed so the phrase list and the judge can be compared at a common gate.
@@ -163,7 +164,7 @@ def marker_label_matrix(model: str, runs: list[Path], gate: str) -> dict[str, np
 
     tight = MARKER_VARIANTS["tight (as shipped)"]
     for run_dir in runs:
-        run = load_run(run_dir)
+        run = load_run(run_dir, scorer=scorer)
         if run is None or not run["judge_raw"]:
             continue
         if MODEL_LABELS.get(run["manifest"].get("model_id", "?")) != model:
@@ -436,7 +437,7 @@ def gsm8k_paired(runs: list[Path], gsm8k_path: Path, n_items: int) -> dict[str, 
     return out
 
 
-def gate_ablation(runs: list[Path]) -> dict[str, Any]:
+def gate_ablation(runs: list[Path], scorer: str | None = None) -> dict[str, Any]:
     """How much each degeneracy rule carries, and how fragile its threshold is.
 
     The gate is four handcrafted thresholds with no human-labelled validation
@@ -459,7 +460,7 @@ def gate_ablation(runs: list[Path]) -> dict[str, Any]:
 
     out: dict[str, Any] = {}
     for run_dir in runs:
-        run = load_run(run_dir)
+        run = load_run(run_dir, scorer=scorer)
         if run is None or not run["judge_raw"]:
             continue
         model = MODEL_LABELS.get(run["manifest"].get("model_id", "?"))
@@ -562,7 +563,8 @@ def gate_ablation(runs: list[Path]) -> dict[str, Any]:
 
 
 def refusal_class_audit(
-    composite: dict[str, dict[str, np.ndarray]], runs: list[Path], scheme: str
+    composite: dict[str, dict[str, np.ndarray]], runs: list[Path], scheme: str,
+    scorer: str | None = None,
 ) -> dict[str, Any]:
     """Describe what the judge's refusal class contains, in numbers.
 
@@ -575,7 +577,7 @@ def refusal_class_audit(
     for model, labels in composite.items():
         run = None
         for run_dir in runs:
-            candidate = load_run(run_dir)
+            candidate = load_run(run_dir, scorer=scorer)
             if (candidate is not None and candidate["judge_raw"]
                     and MODEL_LABELS.get(candidate["manifest"].get("model_id", "?"))
                     == model
@@ -612,7 +614,8 @@ def refusal_class_audit(
 # ---------------------------------------------------------------------------
 
 
-def marker_decomposition(runs: list[Path]) -> dict[str, Any]:
+def marker_decomposition(runs: list[Path],
+                         scorer: str | None = None) -> dict[str, Any]:
     """Why adding refusal markers can RAISE the apparent flip rate.
 
     The review read the marker-variant table as a compliance rate and concluded
@@ -632,7 +635,7 @@ def marker_decomposition(runs: list[Path]) -> dict[str, Any]:
 
     out: dict[str, Any] = {}
     for run_dir in runs:
-        run = load_run(run_dir)
+        run = load_run(run_dir, scorer=scorer)
         if run is None or not run["judge_raw"]:
             continue
         model = MODEL_LABELS.get(run["manifest"].get("model_id", "?"))
@@ -801,8 +804,12 @@ def probe_retention(runs: list[Path], n_splits: int,
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--runs", type=Path, default=Path("artifacts/runs"))
-    ap.add_argument("--gsm8k", type=Path, required=True,
-                    help="GSM8K test.jsonl, in the order the runs consumed it")
+    ap.add_argument("--gsm8k", type=Path, default=None,
+                    help="GSM8K test.jsonl, in the order the runs consumed it. "
+                         "Optional: the capability arm is skipped without it, "
+                         "which is how the behavioural claims are reproduced on "
+                         "a clone that has not downloaded GSM8K. Every other "
+                         "block is unaffected -- they share no inputs.")
     ap.add_argument("--splits", type=int, default=200,
                     help="fit/score replicates for the probe retention interval")
     ap.add_argument("--n-items", type=int, default=200)
@@ -814,6 +821,14 @@ def main() -> int:
     ap.add_argument("--exclude", default=None,
                     help="glob on the run directory NAME to skip. Use '*r2-*' to "
                          "reproduce the paper's primary numbers from round one.")
+    ap.add_argument("--scorer", default=None,
+                    help="which co-resident grading supplies the judge labels: "
+                         "a mode ('first-token-legacy', 'first-token', "
+                         "'letter') or a bare 16-hex fingerprint. Required once "
+                         "a run carries more than one grading per scheme, which "
+                         "every main run has since round 4 re-graded the ladder "
+                         "under the letter scorer. Without it the loader "
+                         "refuses to guess and the whole script aborts.")
     args = ap.parse_args()
 
     # One selection, applied everywhere. Several analyses below refuse to run
@@ -830,14 +845,17 @@ def main() -> int:
     rng = np.random.default_rng(SEED)
     payload: dict[str, Any] = {
         "config": {"n_bootstrap": N_BOOTSTRAP, "seed": SEED,
-                   "coherent_max_degenerate": COHERENT_MAX_DEGENERATE},
+                   "coherent_max_degenerate": COHERENT_MAX_DEGENERATE,
+                   # Which grading produced every rate below. A stats file that
+                   # does not say this cannot be compared with another one.
+                   "scorer": args.scorer or "unspecified (run carried one grading)"},
     }
 
     # ---- behavioural -----------------------------------------------------
     composite: dict[str, dict[str, np.ndarray]] = {}
     nll_only: dict[str, dict[str, np.ndarray]] = {}
     for run_dir in runs:
-        run = load_run(run_dir)
+        run = load_run(run_dir, scorer=args.scorer)
         if run is None or not run["judge_raw"]:
             continue
         model = MODEL_LABELS.get(run["manifest"].get("model_id", "?"))
@@ -927,9 +945,10 @@ def main() -> int:
     # NLL-gated phrase list and called the difference a grader effect. That
     # confounds two factors. Crossing them separates the contributions, and
     # they turn out to dominate in different regimes.
-    marker_composite = {m: marker_label_matrix(m, runs, "composite")
+    marker_composite = {m: marker_label_matrix(m, runs, "composite", args.scorer)
                         for m in composite}
-    marker_nll = {m: marker_label_matrix(m, runs, "nll") for m in composite}
+    marker_nll = {m: marker_label_matrix(m, runs, "nll", args.scorer)
+                  for m in composite}
     crossed: dict[str, Any] = {}
     for model in composite:
         crossed_rows: list[dict[str, Any]] = []
@@ -957,27 +976,33 @@ def main() -> int:
     payload["gate_by_grader"] = crossed
 
     # ---- how much each degeneracy rule carries ---------------------------
-    payload["gate_ablation"] = gate_ablation(runs)
+    payload["gate_ablation"] = gate_ablation(runs, args.scorer)
 
     # ---- what the judge's refusal class actually contains ----------------
     payload["refusal_class_audit"] = refusal_class_audit(
-        composite, runs, "RTN_4B")
+        composite, runs, "RTN_4B", args.scorer)
 
     # ---- why the marker-list flip rate is not monotone in the list -------
-    payload["marker_decomposition"] = marker_decomposition(runs)
+    payload["marker_decomposition"] = marker_decomposition(runs, args.scorer)
 
     # ---- drift -----------------------------------------------------------
     payload["drift"] = drift_analysis(composite, rng)
 
     # ---- GSM8K -----------------------------------------------------------
-    payload["gsm8k"] = gsm8k_paired(runs, args.gsm8k, args.n_items)
+    # Skipped rather than faked when the corpus is absent. An empty block would
+    # be indistinguishable in the output from an arm that ran and found nothing.
+    if args.gsm8k is None:
+        print("\nGSM8K: --gsm8k not given; capability arm skipped")
+    else:
+        payload["gsm8k"] = gsm8k_paired(runs, args.gsm8k, args.n_items)
 
     # ---- probe retention, with the dispersion the manuscript omitted ------
     # Both label sources: "judge" shares a target with the behavioural arm,
     # "marker" reproduces the original estimand so the two can be compared.
-    payload["probe"] = probe_retention(runs, args.splits, "judge")
+    payload["probe"] = probe_retention(runs, args.splits, "judge",
+                                       scorer=args.scorer)
     payload["probe_marker_labels"] = probe_retention(
-        runs, args.splits, "marker")
+        runs, args.splits, "marker", scorer=args.scorer)
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -1015,7 +1040,7 @@ def main() -> int:
     print("\n=== GSM8K, exact McNemar on question-level transitions ===")
     print(f"{'model':14s} {'bits':>5s} {'acc%':>6s} {'lost':>5s} {'gained':>6s} "
           f"{'p':>8s} {'p_holm':>8s} {'p_all':>8s}")
-    for model, block in payload["gsm8k"].items():
+    for model, block in payload.get("gsm8k", {}).items():
         if model.startswith("_"):
             continue
         print(f"{model} FP16 {100 * block['fp16_accuracy']:.1f}% "

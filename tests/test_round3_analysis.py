@@ -293,10 +293,17 @@ def test_every_resolved_fingerprint_names_a_file_that_exists() -> None:
 def test_naming_a_scorer_narrows_the_run_to_what_that_grading_covers() -> None:
     """A grading that scored two schemes must not be asked about eight.
 
-    The round-3 re-gradings deliberately cover FP16 and the 4.5-bit rung. The
-    published grading covers the whole ladder. Loading either must succeed and
-    must expose exactly the schemes it graded, so no analysis can silently mix
-    verdicts from two instruments.
+    A grading covers whatever scheme set it was run over -- round 3 re-graded
+    FP16 and the 4.5-bit rung, round 4 extended it to the whole ladder -- and
+    loading one must expose exactly the schemes carrying its own fingerprint,
+    so no analysis can silently mix verdicts from two instruments.
+
+    The coverage itself is asserted against the files on disk rather than against
+    a written-in set. An earlier version pinned the letter grading to
+    ``{FP16, RTN_4B}``, which was true of the repository the day it was written
+    and became false the moment round 4 finished re-grading -- so it failed on a
+    completed result rather than on a defect, which is the wrong direction for a
+    test to point.
     """
     from scripts.reanalyse_runs import load_run
     from cliffguard.eval.scorer_caches import resolve
@@ -309,11 +316,20 @@ def test_naming_a_scorer_narrows_the_run_to_what_that_grading_covers() -> None:
     if "letter" not in modes or "first-token-legacy" not in modes:
         pytest.skip("run has not been re-graded under both scorers")
 
-    published = load_run(run, scorer="first-token-legacy")
-    corrected = load_run(run, scorer="letter")
-    assert set(corrected["judge_raw"]) == {"FP16", "RTN_4B"}
-    assert set(corrected["completions"]) == set(corrected["judge_raw"])
-    assert len(published["judge_raw"]) > len(corrected["judge_raw"])
+    for mode in ("first-token-legacy", "letter"):
+        loaded = load_run(run, scorer=mode)
+        on_disk = {path.stem.split("_", 2)[-1] for path in
+                   (run / "results").glob(f"judge_{modes[mode]}_*.json")}
+        assert set(loaded["judge_raw"]) == on_disk, (
+            f"{mode} exposed schemes its fingerprint does not carry")
+        # The run directory holds completions for every rung regardless of what
+        # was graded, so this is the assertion that stops a partial grading
+        # being padded out with text no verdict corresponds to.
+        assert set(loaded["completions"]) == set(loaded["judge_raw"])
+
+    # The two gradings are distinguishable: different digests, hence different
+    # files, hence no chance of one being served for the other.
+    assert modes["letter"] != modes["first-token-legacy"]
 
 
 @pytest.mark.skipif(not RUNS.exists(), reason="no run directories in this checkout")
@@ -386,10 +402,52 @@ def test_the_stats_file_regenerates_exactly() -> None:
             f"the analysis no longer runs:\n{result.stdout}\n{result.stderr}")
         regenerated = json.loads(out.read_text(encoding="utf-8"))
 
-    assert regenerated == published, (
+    # Compared to a tolerance on floats and exactly on everything else. An
+    # exact `==` over the whole tree failed on eight confidence-interval
+    # endpoints differing by ~3e-18 -- the last bit of a float, produced by
+    # summation order inside NumPy and not by any change to the measurement.
+    # A test that fires on that trains its reader to ignore it, which is how a
+    # real staleness gets waved through. Structure, keys, strings and integers
+    # stay exact, because those are what actually go stale.
+    drift = _drifted(published, regenerated)
+    assert not drift, (
         "docs/paper/round3_stats.json is not what scripts/analyse_round3.py "
         "now produces. Re-run it, and work out which of the two changed "
-        "before quoting either.")
+        "before quoting either.\n" + "\n".join(f"  {d}" for d in drift[:20]))
+
+
+def _drifted(published: object, regenerated: object, path: str = "",
+             tol: float = 1e-9) -> list[str]:
+    """Paths where the two disagree by more than float summation noise."""
+    if isinstance(published, dict) and isinstance(regenerated, dict):
+        out = []
+        for key in sorted(set(published) | set(regenerated)):
+            if key not in published:
+                out.append(f"{path}/{key}: absent from the published file")
+            elif key not in regenerated:
+                out.append(f"{path}/{key}: no longer produced")
+            else:
+                out += _drifted(published[key], regenerated[key],
+                                f"{path}/{key}", tol)
+        return out
+    if isinstance(published, list) and isinstance(regenerated, list):
+        if len(published) != len(regenerated):
+            return [f"{path}: {len(published)} entries against "
+                    f"{len(regenerated)}"]
+        return [d for i, (a, b) in enumerate(zip(published, regenerated))
+                for d in _drifted(a, b, f"{path}[{i}]", tol)]
+    # bool before float: `isinstance(True, float)` is False but `True == 1.0`
+    # is True, so a flag flipping to 1.0 must not pass as a numeric match.
+    if (isinstance(published, float) or isinstance(regenerated, float)) and not (
+            isinstance(published, bool) or isinstance(regenerated, bool)):
+        try:
+            if abs(float(published) - float(regenerated)) <= tol:
+                return []
+        except (TypeError, ValueError):
+            pass
+        return [f"{path}: {published!r} -> {regenerated!r}"]
+    return [] if published == regenerated else [
+        f"{path}: {published!r} -> {regenerated!r}"]
 
 
 @pytest.mark.skipif(not (REPO / "docs" / "paper" / "round3_stats.json").exists(),
