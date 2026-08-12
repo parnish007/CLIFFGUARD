@@ -55,6 +55,38 @@ def test_the_batch_key_is_the_generation_batch_not_the_activation_batch() -> Non
     assert re.search(r"batch_key = f\"_b\{args\.batch_size\}\"", SOURCE)
 
 
+def test_batch_key_is_bound_where_the_nll_cache_reads_it() -> None:
+    """Present in the source is not the same as in scope at the use site.
+
+    `batch_key` was assigned inside the nested `run_scheme` and read again when
+    the NLL cache path is built, which is in `main` and outside it. Every test
+    above searches the source text, so all of them passed while a real run would
+    raise NameError -- after generating every completion for every rung and
+    immediately before scoring them, which is the most expensive point in the
+    script to discover it.
+
+    Compiling the module and walking the symbol table catches the scope, which
+    reading the text cannot. This is a static check because executing `main`
+    needs a GPU and model weights.
+    """
+    import symtable
+
+    table = symtable.symtable(SOURCE, "run_behavioural_ladder.py", "exec")
+    main_fn = table.lookup("main").get_namespace()
+    assert "batch_key" in [s.get_name() for s in main_fn.get_symbols()], (
+        "batch_key is not bound in main(), where the NLL cache path reads it")
+
+    binding = main_fn.lookup("batch_key")
+    assert binding.is_assigned(), (
+        "batch_key is referenced in main() but never assigned there; it is "
+        "being read out of a nested scope and will raise NameError at runtime")
+
+    nested = {child.get_name() for child in main_fn.get_children()}
+    assert "run_scheme" in nested, (
+        "this test is anchored to run_scheme; if it was renamed, re-check that "
+        "batch_key did not move back inside it")
+
+
 def test_the_token_id_key_follows_the_completions_key() -> None:
     """Token ids must not outlive the text they came from.
 

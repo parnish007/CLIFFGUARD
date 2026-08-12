@@ -34,6 +34,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from types import ModuleType
 from typing import Any, Sequence
 
 # Kept in step with scripts/classify_completions_judge.py. A drift between the
@@ -68,7 +69,7 @@ def fingerprint(identity: dict[str, Any]) -> str:
         json.dumps(identity, sort_keys=True).encode("utf-8")).hexdigest()[:16]
 
 
-def _judge_module():
+def _judge_module() -> ModuleType:
     """The three-way grader, imported from its own file.
 
     Loaded by path rather than by package import because scripts/ is not a
@@ -187,7 +188,7 @@ def cache_files(run: Path, digest: str) -> dict[str, Path]:
 # filenames, so a mode is only ever reported when the arithmetic agrees.
 
 
-def _taxonomy_module():
+def _taxonomy_module() -> ModuleType:
     import importlib.util
 
     path = (Path(__file__).resolve().parents[2] / "scripts"
@@ -258,6 +259,14 @@ def resolve_taxonomy(run: Path, judge: str | None = None, four_bit: bool = True,
                       for p in results.glob("taxonomy_*_*.json")})
     if not schemes:
         return {}
+    # Which schemes each digest actually has files for, as opposed to which it
+    # was hashed over. A grading interrupted partway through has the second and
+    # not the first, and telling them apart is what stops a partial grading
+    # being returned as a complete one.
+    covered: dict[str, set[str]] = {}
+    for path in results.glob("taxonomy_*_*.json"):
+        _, digest_on_disk, scheme = path.stem.split("_", 2)
+        covered.setdefault(digest_on_disk, set()).add(scheme)
 
     found: dict[str, str] = {}
     letters = (module.letter_template(letter_order) if letter_order
@@ -270,7 +279,7 @@ def resolve_taxonomy(run: Path, judge: str | None = None, four_bit: bool = True,
         # first match, because two of them can reproduce and only one is the
         # answer -- see below.
         matches: list[tuple[list[str], str]] = []
-        for subset in _scheme_subsets(results):
+        for subset in _scheme_subsets(results, _manifest_order(run)):
             try:
                 completions = {
                     s: json.loads((results / f"completions_{s}.json")
@@ -298,7 +307,20 @@ def resolve_taxonomy(run: Path, judge: str | None = None, four_bit: bool = True,
                            "max_length": max_length, "padding_side": "left",
                            "batch_size": int(batch_size), "scoring": scoring},
             })
-            if digest in on_disk:
+            # Present on disk AND actually covering the schemes it was hashed
+            # over. Those are different questions, and only asking the first
+            # reintroduces exactly the failure this resolver exists to prevent.
+            #
+            # The candidate scheme sets are pooled across every digest in the
+            # run, so a set contributed by one grading is tried against every
+            # scorer. If a complete first-token pass covers eight rungs and a
+            # letter pass over the same eight was interrupted after writing
+            # FP16, the eight-rung set reproduces the interrupted letter
+            # digest -- the hash is over the completions, which are all present,
+            # not over the verdict files, which are not. It would then beat a
+            # complete one-rung letter grading on width and be returned as an
+            # eight-rung fingerprint carrying one file.
+            if digest in on_disk and covered.get(digest, set()) == set(subset):
                 matches.append((subset, digest))
         if not matches:
             continue
@@ -322,8 +344,48 @@ def resolve_taxonomy(run: Path, judge: str | None = None, four_bit: bool = True,
     return found
 
 
-def _scheme_subsets(results: Path) -> list[list[str]]:
+def _manifest_order(run: Path) -> list[str]:
+    """The scheme order the grader iterates in, which is the manifest's.
+
+    `classify_completion_taxonomy.py` takes its scheme list from the manifest
+    and filters it, so the surviving order is the manifest's regardless of the
+    order `--schemes` named. That order is hashed into the content digest --
+    `taxonomy_content_hash` absorbs scheme by scheme -- so it is part of the
+    fingerprint and cannot be normalised away here.
+    """
+    try:
+        manifest = json.loads((run / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    schemes = manifest.get("schemes")
+    if isinstance(schemes, list) and schemes:
+        return [s for s in schemes if isinstance(s, str)]
+    # The grader's own fallback when the manifest carries no scheme list:
+    # full precision followed by one rung per entry of `bits`, in that order.
+    # Mirrored here rather than approximated, because approximating it means
+    # alphabetical order, which reproduces no multi-rung digest and drops
+    # resolution onto whatever one-rung grading happens to match.
+    bits = manifest.get("bits")
+    if isinstance(bits, list) and bits:
+        return ["FP16"] + [f"RTN_{b}B" for b in bits]
+    return []
+
+
+def _scheme_subsets(results: Path, order: Sequence[str] = ()) -> list[list[str]]:
     """Candidate scheme sets a grading could have covered, widest first.
+
+    Each subset is returned in `order` -- the manifest's -- because the content
+    hash absorbs the schemes one after another and so depends on their
+    sequence. Sorting them here instead made every multi-scheme grading
+    unresolvable: the eight-rung round 4 re-grades hash as
+    FP16,RTN_8B...RTN_2B and were being looked up as FP16,RTN_2B...RTN_8B, so
+    they matched nothing and resolution fell through to the one-scheme
+    full-precision cache, which reproduces under either ordering because a
+    single element is already in order. The caller then read a full-ladder
+    re-grade as covering one rung -- silently, and in the direction that looks
+    like success. Schemes absent from the manifest are appended in sorted order
+    rather than dropped, so a run whose manifest is missing or partial degrades
+    to the old behaviour instead of resolving nothing.
 
     Order decides the answer, not just the speed of reaching it. A run can hold
     two gradings by the same scorer over different scheme sets -- round 3
@@ -339,6 +401,14 @@ def _scheme_subsets(results: Path) -> list[list[str]]:
     alone. Trying the wide set first costs one extra content hash, which is
     CPU-bound and milliseconds.
     """
+    rank = {name: i for i, name in enumerate(order)}
+
+    def in_grading_order(schemes: list[str]) -> list[str]:
+        # Sorted position for anything the manifest does not name, placed after
+        # everything it does, so an unknown scheme is deterministic rather than
+        # dependent on glob order.
+        return sorted(schemes, key=lambda s: (rank.get(s, len(rank)), s))
+
     by_digest: dict[str, list[str]] = {}
     for path in sorted(results.glob("taxonomy_*_*.json")):
         _, digest, scheme = path.stem.split("_", 2)
@@ -349,7 +419,7 @@ def _scheme_subsets(results: Path) -> list[list[str]]:
         key = tuple(sorted(schemes))
         if key not in seen:
             seen.add(key)
-            out.append(sorted(schemes))
+            out.append(in_grading_order(schemes))
     return out
 
 

@@ -41,7 +41,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import json
 from pathlib import Path
 import sys
 import time
@@ -132,11 +131,18 @@ def has_refusal_marker(text: str, window: int = CLASSIFY_WINDOW) -> bool:
 
 
 def repetition_stats(text: str) -> tuple[float, float, float]:
-    """(distinct-trigram ratio, largest single-token share, alphabetic fraction).
+    """(distinct-trigram ratio, largest single-token share, letter-or-space share).
 
     Cheap, language-agnostic surface measures of whether a string is still text.
     All three are near-constant for fluent output and collapse together under a
     repetition loop, which is the failure mode perplexity cannot see.
+
+    The third is not an "alphabetic fraction" and the old name for it was
+    misleading: whitespace counts toward the numerator. That is deliberate --
+    indentation and spacing are not evidence of degeneration -- but it does mean
+    the statistic reads high for anything with a lot of whitespace and low for
+    dense symbolic output, so valid code or mathematics sits closer to the
+    threshold than prose does. Named for what it computes.
     """
     import collections
 
@@ -144,7 +150,16 @@ def repetition_stats(text: str) -> tuple[float, float, float]:
     if not words:
         return 0.0, 1.0, 0.0
     trigrams = [tuple(words[i : i + 3]) for i in range(max(0, len(words) - 2))]
-    distinct = len(set(trigrams)) / len(trigrams) if trigrams else 0.0
+    # Fewer than three words yields no trigrams, and the ratio is then
+    # UNDEFINED rather than zero. Returning 0.0 made `is_degenerate` fire its
+    # `distinct < 0.60` rule on every one- and two-word string, so a bare "No."
+    # was classified as degenerate on the evidence of a statistic that had no
+    # data. 1.0 is the honest encoding of "this rule saw nothing to object to";
+    # the other two rules still apply, and on the stored runs they reach the
+    # same verdict on all 55 short completions, every one of which is genuine
+    # 3.5-bit word salad. So this changes no published number and removes a
+    # trap for any future run whose model answers tersely.
+    distinct = len(set(trigrams)) / len(trigrams) if trigrams else 1.0
     share = collections.Counter(words).most_common(1)[0][1] / len(words)
     alpha = sum(c.isalpha() or c.isspace() for c in text) / max(1, len(text))
     return distinct, share, alpha
@@ -612,31 +627,38 @@ def main() -> int:  # noqa: C901 - linear experiment script
     corpus_key = f"_c{corpus_digest.hexdigest()[:8]}"
     print(f"corpus fingerprint: {corpus_key[2:]} over {len(prompts)} ordered prompts")
 
+    # The batch size is in the key because the result depends on it. Padded
+    # positions are masked and never read, so the batching is exact in logic --
+    # verified bit-identical against the one-at-a-time version at batch 1 --
+    # but fp16 kernels reduce in a batch-dependent order, so two batch sizes
+    # give vectors that agree to a cosine of 0.999997 and not further. That is
+    # far below any effect measured here and still not something to blend
+    # inside one run without saying so.
+    #
+    # It was in the ACTIVATIONS key only, while this comment sat above it
+    # claiming otherwise, and the completions key -- the one that decides
+    # whether text is regenerated -- had no batch component at all. Two runs of
+    # the same prompts at different batch sizes therefore shared one cache entry
+    # and were identical by construction. That is not a theoretical concern: it
+    # is exactly the comparison the batch-isolation experiment makes, so the
+    # experiment would have reported 0.0% divergence and concluded that batch
+    # size does not explain the greedy nondeterminism this project measured at
+    # 9--12%.
+    #
+    # Adding it orphans entries written under the old key. Accepted: the entries
+    # that stop being reused are precisely the ones whose reuse was the defect,
+    # and nothing that only grades stored text is affected.
+    #
+    # It lives out here rather than inside run_scheme because the NLL cache key
+    # further down reads it too, and that line is in main(). Bound only in the
+    # nested scope it raised NameError after every completion for every rung had
+    # been generated and immediately before they were scored -- the most
+    # expensive point in the script at which to discover a scoping mistake.
+    batch_key = f"_b{args.batch_size}"
+
     token_ids: dict[str, list[list[int]]] = {}
 
     def run_scheme(name: str, loader: Any) -> None:
-        # The batch size is in the key because the result depends on it. Padded
-        # positions are masked and never read, so the batching is exact in
-        # logic -- verified bit-identical against the one-at-a-time version at
-        # batch 1 -- but fp16 kernels reduce in a batch-dependent order, so two
-        # batch sizes give vectors that agree to a cosine of 0.999997 and not
-        # further. That is far below any effect measured here and still not
-        # something to blend inside one run without saying so.
-        #
-        # It was in the ACTIVATIONS key only, while this comment sat above it
-        # claiming otherwise, and the completions key -- the one that decides
-        # whether text is regenerated -- had no batch component at all. Two runs
-        # of the same prompts at different batch sizes therefore shared one
-        # cache entry and were identical by construction. That is not a
-        # theoretical concern: it is exactly the comparison the batch-isolation
-        # experiment makes, so the experiment would have reported 0.0%
-        # divergence and concluded that batch size does not explain the greedy
-        # nondeterminism this project measured at 9--12%.
-        #
-        # Adding it orphans entries written under the old key. Accepted: the
-        # entries that stop being reused are precisely the ones whose reuse was
-        # the defect, and nothing that only grades stored text is affected.
-        batch_key = f"_b{args.batch_size}"
         cache_text = (args.cache /
                       f"completions_{name}_n{len(prompts)}_t{args.max_new_tokens}"
                       f"{corpus_key}{decode_key}{batch_key}.json")
