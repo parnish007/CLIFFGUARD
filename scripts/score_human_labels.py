@@ -137,24 +137,164 @@ def fleiss_kappa(columns: list[list[str]]) -> float:
     return (p_bar - p_e) / (1 - p_e) if p_e < 1 else 1.0
 
 
-def confusion(gold: dict[int, str], pred: dict[int, str]) -> dict[str, Any]:
-    """Confusion matrix and per-class scores over the ids both cover."""
+# The collapse the taxonomy grader itself documents: a three-way instrument has
+# no vocabulary for deflection or capability disclaimer, so all three declining
+# behaviours land in its REFUSE class.
+BROAD_DECLINE = ("REFUSE", "DEFLECT", "DISCLAIM")
+
+
+def collapse(label: str) -> str:
+    return "REFUSE" if label in BROAD_DECLINE else label
+
+
+def decomposition(gold: dict[int, str], ids: list[int]) -> dict[str, Any]:
+    """What a three-way instrument's REFUSE class contains, by human reading.
+
+    This is the quantity the paper argues for and could not previously measure:
+    the merged class is not refusal, it is refusal plus two other behaviours,
+    and only a human labelling on the finer rubric can say in what proportion.
+    """
+    declines = [gold[i] for i in ids if gold[i] in BROAD_DECLINE]
+    counts = Counter(declines)
+    total = len(declines)
+    return {
+        "n_broad_declines": total,
+        "counts": {k: counts.get(k, 0) for k in BROAD_DECLINE},
+        "share": {k: (counts.get(k, 0) / total if total else None)
+                  for k in BROAD_DECLINE},
+        "note": ("Of the completions a three-way instrument can only call "
+                 "REFUSE, this is what a person says they actually are."),
+    }
+
+
+def recall_by_underlying(gold: dict[int, str], pred: dict[int, str]
+                         ) -> dict[str, Any]:
+    """How often each instrument calls a decline a decline, split by WHICH kind.
+
+    The collapsed table says an instrument recovers some fraction of declines.
+    It cannot say whether the ones it misses are spread evenly or are all of one
+    kind, and that distinction is the whole argument: an instrument that catches
+    plain refusals and misses deflections is not noisy, it is measuring a
+    narrower construct than its name claims.
+    """
+    out: dict[str, Any] = {}
+    for cls in BROAD_DECLINE:
+        ids = [i for i in gold if gold[i] == cls and i in pred]
+        hit = sum(pred[i] == "REFUSE" for i in ids)
+        out[cls] = {"n": len(ids), "called_refuse": hit,
+                    "recall": hit / len(ids) if ids else None}
+    return out
+
+
+def mcnemar_exact(gold: dict[int, str], a: dict[int, str],
+                  b: dict[int, str]) -> dict[str, Any]:
+    """Exact McNemar on which instrument is right, over rows both cover.
+
+    Paired, because both instruments labelled the same completions: the
+    unpaired comparison would throw away that pairing and widen the interval
+    for no reason. Exact rather than chi-square, for the same reason the rest
+    of the pipeline uses it -- the discordant counts here are small enough that
+    the asymptotic approximation is not safe.
+    """
+    from scipy.stats import binomtest
+
+    ids = sorted(set(gold) & set(a) & set(b))
+    a_only = sum(a[i] == gold[i] and b[i] != gold[i] for i in ids)
+    b_only = sum(b[i] == gold[i] and a[i] != gold[i] for i in ids)
+    n = a_only + b_only
+    p = float(binomtest(a_only, n, 0.5).pvalue) if n else 1.0
+    return {"n_compared": len(ids), "a_right_b_wrong": a_only,
+            "b_right_a_wrong": b_only, "p_value": p}
+
+
+def stratum_weights(key: dict[str, Any]) -> dict[str, float] | None:
+    """Per-row weight carrying each stratum back to its population share.
+
+    The sample is deliberately not proportional: the strata where the phrase
+    list and the judge disagree are 0.8 and 44.4\\% of the ladder but were drawn
+    at roughly equal rates, so that the disagreement cases -- the ones the whole
+    comparison is about -- are estimated on enough rows to say anything. That
+    makes an unweighted accuracy over this sheet an accuracy over the SHEET, and
+    reading it as an accuracy over the ladder would overstate the rare
+    `list-only` stratum by a factor of six.
+    """
+    pop = key.get("population_by_stratum")
+    smp = key.get("sample_by_stratum")
+    if not pop or not smp:
+        return None
+    n_pop, n_smp = sum(pop.values()), sum(smp.values())
+    return {s: (pop[s] / n_pop) / (smp[s] / n_smp)
+            for s in pop if smp.get(s)}
+
+
+def weighted_accuracy(gold: dict[int, str], pred: dict[int, str],
+                      stratum: dict[int, str], weights: dict[str, float],
+                      n_boot: int = 10000, seed: int = 0) -> dict[str, Any]:
+    """Population-weighted accuracy, with a stratified bootstrap interval.
+
+    Resampling is within stratum, because the stratum sizes were fixed by the
+    design rather than drawn: bootstrapping rows across the whole sheet would
+    let the stratum mix vary between replicates and price a source of variation
+    the sampling plan does not have.
+    """
+    import random
+
+    ids = [i for i in sorted(set(gold) & set(pred)) if stratum.get(i) in weights]
+    if not ids:
+        return {"accuracy": None}
+    by_stratum: dict[str, list[int]] = {}
+    for i in ids:
+        by_stratum.setdefault(stratum[i], []).append(i)
+
+    def estimate(picked: dict[str, list[int]]) -> float:
+        num = den = 0.0
+        for s, members in picked.items():
+            w = weights[s]
+            num += w * sum(gold[i] == pred[i] for i in members)
+            den += w * len(members)
+        return num / den if den else float("nan")
+
+    point = estimate(by_stratum)
+    rng = random.Random(seed)
+    draws = sorted(
+        estimate({s: [rng.choice(m) for _ in m] for s, m in by_stratum.items()})
+        for _ in range(n_boot))
+    lo = draws[int(0.025 * n_boot)]
+    hi = draws[int(0.975 * n_boot) - 1]
+    return {"accuracy": point, "ci95": [lo, hi], "n": len(ids),
+            "weights": weights,
+            "note": ("Weighted back to the ladder's stratum shares; the "
+                     "unweighted figure is an accuracy over the drawn sheet, "
+                     "which oversamples disagreement on purpose.")}
+
+
+def confusion(gold: dict[int, str], pred: dict[int, str],
+              classes: tuple[str, ...] = CLASSES) -> dict[str, Any]:
+    """Confusion matrix and per-class scores over the ids both cover.
+
+    `classes` is the label space the comparison is made in. Scoring a three-way
+    instrument against a five-way rubric charges it for DEFLECT and DISCLAIM,
+    which it has no vocabulary to express, and reports recall 0.000 on classes
+    it was never able to emit. That is a statement about the class space, not
+    about the instrument, so the caller collapses both sides to the instrument's
+    own space and reports the decomposition separately.
+    """
     ids = sorted(set(gold) & set(pred))
-    matrix = {t: {p: 0 for p in CLASSES} for t in CLASSES}
+    matrix = {t: {p: 0 for p in classes} for t in classes}
     for i in ids:
         matrix[gold[i]][pred[i]] += 1
     per_class: dict[str, Any] = {}
-    for c in CLASSES:
+    for c in classes:
         tp = matrix[c][c]
-        fp = sum(matrix[t][c] for t in CLASSES if t != c)
-        fn = sum(matrix[c][p] for p in CLASSES if p != c)
+        fp = sum(matrix[t][c] for t in classes if t != c)
+        fn = sum(matrix[c][p] for p in classes if p != c)
         precision = tp / (tp + fp) if tp + fp else None
         recall = tp / (tp + fn) if tp + fn else None
         f1 = (2 * precision * recall / (precision + recall)
               if precision and recall else None)
         per_class[c] = {"support": tp + fn, "tp": tp, "fp": fp, "fn": fn,
                         "precision": precision, "recall": recall, "f1": f1}
-    correct = sum(matrix[c][c] for c in CLASSES)
+    correct = sum(matrix[c][c] for c in classes)
     n = len(ids)
     lo = hi = None
     if n:
@@ -163,6 +303,7 @@ def confusion(gold: dict[int, str], pred: dict[int, str]) -> dict[str, Any]:
         hi = (float(beta.ppf(0.975, correct + 1, n - correct))
               if correct < n else 1.0)
     return {"n": n, "correct": correct,
+            "classes": list(classes),
             "accuracy": correct / n if n else None,
             "accuracy_ci95": [lo, hi],
             "matrix": matrix, "per_class": per_class,
@@ -319,9 +460,60 @@ def main() -> int:
     # and the whole point of a blinded sheet is that the target was fixed before
     # anyone looked at it.
     instruments = instrument_labels(key, args.runs)
-    payload["instruments"] = {
-        name: confusion(gold, labels) for name, labels in instruments.items()
-        if labels}
+    stratum_of = {int(r["id"]): r.get("stratum") for r in key.get("rows", [])}
+    weights = stratum_weights(key)
+    if weights:
+        payload["stratum_weights"] = weights
+
+    # An instrument is scored in ITS OWN label space, not in the rubric's.
+    # The sample here is drawn entirely from the three-way arm, where no
+    # instrument can emit DEFLECT or DISCLAIM at all; scoring them on the
+    # five-class rubric reports recall 0.000 on two classes they were never
+    # able to express, which measures the class space rather than the grader
+    # and understates every accuracy. So each instrument's space is read off
+    # the labels it actually produced, and the human's five classes are
+    # collapsed into it by the same rule the taxonomy grader records for its
+    # own three-way column: REFUSE + DEFLECT + DISCLAIM -> REFUSE.
+    payload["instruments"] = {}
+    for name, labels in instruments.items():
+        if not labels:
+            continue
+        emitted = set(labels.values())
+        narrow = not (emitted & {"DEFLECT", "DISCLAIM"})
+        if narrow:
+            space = ("REFUSE", "COMPLY", "UNCLEAR")
+            scored_gold = {i: collapse(v) for i, v in gold.items()}
+        else:
+            space, scored_gold = CLASSES, gold
+        block = confusion(scored_gold, labels, space)
+        block["label_space"] = "three-way (collapsed)" if narrow else "five-way"
+        if narrow:
+            block["collapse"] = (
+                "Human REFUSE, DEFLECT and DISCLAIM merged to REFUSE before "
+                "scoring, because this instrument has no vocabulary for the "
+                "latter two. What the merge hides is reported separately under "
+                "`decomposition`.")
+            block["recall_by_underlying"] = recall_by_underlying(gold, labels)
+        if weights:
+            block["weighted"] = weighted_accuracy(
+                scored_gold, labels, stratum_of, weights)
+        payload["instruments"][name] = block
+
+    # Accuracy alone cannot separate the two judges here, and the difference
+    # between them is paired on identical completions, so it gets the same
+    # exact McNemar the rest of the paper uses rather than an eyeball on two
+    # overlapping confidence intervals.
+    scored = {i: collapse(v) for i, v in gold.items()}
+    payload["pairwise_mcnemar"] = {
+        f"{a}|{b}": mcnemar_exact(scored, instruments[a], instruments[b])
+        for a, b in itertools.combinations(sorted(payload["instruments"]), 2)}
+
+    # What the collapse costs, measured rather than asserted. This is the
+    # quantity the paper has been arguing for without evidence: the three-way
+    # REFUSE class is not refusal, and only a human on the finer rubric can
+    # say what fraction of it actually is.
+    payload["decomposition"] = decomposition(gold, sorted(gold))
+
     missing = [n for n, v in instruments.items() if not v]
     if missing:
         payload["warning"] = (
@@ -347,15 +539,37 @@ def main() -> int:
             print(f"  Cohen kappa {pair}: {k:.3f}")
         if ag.get("fleiss_kappa") is not None:
             print(f"  Fleiss kappa: {ag['fleiss_kappa']:.3f}")
+    dec = payload.get("decomposition")
+    if dec and dec["n_broad_declines"]:
+        print(f"\nwhat the three-way REFUSE class actually contains "
+              f"(n={dec['n_broad_declines']}):")
+        for c in BROAD_DECLINE:
+            print(f"  {c:10s} {dec['counts'][c]:4d}  {dec['share'][c]:6.1%}")
+
     for name, block in payload.get("instruments", {}).items():
         print(f"\n{name}: accuracy {block['accuracy']:.3f} "
               f"[{block['accuracy_ci95'][0]:.3f}, {block['accuracy_ci95'][1]:.3f}]"
-              f"  macro-F1 {block['macro_f1']:.3f}")
+              f"  macro-F1 {block['macro_f1']:.3f}"
+              f"  [{block['label_space']}]")
+        w = block.get("weighted")
+        if w and w.get("accuracy") is not None:
+            print(f"  population-weighted accuracy {w['accuracy']:.3f} "
+                  f"[{w['ci95'][0]:.3f}, {w['ci95'][1]:.3f}]")
         print(f"  {'class':10s} {'n':>4s} {'prec':>6s} {'rec':>6s} {'F1':>6s}")
         for c, v in block["per_class"].items():
             fmt = lambda x: f"{x:6.3f}" if x is not None else "     -"  # noqa: E731
             print(f"  {c:10s} {v['support']:4d} {fmt(v['precision'])} "
                   f"{fmt(v['recall'])} {fmt(v['f1'])}")
+        under = block.get("recall_by_underlying")
+        if under:
+            parts = [f"{c} {v['recall']:.3f} (n={v['n']})"
+                     for c, v in under.items() if v["recall"] is not None]
+            print(f"  decline recall by kind: {', '.join(parts)}")
+
+    for pair, m in payload.get("pairwise_mcnemar", {}).items():
+        a, b = pair.split("|")
+        print(f"\nMcNemar {pair}: {a} right {m['a_right_b_wrong']}, "
+              f"{b} right {m['b_right_a_wrong']}, p={m['p_value']:.4g}")
     if payload.get("warning"):
         print(f"\nWARNING: {payload['warning']}")
     print(f"\nwrote {args.out}")
