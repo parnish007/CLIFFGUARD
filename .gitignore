@@ -278,3 +278,8 @@ configs/example.yaml
 artifacts/judge_batches/
 prior_runs.zip
 
+
+# Local handoff notes written when work spanned more than one working session.
+# Never published: they describe tooling and working process, which this
+# repository's no-attribution rule keeps out of anything pushed.
+SESSION_HANDOFF_*.md

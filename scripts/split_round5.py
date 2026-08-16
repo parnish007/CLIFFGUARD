@@ -51,6 +51,18 @@ STEP_CELLS: dict[str, tuple[int, str]] = {
 
 CONFIG_CELL = 8
 
+# Names a gated cell must still bind, because a later cell reads them. Step 1's
+# `run_dir_1` is the one the master calls out by name: a skipped step 1 that
+# left it undefined took the verdict cell down with a NameError, which is a
+# correctly skipped step destroying the rest of the session.
+STEP_LEFTOVERS: dict[str, tuple[str, ...]] = {
+    "step1": ("run_dir_1 = None",
+              "STEP_NOTES['deployed_3b'] = {'skipped': True, "
+              "'other_part': True,",
+              "                             'reason': 'runs in the other part "
+              "of round 5'}"),
+}
+
 # The split. A is the pair that answers the two objections the manuscript most
 # needs answered and that between them need no new deployed checkpoint: the
 # option-assignment audit, which re-grades stored text, and the batch-size
@@ -150,13 +162,22 @@ def build_part(nb: dict, part: str) -> dict:
         # Gate rather than delete. A deleted cell leaves the notebook's own
         # readout referring to a step that produced nothing, and the export
         # cell then reports a gap it cannot explain.
-        if guard == "if STEP1_BLOCKER:":
-            patched = src.replace(guard, f"if STEP1_BLOCKER or not want({step!r}):", 1)
-        else:
-            inner = guard[len("if not ("):-2] if guard.startswith("if not (") else None
-            if inner is None:
-                raise SystemExit(f"unhandled guard shape for {step}: {guard!r}")
-            patched = src.replace(guard, f"if not ({inner} and want({step!r})):", 1)
+        # The gate gets its OWN branch rather than being folded into the
+        # guard below it. Folding it in reused a body written for a different
+        # reason: step 1's records returncode 1 and `blocked: True`, so part A
+        # reported the deployed-quantizer step as FAILED rather than as not its
+        # job, and the export listed it under INCOMPLETE. The others print
+        # "preflight failed", which was simply untrue and sends whoever reads
+        # it looking for a preflight problem.
+        #
+        # `want()` has already printed why. This branch only has to leave
+        # behind what later cells read: for step 1 that is `run_dir_1`, and its
+        # absence is exactly the NameError the master's own comment warns
+        # about.
+        leftovers = STEP_LEFTOVERS.get(step, ())
+        body = "".join(f"    {line}\n" for line in leftovers) or "    pass\n"
+        patched = src.replace(
+            guard, f"if not want({step!r}):\n{body}el{guard.lstrip()}", 1)
         if patched == src:
             raise SystemExit(f"failed to patch guard for {step}")
         set_source(cell, patched)
